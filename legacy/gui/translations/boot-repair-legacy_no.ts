@@ -48,12 +48,12 @@
         <translation>Alpine bruker apk; dpkg konfigurasjon er ikke tilgjengelig på Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Alpines hovedarkiv har ingen proprietær NVIDIA DKMS driver; GPU driverbyttet er ikke tilgjengelig på dette målet.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Alternativ bootloader; Etch støvler gjennom GRUB-legacy, så extlinux er ikke en del av standard boot bane</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Alternativ oppstartslaster; på dette systemet extlinux er ikke en del av standard oppstartssti</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Boot stakk forsoning</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Bla gjennom det reparerte systemets mapper skrivebeskyttet og stadiet den valgte mappen.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Sjekk og reparere det oppdaga filsystemene.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Kontroller det valgte systemets monteringer, filsystemmetadata, oppstartsfiler, kartleggerkonsistens og avhengighetsberedskap før noen reparasjonshandling. Dette er en uavhengig sikkerhetspreflight i stedet for en valgfri Full Repair-fase.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Debian-familien initramfs-hjelper</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation type="unfinished" />
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Bygger om initramfs bilder for de installerte kjernene</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Diskbruk</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Viser den kjørende verten eller valgte reparasjonssystemets fstab; reparasjonssystemets inspeksjon er montert leselig.</translation>
     </message>
     <message>
@@ -364,7 +364,7 @@
         <translation>Initramfs verifisering</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspeksjoner EFI/UKI bevis; utilgjengelig på denne arven BIOS frontend med hjelpens sonde grunn.</translation>
     </message>
     <message>
@@ -528,16 +528,16 @@
         <translation>Frakoblet systemreparasjon</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Ett bevoktet pass (kartlegger/kryptabvalidering, initramfs gjenoppbygging, GRUB-legacy regenerering) gjennom den vanlig-krone tilbakefall</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Ett bevoktet pass: kartlegger/krypttab validering, initramfs gjenoppbygging og oppstartslaster konfigurasjon regenerering</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
-        <translation>Valgfri LVM-lagringsstøtte</translation>
+        <translation>Valgfri støtte for LVM-lagringsstakk</translation>
     </message>
     <message>
         <source>Optional Linux MD RAID support</source>
-        <translation>Valgfri Linux MD RAID-støtte</translation>
+        <translation>Valgfri støtte for Linux MD RAID</translation>
     </message>
     <message>
         <source>Package repair</source>
@@ -556,16 +556,16 @@
         <translation>Prosessnavnerommet isolasjon</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Lesbar kapasitet i denne frontend; kernel fjerning/rengjøring/installasjon kjører gjennom hjelperens interaktive meny</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel fjerning, opprydding og installer kjører gjennom hjelperens interaktive meny; ingenting fjernes eller endres før du velger en handling og bekrefter det</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Lesbar evne i denne frontend; GPU-driveren reparasjon kjører gjennom hjelperen</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>evidensdrevet GPU driverreparasjon gjennom hjelperens interaktive meny</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Lesbar sjekk av det valgte systemets rot- og /boot-filsystem, og reparer deretter bare enhetene som rapporterer feil (e2fsck for ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Lesbar kontroll av det valgte systemets rot- og /boot-filsystem, reparer deretter bare enhetene som rapporterer feil</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -597,7 +597,7 @@
     </message>
     <message>
         <source>Rebuild DKMS kernel modules.</source>
-        <translation type="unfinished" />
+        <translation>Bygg om DKMS-kjernemoduler.</translation>
     </message>
     <message>
         <source>Rebuild DKMS modules</source>
@@ -628,8 +628,8 @@
         <translation>Bygge om initramfs for det valgte omfanget? Hjelperen holder kartleggeren/krypterer og sikkerhetskopierer.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation type="unfinished" />
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Bygger om kernel-moduler utenfor treet; kreves bare når systemet bruker et modulbyggesystem.</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Konsentrer boot stabelen.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Reconcile det valgte reparasjonssystemets boot stabel i ett bevoktet arv pass: kartlegger/krypttab validering, initramfs gjenoppbygging og GRUB-legacy konfigurasjon regenerering, med komponent backups og preflights uendret. Dette er etch-ekvivalenten til den moderne boot-stack forsoning og holder seg ut av Full Repair-planen.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Generer extlinux-konfigurasjonen.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Generer det valgte reparasjonssystemets GRUB-meny/oppsett etter den obligatoriske sikkerhetsforbedringen. Hjelperen sikkerhetskopierer menu.lt, bevarer hver eksisterende oppstartsoppføring og ruller tilbake på alle feil.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Generer det valgte systemets extlinux oppstartslasterkonfigurasjon. Denne arvelige frontend avslører ingen extlinux handling.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regenererer etch GRUB-legacy menu.lt-konfigurasjonen (støttet opp, hver oppføring bevart)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regenererer GRUB-konfigurasjonen (sikkerhetskopiert, hver oppføring bevart)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Reparer EFI / UKI boot bane.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Reparer det valgte systemets EFI / UKI oppstartssti. Denne arvelige frontend avslører ingen EFI-handling; Etch-målet er et BIOS/GRUB-legacy-system.</translation>
     </message>
     <message>
@@ -809,14 +809,14 @@
     </message>
     <message>
         <source>Restore the legacy SysV display manager configured for the selected system: the /etc/X11/default-display-manager entry and the missing runlevel S-symlink, with a backup and rollback, never starting the GUI. When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (menu.lst on this legacy GRUB; the serial console stays) so the prompt remains on the visible screen instead of going black. Available for the running host and a committed repair target.</source>
-        <translation type="unfinished" />
+        <translation>Gjenopprett den eldre SysV-skjermbehandleren som er konfigurert for det valgte systemet: /etc/X11/default-display-manager-oppføringen og den manglende runlevel-S-symlenken, med sikkerhetskopi og tilbakerulling, uten å starte GUI-en. Når oppstarten forventer en diskopplåsingsforespørsel, repareres også konsollrutingen: console=tty0 legges til sist på oppstartslasterens kommandolinje (menu.lst på denne eldre GRUB-en; seriekonsollen beholdes) slik at forespørselen forblir på den synlige skjermen i stedet for å bli svart. Tilgjengelig for den kjørende verten og et forpliktet reparasjonsmål.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Gjenoppretter /etc/X11/default-display-manager og den manglende sysv kjørenivå S-symlink uten å starte GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Gjenoppretter den konfigurerte skjermhåndtereren og oppstartslenken uten å starte GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Se gjennom den installerte kjerneoversikten og velg en betongkjernereparasjonshandling: fjern den eldste/supersed eller nyeste kjernen, fjern foreldreløse hoder/komponenter/byggestøtte, installer manglende overskrifter, installer en ufullstendig kjerne eller installer den arkiv-laterste kjernen. Ingenting fjernes eller endres før du velger en handling og bekrefter det. Den løpende kjernen er alltid beskyttet, og de gjenværende kjernene initramfs-bilder og oppstartslasterkonfigurasjonen regenereres etter fjerning.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Kjør den vaktede reparasjonen? Hjelperen holder sin simulering-første preflight og kjøretid vakter.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Kjør den skrivebeskyttede filsystemskontrollen for det valgte systemets rot- og /boot-filsystem og rapporter hver enhets kontrollverktøy og resultat uten å endre noe. Denne gamle frontend avslører kun lesebeskyttede kontroller; enhetsreparasjon er ikke kablet.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Kjør det skrivebeskyttede filsystemet sjekk på det valgte systemets rot- og /boot-filsystem, og reparer deretter bare enhetene som rapporterer feil. Etch-sjekkverktøyene (e2fsck for ext2/ext3) kjører først etter at hjelperen frigjør sine skrivebeskyttede monteringer; et fremdeles montert filsystem blir aldri reparert offline og ustøtte filsystemer blir rapportert i stedet for å gjette på.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Kjør den skrivebeskyttede sikkerheten.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Kjører det skrivebeskyttede filsystemets sjekk for det valgte systemets rot, / boot og andre filsystemer.</translation>
     </message>
     <message>
@@ -921,7 +921,7 @@
     </message>
     <message>
         <source>Simulates the APT transaction, then applies a safe upgrade</source>
-        <translation type="unfinished" />
+        <translation>Simulerer apt-transaksjonen, og bruker deretter en trygg oppgradering</translation>
     </message>
     <message>
         <source>Software RAID</source>
@@ -1008,7 +1008,7 @@
         <translation>Det valgte omfanget har ingen støttet filtype for en skrivebeskyttet sjekk.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Det valgte omfangets rot, /boot, ESP og /home-filsystem kan ikke løses.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Valider miljø</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Gå en bevisstyrt interaktiv sesjon for å reparere kjernen GPU driveren (nvidia/nouveau/amdgpu/radeon/mesa), påfør bare det lille vaktede trinnet du velger med sin egen rulle tilbake. To beslutningspunkter veileder sesjonen: kjerne-vs-driver (replacer den nyeste kjernen som driveren ikke kan bygge mot, eller fjern den eldre kjernen driveren er festet til) og feildriver (rense feil driver, installere den riktige, og gjenoppbygge den mot hver installert kjerne). En separat en-boot nomodeset reserve når en konsoll på en ødelagt driver.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Gå en evidensdrevet interaktiv økt for å reparere GPU-driveren; menyen tilpasser seg diagnostiske bevis, hvert bevoktet trinn er re-verifisert i dette vinduet før neste alternativ, og en en-boot nomodeset reserve holder en konsoll tilgjengelig på en ødelagt driver.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1373,7 +1373,7 @@
     </message>
     <message>
         <source>the pacman transaction reported no packages to install, upgrade or remove</source>
-        <translation type="unfinished" />
+        <translation>pacman-transaksjonen rapporterte ingen pakker å installere, oppgradere eller fjerne.</translation>
     </message>
     <message>
         <source>the read-only check reported no errors</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>Validering er skrivebeskyttet</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Input enheter / tastatur</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Nettverk/tilkobling</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Går gjennom inngangsenhet-stakken: oppdagede tastatur/mus/berøringsplate-enheter og -klasser, de innlastede, innebygde, tilgjengelige og svartelistede HID/tastatur-kernel-modulene, busskontroller-tilstand, tastaturoppsettet, initramfs-inkluderingen og det innebygde tastaturmodul-beviset for LUKS-opplåsings­prompten, pluss nylig oppstartsbevis.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Anmeld nettverksstabelen: detektert konfigurasjonsmotor, adaptere og deres bundet drivere/moduler, svartliste og fastvaretilstand, og den kjører vertens rute, DNS og avgrenset rekkevidde, uten å endre noe.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>skrivebeskyttet inngangsenhet og initramfs tastaturkontroll</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>skrivebeskyttet nettverksadapter og tilkoblingskontroll</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Reparasjon av inngangsenhet</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Reparere inngangsenheter</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Gå en evidensdrevet interaktiv sesjon for å reparere tastatur, mus og styreplate inngang; menyen tilpasser seg diagnostiske bevis, hver handling er bekreftet i dette vinduet før neste alternativ, og de bevoktede trinnene dekker drivere, moduler, firmware, svartelister, HID tilbakefall og initramfs tastaturmoduler.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Velg en input enhet reparasjon handling fra bevis.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Nettverks-/tilkoblingsreparasjon</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Reparasjonsnettverk</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Gå en evidensdrevet interaktiv sesjon for å reparere nettverksstabelen; menyen tilpasser seg diagnostiske bevis, hver handling er bekreftet i dette vinduet før neste alternativ, og de bevoktede trinnene dekker drivere, moduler, firmware, blacklists, initramfs NIC moduler, adressering, ruter og DNS. Direkte tilkoblingsendringer berører aldri grensesnittet som holder standardruten.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Velg en nettverksreparasjon av bevisene.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Ikke tilgjengelig: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1564,7 +1620,7 @@ Ikke tilgjengelig: %1</translation>
         <translation>; best detektert systemkomponent: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt; Denne GUI er pakkens inngangspunkt: en Qt 3.3.x frontend med den porterte bevoktede hjelperen for Debian Etch-era-systemer.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded reparasjonsmodus:&lt;/b&gt; lesebeskyttede diagnostikk kan inspisere enten den beskyttet Kjøreverten eller en eksplisitt valgt reparasjonsstasjon. De bevoktede Debian/APT-pakkestadiene (avbrutt konfigurasjon, brutt avhengighet, metadataoppdatering, oppgradering), GRUB-legacy-konfigurasjon regenerering, LUKS-målopplåsing og bevoktet målfilredigering kjører gjennom den porterte hjelperen etter bekreftelse; Vertsvedlikehold gjør det mulig for de samme støttede stadiene på det aktive systemet etter å ha gjentatt vertsidentitets- og oppstartsmonteringskontrollene.&lt;/p&gt; De moderne funksjonene - bekreftet File Copy, Btrfs øyeblikksbilderollback, EFI/UKI og extlinux reparasjon, boot-stack forsoning og Make Default - er grått med hjelperens egne probe grunner på denne frontend; Arch/Alpine/Fedora pakkebackends forblir diagnostics-bare her. &lt;/p&gt;&lt;p&gt; Den første privilegerte handlingen autoriserer én cached administratorøkt per omfang gjennom en skjult-input modal (Qt GUI forblir upriviligert). Den kan avsluttes når som helst fra File - Lock Administrator Session.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1697,7 +1753,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
     </message>
     <message>
         <source>Administrator authorization session locked by the user; the cached session was dropped and the next privileged action requests the password again. Any LUKS mapping opened earlier remains open for this recovery session (the legacy helper exposes no close verb).</source>
-        <translation type="unfinished" />
+        <translation>Administratorautorisasjonsøkten ble låst av brukeren; den hurtigbufrede økten ble droppet og den neste privilegerte handlingen ber om passordet på nytt. Enhver LUKS-tilordning som ble åpnet tidligere, forblir åpen for denne gjenopprettingsøkten (den eldre hjelperen tilbyr ikke noe lukke-verb).</translation>
     </message>
     <message>
         <source>Administrator authorization was cancelled; the command was not started.</source>
@@ -1772,7 +1828,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
         <translation>Automatisk installasjon vil kreve eksplisitt pakkekartlegging og privilegier autorisasjon.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Automatisk installasjon vil kreve eksplisitt pakkekartlegging og privilegie autorisasjon; installerer den valgte manglende evne foreslått pakke på det aktuelle omfanget (running vert eller forpliktet reparasjonsmål) gjennom den bevoktede hjelperen.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
         <translation>Boot Bitch arv GUI klar. Hver privilegert kommando kjører gjennom den portede hjelperen; handlinger forblir deaktivert til et reparasjonsmål er forpliktet (eller Host Maintenance er aktiv) og diagnostikk rapportere sin evne linje.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch må kjøre fra en annen oppstart Linux-miljø enn systemet som blir reparert. Bruk en Linux live-medium eller en annen Linux-installasjon på en annen fysisk stasjon.&lt;br&gt;&lt;br&gt; Kjøreverten er beskyttet mot vanlig reparasjonsmålvalg, men den kan eksplisitt velges gjennom &lt;b&gt;Host vedlikehold&lt;/b&gt; for bevoktet morsmålsdiagnosikk og støttet vedlikeholdsstadier.&lt;br&gt;&lt;br&gt; Diagnostika følger systemsiden: den engasjerte reparasjonsstasjonen mens vertsvedlikehold er av, eller den beskyttede kjørerverten mens den er aktiv.&lt;br&gt;&lt;br&gt; Den første privilegerte handlingen ber administrator om autorisasjon én gang for dette Boot Bitch-vinduet; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; avslutter den hjelpeøkten umiddelbart. Hver reparasjon holder hjelpens egne kjøretid førfly.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
         <translation>Bla gjennom reparasjonsmapper...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Bla gjennom det reparerte systemets mapper skrivebeskyttet og stadiet den valgte mappen.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Bla gjennom det valgte reparasjonssystemet gjennom hjelperens midlertidige skrivebeskyttede monteringer og velg en absolutt destinasjonssti. Ingen målfiler endres mens du surfer.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
         <translation>Velg vertsmålmappe</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Velg hvilke cachede omfangsfunksjoner tabellen viser.</translation>
     </message>
     <message>
@@ -1913,7 +1969,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
     </message>
     <message>
         <source>Chroot Shell</source>
-        <translation>Groot Shell</translation>
+        <translation>Chroot Shell</translation>
     </message>
     <message>
         <source>Chroot shell</source>
@@ -2064,7 +2120,7 @@ Skriv passordet til %2 (sudo). Den brukes kun for denne sudo-autentiseringen, se
         <translation>Kopier og verifiser</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Kopier og verifiser filer i hver retning gjennom den bevoktede hjelpen (cp -a pluss eierskap restaurering og en per-fil byte-kompare). Hjelperens fil-kopi sondeporter kontroller og holder retning og sti inneslutningskontroller.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ Hjelperen beholder retnings- og baneinnbeholdskontrollene; et sensitivt reparasj
         <translation>Skriv inn kommandoen for å kjøre først.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Skriv inn enhetsnumrene for å reparere (rom- eller kommaseparert, for eksempel "1 3") eller 0 for å hoppe over.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Skriv inn enhetsnumrene for å reparere (rom- eller kommaseparert, for eksempel &quot;1 3&quot;) eller 0 for å hoppe over.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Skriv inn passordet for %1.
 
 Den sendes bare til kryptsett over hjelperens standardinngang og er aldri logget eller plassert på en kommandolinje.</translation>
@@ -2276,7 +2332,7 @@ Den sendes bare til kryptsett over hjelperens standardinngang og er aldri logget
         <translation>Etabler den privilegerte hjelpeøkten for det nåværende omfanget nå.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etch-era-målkonfigurasjonsfiler; tilgjengelighet er kun lesebeskyttet av hjelperens diagnostikk.</translation>
     </message>
     <message>
@@ -2461,7 +2517,7 @@ Den sendes bare til kryptsett over hjelperens standardinngang og er aldri logget
     </message>
     <message>
         <source>Host Shell</source>
-        <translation>Vært Shell</translation>
+        <translation>Verts Shell</translation>
     </message>
     <message>
         <source>Host capabilities and dependencies</source>
@@ -2554,12 +2610,12 @@ Hjelperen sjekker uavhengig om at den valgte disken rygger /, / boot og /boot/EF
         <translation>Installere manglende støtte...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Installere pakken '%1' i det valgte reparasjonsmålet gjennom den vaktede pakkebakstykket? Dette endrer reparasjonsmålet og ugyldiggjør cache-diagnostikk.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Installere pakken &apos;%1&apos; i det valgte reparasjonsmålet gjennom den vaktede pakkebakstykket? Dette endrer reparasjonsmålet og ugyldiggjør cache-diagnostikk.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Installere pakken '%1' på den kjørende verten gjennom den bevoktede pakkemotoren? Dette endrer den løpende verten og ugyldiggjør cache-kjøringsvert diagnostikk.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Installere pakken &apos;%1&apos; på den kjørende verten gjennom den bevoktede pakkemotoren? Dette endrer den løpende verten og ugyldiggjør cache-kjøringsvert diagnostikk.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2635,7 +2691,7 @@ Hjelperen sjekker uavhengig om at den valgte disken rygger /, / boot og /boot/EF
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Gjør den kanonisk installerte kjerneoppføringen til standard GRUB-legacy oppstartsoppføring på den kjørende verten?
 
-Hjelperen verifiserer /boot/grub/menu.lt, angir \"standard &lt;N&gt;\"-direktivet til den kanoniske oppføringen, backer menyen opp først og gjenoppretter det på enhver feil.</translation>
+Hjelperen verifiserer /boot/grub/menu.lt, angir \&quot;standard &lt;N&gt;\&quot;-direktivet til den kanoniske oppføringen, backer menyen opp først og gjenoppretter det på enhver feil.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2648,6 +2704,50 @@ Hjelperen verifiserer /boot/grub/menu.lt, angir \"standard &lt;N&gt;\"-direktive
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Manglende skjermhåndtering: installer %1-pakken fra funksjonstabellen.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI verktøy</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>GRUB konfigurasjonsverktøy</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB installasjonsverktøy</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Manglende %1: installer matchende pakke(r) %2 fra Boot-funksjonstabellen.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Manglende %1: installere den matchende pakken fra Boot-funksjonstabellen.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI-bygger</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>boot-stack forutsetning</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>iitramfs-verktøy</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2694,8 +2794,12 @@ Hjelperen verifiserer /boot/grub/menu.lt, angir \"standard &lt;N&gt;\"-direktive
         <translation>Nyeste installert kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Ingen 'Legacy-funksjonsskal:'-linje er cached; kjøre diagnostikk for det valgte omfanget for å evaluere hjelperens rot-/tidutholdningssonder (feil lukket).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Kernel bygge kompilator: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Ingen &apos;Legacy-funksjonsskal:&apos;-linje er cached; kjøre diagnostikk for det valgte omfanget for å evaluere hjelperens rot-/tidutholdningssonder (feil lukket).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
         <translation>Ingen diagnostiske resultater å spare ennå.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Ingen filsystemfeil ble oppdaget på %1 root, /boot eller /home filsystemer. Ingen reparasjon ble kjørt.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
         <translation>Ingen reparasjonsverktøy er valgt.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>Ingen reparerbare filsystemfeil ble oppdaget på %1-roten, /boot eller /home-filsystemene, men %2. Ingen reparasjon ble kjørt.</translation>
     </message>
     <message>
@@ -2835,10 +2939,10 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
     </message>
     <message>
         <source>OK</source>
-        <translation type="unfinished" />
+        <translation>OK</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Frakoblede kommandoer kjører en om gangen i en frisk chroot og kan ikke svare på interaktive spørsmål (apt-get -y oppgradering fungerer). Host-shell-kommandoer kjører direkte på den løpende verten. Hjelperens probe linjer port kommandofeltet; den nøyaktige grunnen vises i verktøytipset.</translation>
     </message>
     <message>
@@ -2899,7 +3003,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
     </message>
     <message>
         <source>PROTECTED - running system; read-only details only</source>
-        <translation>PROTECTED - kjøresystem; kun skrivebare detaljer</translation>
+        <translation>PROTECTED - kjøresystem; kun skrivebeskyttede detaljer</translation>
     </message>
     <message>
         <source>Package manager family:</source>
@@ -3003,11 +3107,11 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
     </message>
     <message>
         <source>Rebuild DKMS modules</source>
-        <translation type="unfinished" />
+        <translation>Bygg om DKMS-moduler</translation>
     </message>
     <message>
         <source>Rebuild all initramfs images</source>
-        <translation type="unfinished" />
+        <translation>Bygg om alle initramfs bilder</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -3026,12 +3130,12 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
         <translation>Oppdater enheter</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Generer %1 GRUB konfigurasjonen</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
-        <translation type="unfinished" />
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
+        <translation>Generere %1 extlinux-konfigurasjonen</translation>
     </message>
     <message>
         <source>Regenerates the cached read-only diagnostics for the current scope after an operation that invalidates them (LUKS unlock, target configuration edit). It runs only inside an already authorized administrator session and never opens an authorization prompt by itself.</source>
@@ -3159,7 +3263,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
     </message>
     <message>
         <source>Run Diagnostic - %1</source>
-        <translation type="unfinished" />
+        <translation>Kjør diagnostikk - %1</translation>
     </message>
     <message>
         <source>Run Diagnostic - run the selected read-only diagnostic for the current scope.</source>
@@ -3186,7 +3290,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
         <translation>Kjøre en kommando inne i det valgte reparasjonssystemet som root (sudo er ikke nødvendig). Kommandoer utføres én om gangen i en frisk krone og kan ikke svare på interaktive spørsmål; bruk ikke-interaktive flagg som apt-get -y oppgradering. Utgang holdes i dette vinduet og i programloggen.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Kjør en kommando på den løpende verten som rot (Host Shell) eller inne i det valgte reparasjonssystemet som rot (Chroot Shell); sudo er ikke nødvendig i heller. Host-Shell-kommandoer utføres direkte på det aktive systemet; chroot-kommandoer utføres én om gangen i en frisk krone og kan ikke svare på interaktive spørringer, så ikke-interaktive flagg som apt-get -y-oppgradering forblir anbefalt for utilsiktede løp. Utgang holdes i dette vinduet og i programloggen. Hjelperens skrivebeskyttede sonder porter kommandofeltet; mens Shell er utilgjengelig siden viser den nøyaktige grunnen under feltet.</translation>
     </message>
     <message>
@@ -3206,23 +3310,23 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
         <translation>Kjør diagnostikk for dette omfanget for å låse opp de portede handlingene. Diagnostikk er bare leselig og den eneste beviskilden.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
-        <translation>Kjør diagnostikk til å sonde hvilke mål konfigurasjonsfiler som eksisterer; hjelperens skrivebare probe bestemmer listen.</translation>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
+        <translation>Kjør diagnostikk til å sonde hvilke mål konfigurasjonsfiler som eksisterer; hjelperens skrivebeskyttede probe bestemmer listen.</translation>
     </message>
     <message>
         <source>Run on Host</source>
         <translation>Kjør på vert</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Kjør ett reparasjonsverktøy eller bruk Full Repair-planen mot den valgte reparasjonsstasjonen. Velg vertsvedlikehold på systemer for å kjøre de samme støttede, bevoktede stadiene mot den beskyttede verten. Velg Full Reparasjon stadier i Innstillinger. Aktiverte stadier kjører i den viste rekkefølgen. Hver konfigurerbar fase vises også under som et enkelt verktøy; Full Repair kolonnen speiler sin nåværende innstillingstilstand. Boot-verktøyene (GRUB konfigurasjon, boot-stack forsoning og Make Default) er uavhengige: kjører dem i enhver rekkefølge, og en senere handling bekrefter hva en tidligere endret og rapporterer sitt eget resultat. Det aktive omfanget vises ved siden av Repair: valgt reparasjonsstasjon eller vedlikehold av kjørerverten. Hver handling forblir deaktivert til de cachede funksjonslinjene sier tilgjengelig og hjelperen holder sin kjøretid forhåndsbelysning. Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist 'uendret' ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Kjør ett reparasjonsverktøy eller bruk Full Repair-planen mot den valgte reparasjonsstasjonen. Velg vertsvedlikehold på systemer for å kjøre de samme støttede, bevoktede stadiene mot den beskyttede verten. Velg Full Reparasjon stadier i Innstillinger. Aktiverte stadier kjører i den viste rekkefølgen. Hver konfigurerbar fase vises også under som et enkelt verktøy; Full Repair kolonnen speiler sin nåværende innstillingstilstand. Boot-verktøyene (GRUB konfigurasjon, boot-stack forsoning og Make Default) er uavhengige: kjører dem i enhver rekkefølge, og en senere handling bekrefter hva en tidligere endret og rapporterer sitt eget resultat. Det aktive omfanget vises ved siden av Repair: valgt reparasjonsstasjon eller vedlikehold av kjørerverten. Hver handling forblir deaktivert til de cachede funksjonslinjene sier tilgjengelig og hjelperen holder sin kjøretid forhåndsbelysning. Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist &apos;uendret&apos; ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Kjør én omdøpt kommando som rot inne i målet croot gjennom hjelperens bevoktede skall verb.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Kjøre en revurdert kommando som rot på den løpende verten gjennom hjelperens bevoktede vertsskal verb.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Trykk på autorisasjon på Systemer eller Reparasjon-fanen for å etablere sesjo
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Kjøre hele reparasjonen?
@@ -3263,7 +3367,7 @@ Hjelperen holder sin kjøringstid preflights; kommandoen blir passert som ett ar
     </message>
     <message>
         <source>Run this guarded repair action using the cached read-only diagnostic evidence. A confirmation is shown first.</source>
-        <translation>Kjøre denne bevoktede reparasjonshandlingen ved hjelp av den cachede skrivebare diagnostiske bevis. En bekreftelse vises først.</translation>
+        <translation>Kjøre denne bevoktede reparasjonshandlingen ved hjelp av den cachede skrivebeskyttede diagnostiske bevis. En bekreftelse vises først.</translation>
     </message>
     <message>
         <source>Running %1 diagnostic: %2</source>
@@ -3295,7 +3399,7 @@ Hjelperen holder sin kjøringstid preflights; kommandoen blir passert som ett ar
     </message>
     <message>
         <source>Running kernel: %1.</source>
-        <translation type="unfinished" />
+        <translation>Kjører kjerne: %1.</translation>
     </message>
     <message>
         <source>Running system protection unresolved</source>
@@ -3386,7 +3490,7 @@ Hjelperen holder sin kjøringstid preflights; kommandoen blir passert som ett ar
         <translation>Velg en fysisk stasjon i listen over tilgjengelige reparasjonsmål i kategorien Systemer først, eller bruk vertsvedlikehold for den beskyttede verten.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Velg en fysisk stasjon; Boot Bitch løser det mest sannsynlige Linux systemvolumet automatisk. Den løpende verten forblir beskyttet mot vanlige målreparasjoner, med en separat eksplisitt vertsvedlikeholdsvei for sitt eget system. Detaljer-knappen viser den beskyttede vertens fakta i detaljruten; å velge en enhetsrad gjenoppretter per drivruten.</translation>
     </message>
     <message>
@@ -3451,7 +3555,7 @@ Hjelperen holder sin kjøringstid preflights; kommandoen blir passert som ett ar
     </message>
     <message>
         <source>Send</source>
-        <translation type="unfinished" />
+        <translation>Send</translation>
     </message>
     <message>
         <source>Session</source>
@@ -3512,6 +3616,14 @@ Hjelperen holder sin kjøringstid preflights; kommandoen blir passert som ett ar
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Vis enheter uten identifisert Linux-installasjon</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Når av, skjuler lesebeskyttede squashfs containervolumer (snap-stil) som ikke kan installere Linux-mål.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Vis squashfs-løkkeenheter</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3667,7 +3779,7 @@ Metode: hjelpebekreftet kartlegging fra den siste lesebeskyttede diagnosen.</tra
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished" />
+        <translation>Status</translation>
     </message>
     <message>
         <source>Status:</source>
@@ -3679,7 +3791,7 @@ Metode: hjelpebekreftet kartlegging fra den siste lesebeskyttede diagnosen.</tra
     </message>
     <message>
         <source>Stop the running shell command.</source>
-        <translation type="unfinished" />
+        <translation>Stopp den kjørende Shell-kommandoen.</translation>
     </message>
     <message>
         <source>Stopping the running diagnostic... The Logs tab keeps the complete transcript.</source>
@@ -3691,11 +3803,11 @@ Metode: hjelpebekreftet kartlegging fra den siste lesebeskyttede diagnosen.</tra
     </message>
     <message>
         <source>Stopping the running shell command... The Logs tab keeps the complete transcript.</source>
-        <translation type="unfinished" />
+        <translation>Stopper den kjørende Shell-kommandoen... Fanen Logs beholder den fullstendige transkripsjonen.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Foreslått pakke</translation>
+        <source>Packages</source>
+        <translation>Pakker</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3756,8 +3868,8 @@ Den løpende verten er uavhengig re-kontrollert og nektet av den privilegerte hj
         <translation>Full Repair-planen kjører de valgte arvestadiene i rekkefølge gjennom den bevoktede hjelperen; de enkelte verktøyene kjører ett trinn om gangen. Hver handling forblir deaktivert til de cachede funksjonslinjene sier tilgjengelig og hjelperen holder sin kjøretid forhåndsbelysning.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Full Repair-planen kjører de valgte arvestadiene i rekkefølge gjennom den bevoktede hjelperen; de enkelte verktøyene kjører ett trinn om gangen. Hver handling forblir deaktivert til de cachede funksjonslinjene sier tilgjengelig og hjelperen holder sin kjøretid forhåndsbelysning. Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist 'uendret' ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Full Repair-planen kjører de valgte arvestadiene i rekkefølge gjennom den bevoktede hjelperen; de enkelte verktøyene kjører ett trinn om gangen. Hver handling forblir deaktivert til de cachede funksjonslinjene sier tilgjengelig og hjelperen holder sin kjøretid forhåndsbelysning. Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist &apos;uendret&apos; ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3785,7 +3897,7 @@ Trykk på Autoriser på Systemer eller Reparer fanen for å gjenopprette sesjone
     </message>
     <message>
         <source>The complete session register; Save As... writes every entry even while a filter hides lines. If a writable system share mount exists at /host, Save As... starts there; otherwise the log directory is the fallback. Prior session files are listed read-only.</source>
-        <translation>Det komplette øktregisteret; Lagre som... skriver hver oppføring selv om et filter skjuler linjer. Hvis det finnes en bærbar systemdelingsmontering ved /host, starter Lagre som... der; ellers er loggkatalogen tilbakefall. Tidligere øktfiler er oppført skrivebare.</translation>
+        <translation>Det komplette øktregisteret; Lagre som... skriver hver oppføring selv om et filter skjuler linjer. Hvis det finnes en bærbar systemdelingsmontering ved /host, starter Lagre som... der; ellers er loggkatalogen tilbakefall. Tidligere øktfiler er oppført skrivebeskyttet.</translation>
     </message>
     <message>
         <source>The edited content contains NUL bytes; the guarded write refuses it.</source>
@@ -3845,7 +3957,7 @@ Trykk på Autoriser på Systemer eller Reparer fanen for å gjenopprette sesjone
     </message>
     <message>
         <source>The read-only probe found no editable target configuration file in this target. %1</source>
-        <translation>Den skrivebare sonden fant ingen redigerbar målkonfigurasjonsfil i dette målet. %1</translation>
+        <translation>Den skrivebeskyttede sonden fant ingen redigerbar målkonfigurasjonsfil i dette målet. %1</translation>
     </message>
     <message>
         <source>The repair plan made no changes; cached diagnostics remain valid.</source>
@@ -3900,7 +4012,7 @@ Trykk på Autoriser på Systemer eller Reparer fanen for å gjenopprette sesjone
         <translation>Det valgte omfanget har ingen løst rotkomponent; bruk Oppdater enheter og gjør reparasjonsmålet igjen.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Disk- og rotkomponenten for det valgte omfanget kunne ikke løses.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Trykk på Autoriser på Systemer eller Reparer fanen for å gjenopprette sesjone
         <translation>Denne krypterte stasjonen har ikke noe synlig Linux-filsystem ennå. Bruk Lås opp, oppdater enhetene og velg målet etter at Linux-roten er oppdaget.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Denne gamle frontend avslører ingen %1-handling; hjelperen rapporterer evnen som tilgjengelig.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Tilgjengelig som en diagnostisk / kapabilitet bare - denne arven frontend avslører ingen reparasjonshandling; kjøre den interaktive reparasjonen fra det moderne GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ Hjelperen åpner en midlertidig enhetskartlegging med kryptosett og holder den �
         <translation>ADVARSEL: den lagrede GUI-innstillingsfilen %1 kan ikke leses; alternativene leses som standard, ikke som de lagrede verdiene.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>ADVARSEL: den lagrede GUI-innstillingsfilen %1 kan ikke leses eller fjernes; alternativene leses som standard. Fjern den (eller gjør ~/.qt skrivbar) slik at lagrede innstillinger kan vedvare igjen.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Fjernet %1 uleselige utdaterte innstillingsfil(er): %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Kunne ikke fjerne de uleselige utdaterte innstillingsfil(er) %1; standard gjelder inntil de fjernes.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Når av, er stasjoner med en kryptert enhet skjult til volumet er låst.</translation>
     </message>
@@ -4064,8 +4188,8 @@ Hjelperen åpner en midlertidig enhetskartlegging med kryptosett og holder den �
         <translation>Bryt lange logglinjer</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist 'uendret' ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Skriv handlinger ber om bekreftelse og kjør deretter hjelperens egen kjøretid preflights; GUI svekker dem aldri. En reparasjon som ikke er bevist &apos;uendret&apos; ugyldiggjør de cachede diagnostikkene og deaktiverer de gated actions til diagnosen kjører igjen.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,8 +4224,8 @@ Hjelperen åpner en midlertidig enhetskartlegging med kryptosett og holder den �
         <translation>administratorgodkjenning</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>høyde krever et interaktivt sudo passord; kjøre røyken som rot eller etter 'sudo -S -v' med --elevate 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>høyde krever et interaktivt sudo passord; kjøre røyken som rot eller etter &apos;sudo -S -v&apos; med --elevate &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4180,7 +4304,7 @@ Kommandoen ble ikke startet.</translation>
         <translation>utilgjengelig - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>utilgjengelig: se hjelperens Legacy-funksjon fil-kopi: sonde grunn over</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ Kommandoen ble ikke startet.</translation>
         <source>your account</source>
         <translation>din konto</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Lager nyeste kernel: %1 (nyere enn den installerte nyeste; %2).</translation></message><message><source>Try Again</source><translation>Prøv igjen</translation></message><message><source>Enter the note text</source><translation>Skriv inn notatteksten</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Dette notatet vil bli lagt til i den valgte øktloggen %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>MERK vedlagt forrige økt logg %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Den valgte loggoppføringen er ikke en gyldig øktlogg. Noten ble ikke skrevet.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Den valgte øktloggen %1 er ikke skrivbar; notatet ble ikke lagt til.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Lager nyeste kernel: %1 (nyere enn den installerte nyeste; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Prøv igjen</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Skriv inn notatteksten</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Dette notatet vil bli lagt til i den valgte øktloggen %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>MERK vedlagt forrige økt logg %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Den valgte loggoppføringen er ikke en gyldig øktlogg. Noten ble ikke skrevet.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Den valgte øktloggen %1 er ikke skrivbar; notatet ble ikke lagt til.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Ingen cachede kjøre-vert-diagnostikker; kjører skrivebeskyttede vertsdiagnostikker i vertsvedlikehold for å populere denne raden.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - avbrutt - stoppet på din forespørsel</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1-fasen(e) rapporterte endringer før stopp; disse endringene påføres og de berørte diagnostikkene ble regenerert</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>et trinn rapporterte en endring før stopp; endringene kan allerede brukes</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>Ingen endringer ble gjort</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Installert</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Reparerer EFI / UKI boot bane for UEFI systemer</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Bevisdrevet tastatur, mus og styreplate reparasjon gjennom hjelperens interaktive meny</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Bevisdrevet nettverksreparasjon gjennom hjelperens interaktive meny; levende tilkoblingsendringer berører aldri grensesnittet som holder standardruten</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Pakker er ikke tilgjengelige i dette systemets arkiver</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 firmware oppstartsoppføringer lastet skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware-oppføringsvisning er tilgjengelig. Last oppføringer for å vise UEFI-oppføringene skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Boot</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Støvl oppføringer oppdatere nektet: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Oppstartslisteresultatet kastet: omfanget endret mens forespørselen kjørte.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Støvler</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Klasse</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Klasse: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Direkte (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Drive</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI oppstartsposter</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Fallback</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Firmware oppstartsoppføringer kan ikke lastes. Se logger for detaljer.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Oppføringslisten for firmware mislyktes.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB-menyen</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Merke: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Liste firmware oppstartsoppføringer</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Listet i BootOrder: nei (mottatt av firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Listet i BootOrder: ja</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Last oppføringer</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Last %1 UEFI firmware oppstartsoppføringer skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Lastet %1 %2 firmware boot entr%3 skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Laster</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Lastemaskin: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Laster %1 UEFI firmware oppstartsoppføringer skrivebeskyttet for %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Nettverk</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Ingen UEFI firmware oppstartsoppføringer ble funnet - dette systemet er BIOS/legacy eller mangler efibootmgr, så det er ingen firmware boot rekkefølge å administrere.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Ingen omfang valgt</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Andre</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Reparasjonsmål: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Reparasjonsmål: ikke klar</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Reparasjonsmål</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Rolle: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Kjørevert: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Kjører vert: ikke valgt</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Running-host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Velg Vertsvedlikehold på den kjørernde verten, eller et reparasjonsmål i Systems, for å administrere firmware oppstartsoppføringer.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Velg Vertsvedlikehold på den kjørernde verten, eller et reparasjonsmål i Systems, for å administrere firmware oppstartsoppføringer. Last oppføringer viser gjeldende omfang UEFI-oppføringer skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>UEFI firmware oppstartsoppføringene (den kjørernde vertens NVRAM) er oppført skrivebeskyttet her. I Host Maintenance ser du den kjørernde vertens egne oppføringer; med et reparasjonsmål forpliktet du se NVRAM-oppføringene som partisjonspunkter på den enhetens EFI systempartisjon. Denne visningen endrer aldri firmware; en BIOS-beskyttet vert (Etch) har ingen firmware oppstartsoppføringer og lister ingen. GRUB oppstartsmenyen (listen over kjerner inne i GRUB) er separat og regenereres av GRUB eller boot-stack reparasjon.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>UEFI firmware oppstartsoppføringer i BootOrder, oppført skrive-beskyttet.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Denne oppføringen er for tiden aktiv (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Kan ikke slette %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>Reparasjon mål</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>Reparasjonsmål</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>kjører vertens</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>kjøringsvert</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>EFI-oppføringer</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Startmeny</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Bytt mellom UEFI firmware-oppføringene og oppstartsmenyen.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Menyoppføring</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Den skrivebeskyttede oppstartsmenyen (startlasterens kjerne-/OS-oppføringer i fil rekkefølge).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>%1 oppstartsmenyoppføringer lastet skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 oppstartsmenyvisning er tilgjengelig. Velg Boot Menu for å vise oppstartsmenyen skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware-oppføringsvisning er tilgjengelig. Velg EFI-oppføringer for å vise UEFI-oppføringene skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Velg vertsvedlikehold på den løpende verten, eller et reparasjonsmål i Systemene, for å se firmware oppstartsoppføringer. Velg EFI-oppføringer eller oppstartsmeny over for å laste inn gjeldende omfangsoppføringer.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Laster %1 oppstartsmenyen skrivebeskyttet for %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Liste boot menu</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Oppfrisking av oppstartsmeny nektet: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Startmenylisten mislyktes.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Oppstartsmeny-reservealternativ nektet: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Startmenylisteresultatet kastet: omfanget endret mens forespørselen kjørte.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Menyoppføring: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Oppførings-ID: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Dette er en undermeny.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Laster inn konfigurasjon: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Utenlandsk: peker på en annen stasjon eller partisjon.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Standard oppføring: ja</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Standard oppføring: no</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Standard</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (undermeny)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Lastet %1 oppstartsmeny-oppføring%2 skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Ingen GRUB-arve menu.lt på dette omfanget; prøver GRUB grub.cfg oppstartsmenyen skrivebeskyttet.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Ingen oppstartsmenykonfigurasjon ble funnet på denne enheten. Systemet kan ha ingen GRUB, extlinux/syslinux eller GRUB gamle oppstartsmeny, eller dens konfigurasjon bor andre steder.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Konfigurasjonen av oppstartsmenyen eksisterer, men viser ingen oppføringer.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Startmenyen kunne ikke lastes. Se logger for detaljer.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>standard</translation>
+    </message>
+</context>
 </TS>

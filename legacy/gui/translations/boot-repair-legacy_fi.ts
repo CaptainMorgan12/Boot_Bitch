@@ -17,7 +17,7 @@
     </message>
     <message>
         <source>APT package lists are byte-identical and no repository index was fetched</source>
-        <translation type="unfinished" />
+        <translation>APT-pakettiluettelot ovat identtisiä eikä arkistoindeksiä haettu.</translation>
     </message>
     <message>
         <source>Added repaired-system folder path to the Repair \xE2\x86\x92 Host staging list: %1. No copy occurred.</source>
@@ -48,12 +48,12 @@
         <translation>Alpine käyttää apk:ää; dpkg:n konfigurointia ei ole saatavilla Alpinella.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Alpin päävarastossa ei ole omistusoikeudellista NVIDIA DKMS -ajuria; tässä kohteessa ei ole saatavilla GPU-ajurivaihtoa.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Vaihtoehtoinen bootloader; Etsi saappaat GRUB-legacyn kautta, joten extlinux ei ole osa oletuskäynnistyspolkua</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Vaihtoehtoinen bootloader; tässä järjestelmässä extlinux ei ole osa oletus käynnistyspolkua</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -93,11 +93,11 @@
     </message>
     <message>
         <source>Boot diagnostics</source>
-        <translation>Saapasdiagnostiikka</translation>
+        <translation>Käynnistysdiagnostiikka</translation>
     </message>
     <message>
         <source>Boot errors</source>
-        <translation>Saapasvirheet</translation>
+        <translation>Käynnistysvirheet</translation>
     </message>
     <message>
         <source>Boot evidence and selection history</source>
@@ -108,7 +108,7 @@
         <translation>Boot pino täsmäytys</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Selaa korjatun järjestelmän kansioita vain lukea ja vaihe valittu kansio.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Tarkista ja korjaa havaitut tiedostojärjestelmät.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Tarkista valitun järjestelmän liitokset, tiedostojärjestelmän metatiedot, käynnistystiedostot, mapper johdonmukaisuus ja riippuvuus valmius ennen mitään korjausta. Tämä on riippumaton lentoa edeltävä turvallisuusvaihe eikä valinnainen täyskorjausvaihe.</translation>
     </message>
     <message>
@@ -181,7 +181,7 @@
     </message>
     <message>
         <source>Completes interrupted dpkg package configuration in the selected repair system</source>
-        <translation type="unfinished" />
+        <translation>Viimeistelee keskeytyneen dpkg-pakettikonfiguroinnin valitussa korjausjärjestelmässä</translation>
     </message>
     <message>
         <source>Correlates the detected boot chain, bootloader selection, kernel/initramfs and unlock evidence.</source>
@@ -224,8 +224,8 @@
         <translation>Debian-perhe initramfs -apulainen</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian-perhe initramfs auttaja; Etsissä uudelleenrakentaminen kulkee vartioidun tasankoperhonen takaisku</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Rakentaa uudelleen initramfs-vedokset asennetuille kerneleille</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Levyn käyttö</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Näyttää juoksuisännän tai valitun korjausjärjestelmän fstabin; korjausjärjestelmän tarkastus on asennettu vain luettavaksi.</translation>
     </message>
     <message>
@@ -333,7 +333,7 @@
     </message>
     <message>
         <source>Host</source>
-        <translation>Palvelin</translation>
+        <translation>Isäntä</translation>
     </message>
     <message>
         <source>Host+Target</source>
@@ -364,7 +364,7 @@
         <translation>Initramfs-varmennus</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Tarkkailee EFI/UKI-todisteita; ei saatavilla tästä vanhasta BIOS-etulinjasta auttajan luotaimen syyllä.</translation>
     </message>
     <message>
@@ -528,12 +528,12 @@
         <translation>Offline järjestelmäkorjaus</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Yksi vartioitu syöttö (mapper/cryptab validation, initramfs restruction, GRUB-legacy regeneration) läpi tasanko-perÃ¤inen takaisku</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Yksi suojattu syöttö: mapper/cryptab validation, initramfs restruction and bootloader configuration regeneration</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
-        <translation>Valinnainen LVM-varastotuki</translation>
+        <translation>Valinnainen LVM-tallennuspinon tuki</translation>
     </message>
     <message>
         <source>Optional Linux MD RAID support</source>
@@ -556,16 +556,16 @@
         <translation>Prosessin nimiavaruuden eristäminen</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Lue vain tämän rintaman; kernel poisto/siivous/asenna suorita apurin interaktiivinen valikko</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel:n poisto, puhdistus ja asennus ajavat auttimen interaktiivisen valikon läpi; mitään ei poisteta tai muuteta ennen kuin valitset toimen ja vahvistat sen</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Lue vain tämän eturintaman; GPU-kuljettajan korjaus kulkee auttimen kautta</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Näyttövetoinen GPU-ohjainkorjaus auttajamme interaktiivisella valikolla</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Valittujen järjestelmän juuri- ja/tai/boot-tiedostojärjestelmien lukutarkistus, korjaa sitten vain virheet ilmoittavia laitteita (e2fsck ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Lue vain valittujen järjestelmän juuri- ja /boot-tiedostojärjestelmien tarkistus, korjaa sitten vain virheet ilmoittavia laitteita</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>Rakenna initramfs uudelleen valitulle alueelle? Auttaja pitää mapper/cryptab ja varmuuskopiot ennen lentoa.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation type="unfinished" />
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Rakentaa uudelleen kernel-puun ulkopuoliset moduulit; vaaditaan vain, kun järjestelmä käyttää moduulien rakennusjärjestelmää.</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Tutkikaa saappaat.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Reconcile valitun korjausjärjestelmän boot pino yhdessä vartioidussa perintöpassissa: mapper/cryptab validointi, initramfs uudelleenrakentaminen ja GRUB-legacy kokoonpanon uudistaminen, komponentti varmuuskopioita ja esilentoja muuttumaton. Tämä on Etch vastaa modernia boot-stack sovintoa ja pysyy pois Full Repair suunnitelma.</translation>
     </message>
     <message>
@@ -665,7 +665,7 @@
     </message>
     <message>
         <source>Refreshes APT metadata without upgrading installed packages</source>
-        <translation type="unfinished" />
+        <translation>Päivittää apt-metatiedot päivittämättä asennettuja paketteja</translation>
     </message>
     <message>
         <source>Regenerate GRUB</source>
@@ -688,16 +688,16 @@
         <translation>Uudista extlinux-kokoonpano.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Uudista valitun korjausjärjestelmän GRUB-valikko/konfiguraatio pakollisen turvallisuuslennon jälkeen. Auttaja tukee valikkoa.lst, säilyttää kaikki olemassa olevat saappaat ja rullaa takaisin epäonnistumisia.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Uudista valitun järjestelmän extlinux-käynnistinasetukset. Tämä perinteinen eturintama ei paljasta extlinux-toimintaa.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regeneroi Etch GRUB-legacy-valikon.est asetukset (varmistettu, jokainen merkintä säilynyt)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Luo GRUB-kokoonpanon uudelleen (varmuuskopioitu, jokainen merkintä säilytetty)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Korjaa EFI / UKI boot polku.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Korjaa valitun järjestelmän EFI / UKI käynnistyspolku. Tämä perinteinen eturintama ei paljasta EFI-toimintaa; Etch-kohde on BIOS/GRUB-legaattijärjestelmä.</translation>
     </message>
     <message>
@@ -809,14 +809,14 @@
     </message>
     <message>
         <source>Restore the legacy SysV display manager configured for the selected system: the /etc/X11/default-display-manager entry and the missing runlevel S-symlink, with a backup and rollback, never starting the GUI. When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (menu.lst on this legacy GRUB; the serial console stays) so the prompt remains on the visible screen instead of going black. Available for the running host and a committed repair target.</source>
-        <translation type="unfinished" />
+        <translation>Palauta valitulle järjestelmälle määritetty perintö-SysV-näytönhallinta: /etc/X11/default-display-manager-merkintä ja puuttuva runlevel-S-symlinkki, varmuuskopioineen ja palautuksineen, käynnistämättä GUI:ta. Kun käynnistys odottaa levyn avauskehottetta, myös konsolin ohjaus korjataan: console=tty0 lisätään viimeiseksi käynnistyslataajan komentoriville (menu.lst tässä perintö-GRUBissa; sarjakonsoli säilyy), jotta kehote pysyy näkyvällä ruudulla eikä mene mustaksi. Saatavilla käynnissä olevalle isännälle ja sitoutuneelle korjauskohteelle.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Palauttaa /etc/X11/default-display-manager ja puuttuva sysv juoksutason S-symlink aloittamatta käyttöliittymää</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Palauttaa konfiguroidun näytönhallinnan ja sen startup-linkin käynnistämättä käyttöliittymää</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Tarkista asennetun ytimen varasto ja valitse yksi konkreettinen ytimen korjaustoiminto: poista vanhin/ylin tai uusin ydin, poista orvot otsikot/komponentit/rakentamistuki, asenna puuttuvat otsikot, asenna uudelleen keskeneräinen ydin tai asenna arkiston viimeisin ydin. Mitään ei poisteta tai muuteta ennen kuin valitset toimen ja vahvistat sen. Juokseva ydin on aina suojattu, ja loput ytimien initramfs-kuvat ja bootloader-asetukset regeneroidaan poiston jälkeen.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Suorittaa vartioitu korjaus? Auttaja pitää simulaatio-ensimmäinen lentoa ja ajoaika vartijat.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Suorita vain lukutiedostojärjestelmän tarkistus valitun järjestelmän juuri- ja /boot-tiedostojärjestelmät ja raportoi kunkin laitteen tarkistustyökalu ja tulos muuttamatta mitään. Tämä vanha etulinja paljastaa vain luku-vain tarkistus; laitteen korjaus ei ole kytketty.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Suorita vain lukutiedostojärjestelmän tarkistus valitun järjestelmän juuri- ja /boot-tiedostojärjestelmät, sitten korjata vain laitteita, jotka ilmoittavat virheitä. Etsi tarkistustyökalut (e2fsck ext2/ext3:lle) toimivat vasta sen jälkeen, kun apuri on julkaissut lukutaidot; edelleen asennettua tiedostojärjestelmää ei koskaan korjata offline-tilassa ja tuettuja tiedostojärjestelmiä raportoidaan sen sijaan, että ne olisivat arvanneet.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Suorita vain lukeminen ennen lentoa.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Suorittaa luku-vain tiedostojärjestelmän tarkistus valitun järjestelmän juuren, /saappaan ja muiden tiedostojärjestelmien.</translation>
     </message>
     <message>
@@ -921,7 +921,7 @@
     </message>
     <message>
         <source>Simulates the APT transaction, then applies a safe upgrade</source>
-        <translation type="unfinished" />
+        <translation>Simuloi apt-tapahtuman ja käyttää sitten turvallisen päivityksen</translation>
     </message>
     <message>
         <source>Software RAID</source>
@@ -1008,7 +1008,7 @@
         <translation>Valitulla soveltamisalalla ei ole tuettua tiedostojärjestelmän tyyppiä vain lukutarkistusta varten.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Valitun soveltamisalan juuria, /boot-, ESP- ja /home-tiedostojärjestelmiä ei voitu ratkaista.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Validointiympäristö</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Kävele näyttöohjatun interaktiivisen istunnon korjata ytimen GPU-ajuri (nvidia/nuveau/amdgpu/radeon/mesa), soveltamalla vain pieni vartioitu vaihe valitset oman rollback. Kaksi päätöspistettä opastaa istuntoa: ytimen-vs-driver (vaihda uusin ydin, jota kuljettaja ei voi rakentaa, tai poista vanhempi ydin, johon kuljettaja on kiinnitetty) ja väärä-driver (puhdista väärä kuljettaja, asenna oikea, ja rakentaa se uudelleen kaikkia asennettu ydin). Erillinen yksisaapas nomodeset-järjestelmä saavuttaa rikkinäisen kuljettajan konsolin.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Kävele näyttö-ohjatulla interaktiivisella sessiolla korjataksesi GPU-ajurin; valikko mukautuu diagnostiseen näyttöön, jokainen vartioitu vaihe tarkistetaan tässä ikkunassa uudelleen ennen seuraavaa vaihtoehtoa, ja yhden boot nomodeset varalla pitää konsolin tavoitettavissa rikki kuljettaja.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1173,7 +1173,7 @@
     </message>
     <message>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical</source>
-        <translation type="unfinished" />
+        <translation>dnf5 simuloi, ettei pakettimuutoksia tapahtunut, ja rpm-tietokanta on identtinen.</translation>
     </message>
     <message>
         <source>dpkg configuration is not available on Arch; use the Arch package transaction stages instead.</source>
@@ -1265,11 +1265,11 @@
     </message>
     <message>
         <source>read-only Btrfs status inspection</source>
-        <translation type="unfinished" />
+        <translation>vain luku -btrfs-tilan tarkastus</translation>
     </message>
     <message>
         <source>read-only EFI/UKI evidence inspection</source>
-        <translation type="unfinished" />
+        <translation>vain luku -EFI/UKI-todisteiden tarkastus</translation>
     </message>
     <message>
         <source>read-only GPU driver stack review</source>
@@ -1277,7 +1277,7 @@
     </message>
     <message>
         <source>read-only GRUB configuration review</source>
-        <translation type="unfinished" />
+        <translation>vain luku -GRUB-asetusten tarkistus</translation>
     </message>
     <message>
         <source>read-only LUKS and crypttab review</source>
@@ -1329,7 +1329,7 @@
     </message>
     <message>
         <source>read-only kernel and initramfs inspection</source>
-        <translation type="unfinished" />
+        <translation>vain luku -kernel- ja initramfs-tarkastus</translation>
     </message>
     <message>
         <source>read-only package state inspection</source>
@@ -1373,7 +1373,7 @@
     </message>
     <message>
         <source>the pacman transaction reported no packages to install, upgrade or remove</source>
-        <translation type="unfinished" />
+        <translation>pacman-tapahtuma ei ilmoittanut asennettavia, päivitettäviä tai poistettavia paketteja.</translation>
     </message>
     <message>
         <source>the read-only check reported no errors</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>validointi on vain luettavissa</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Syöttölaitteet / näppäimistö</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Verkko/yhteydet</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Arvostelee sisääntulolaite pino: havaittu näppäimistö/hiiri/kosketuslevy laitteet ja luokat, ladattu, sisäänrakennettu, saatavilla ja mustalla listalla HID / Keyboard kernel moduulit, bussiohjain tila, näppäimistön layboard layout, initramfs inclusion ja rakennettu kuva näppäimistömoduulin todiste LUKS avata nopeasti, sekä viimeaikaiset käynnistystodisteet.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Tarkistaa verkkopino: havaittu config backend, adapterit ja niiden sidottu ajurit / moduulit, musta lista ja firmware tila, ja käynnissä isäntä reitti, DNS ja rajoittaa saavutettavissa näyttö, muuttamatta mitään.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>vain luku -syöttölaitteen ja initramfs-näppäimistön tarkastus</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>lukuavain verkkosovitin ja liitäntöjen tarkastus</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Syöttölaitteen korjaus</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Korjaa syöttölaitteet</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Käy läpi todisteisiin perustuva interaktiivinen istunto näppäimistön, hiiren ja kosketuslevyn syötteen korjaamiseksi; valikko mukautuu diagnostiikkatodisteisiin, jokainen toiminto tarkistetaan uudelleen tässä ikkunassa ennen seuraavaa vaihtoehtoa, ja suojatut vaiheet kattavat ajurit, moduulit, laiteohjelmistot, mustalistat, HID-varavaihtoehdon ja initramfs-näppäimistömoduulit.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Valitse syöttölaitteen korjaustoiminto todisteista.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Verkko/liitettävyyskorjaus</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Korjausverkko</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Kävele näyttöön perustuva interaktiivinen istunto verkkopinon korjaamiseksi; valikko mukautuu diagnostiseen näyttöön, jokainen toiminto tarkistetaan tässä ikkunassa ennen seuraavaa vaihtoehtoa, ja vartioidut vaiheet kattavat ajurit, moduulit, laitteistot, mustat listat, initramfs NIC-moduulit, osoite, reitit ja DNS. Live-yhteyden muutokset eivät koskaan koske oletusreittiä pitävää käyttöliittymää.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Valitse verkon korjaustoiminto todisteista.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Ei saatavilla: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1433,7 +1489,7 @@ Ei saatavilla: %1</translation>
     </message>
     <message>
         <source>%1 results: [OK] %2 successful | [FAIL] %3 failed | [-] %4 no repair needed - %5</source>
-        <translation type="unfinished" />
+        <translation>%1 tulokset: [OK] %2 onnistui | [FAIL] %3 epäonnistui | [-] %4 korjausta ei tarvita - %5</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
@@ -1445,7 +1501,7 @@ Ei saatavilla: %1</translation>
     </message>
     <message>
         <source>%1 stopped at your request: [OK] %2 successful | [-] %3 no repair needed - %4</source>
-        <translation type="unfinished" />
+        <translation>%1 pysäytettiin pyynnöstäsi: [OK] %2 onnistui | [-] %3 korjausta ei tarvita - %4</translation>
     </message>
     <message>
         <source>&amp;About Boot Bitch</source>
@@ -1461,7 +1517,7 @@ Ei saatavilla: %1</translation>
     </message>
     <message>
         <source>&amp;File</source>
-        <translation>-&amp;tiedosto</translation>
+        <translation>&amp;Tiedosto</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -1564,7 +1620,7 @@ Ei saatavilla: %1</translation>
         <translation>; Paras havaittu järjestelmän komponentti: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1 &lt;/h3&gt;&lt;p&gt;&lt;b&gt;Kehikko:&lt;/b&gt; KapteeniMorgan12&lt;/p&gt;&lt;p&gt; Tämä käyttöliittymä on paketin sisääntulopiste: Qt 3.3.x-etuosa, jossa on Debian Etch-era-järjestelmien vartioitu apulaite.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Varattu korjaustila: &lt;/b&gt; lukuavain diagnostiikka voi tarkastaa joko suojatun juoksuohjaimen tai erikseen valitun korjausaseman. Debian/APT-pakettien vartioidut vaiheet (suljetut konfiguraatiot, rikkoutuneet riippuvuudet, metatiedon päivittäminen, päivitys), GRUB-legacy-asetusten uudistaminen, LUKS-kohteen avaaminen ja vartioitu kohdetiedostojen muokkaus kulkevat siirretyn apurin läpi vahvistuksen jälkeen; isäntähuolto mahdollistaa samat tuetut vaiheet natiivisti aktiivisessa järjestelmässä sen jälkeen, kun isäntäidentiteetti ja käynnistysmäärä on uusittu.&lt;/p&gt; &lt;p&gt; &lt;p&gt; Modernit ominaisuudet - todennettu File Copy, Btrfs scatchrock rollback, EFI/UKI ja extlinux korjaus, boot-stack täsmäytys ja Make Oletus - harmaat auttajan omat luotain syitä tässä rintamassa; Arch/Alpine/Fedora paketti taustat pysyvät diagnostiikka-vain täällä. &lt;/p&gt;&lt;p&gt; Ensimmäinen etuoikeutettu toimi mahdollistaa yhden välimuistin ylläpitäjän istunnon kutakin soveltamisalaa kohden piilotetun syöttötavan kautta (Qt-käyttöliittymä on edelleen vailla etuoikeutta). Se voidaan lopettaa milloin tahansa tiedostosta - Lukituksen ylläpitäjän istunto. &lt;/p&gt;</translation>
     </message>
     <message>
@@ -1697,7 +1753,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
     </message>
     <message>
         <source>Administrator authorization session locked by the user; the cached session was dropped and the next privileged action requests the password again. Any LUKS mapping opened earlier remains open for this recovery session (the legacy helper exposes no close verb).</source>
-        <translation type="unfinished" />
+        <translation>Järjestelmänvalvojan valtuutusistunto lukittiin käyttäjän toimesta; välimuistissa ollut istunto hylättiin ja seuraava etuoikeutettu toiminto pyytää salasanan uudelleen. Mikä tahansa aiemmin avattu LUKS-kartoitus pysyy auki tämän palautusistunnon ajan (perintö-apuri ei tarjoa sulkemisverbiä).</translation>
     </message>
     <message>
         <source>Administrator authorization was cancelled; the command was not started.</source>
@@ -1772,7 +1828,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
         <translation>Automaattinen asennus edellyttää nimenomaista paketti kartoitus ja etuoikeus valtuutus.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Automaattinen asennus vaatii nimenomaisen pakettikartoituksen ja etuoikeuden luvan; asentaa valitun puuttuvan toiminnon ehdotetun paketin nykyiseen ulottuvuuteen (käyttää isäntää tai sitoutunutta korjauskohdetta) vartioidun apurin kautta.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
         <translation>Boot Bitch:n perintökäyttöliittymä valmiina. Jokainen etuoikeutettu komento kulkee välitetyn apurin kautta; toimet pysyvät pois käytöstä, kunnes korjauskohde on tehty (tai isäntähuolto on aktiivinen) ja diagnostiikka ilmoittaa valmiuslinjansa.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch:n on oltava erilaisessa Linux-käyttöympäristössä kuin korjattavassa järjestelmässä. Käytä Linux live medium tai muuta Linux asennus eri fyysisellä asemalla. &lt;br &gt; &lt;br&gt; &gt; Juokseva isäntä on suojattu tavanomaiselta korjauskohdevalinnalta, mutta se voidaan nimenomaisesti valita &lt;b&gt;Host Maintenance &lt;/b&gt; -toiminnolla vartioidulle omalle diagnostiikalle ja tuetuille huoltovaiheille. &lt;br&gt;&gt;&lt;br&gt; Diagnostiikka seuraa Systems-sivua: sitoutunut korjausasema, kun isäntähuolto on pois päältä, tai suojattu juoksun isäntä, kun se on aktiivinen. &lt;br&gt;&lt;br&gt; Ensimmäinen etuoikeutettu toiminto pyytää järjestelmänvalvojan valtuutusta kerran tähän Boot Bitch-ikkunaan; &lt;b&gt;Tieto - Lukituksen ylläpitäjän istunto &lt;/b&gt; lopettaa tämän auttajan istunnon välittömästi. Jokainen korjaus pitää auttajalle oman ajoajan ennen lentoa.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
         <translation>Selaa korjauskansioita...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Selaa korjatun järjestelmän kansioita vain lukea ja vaihe valittu kansio.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Selaa valittua korjausjärjestelmää auttimen tilapäisten lukulaitteiden avulla ja valitse ehdoton kohdepolku. Kohdetiedostoja ei muuteta selattaessa.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
         <translation>Valitse kohdekansio</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Valitse, mitkä välimuistit ovat taulukossa.</translation>
     </message>
     <message>
@@ -1913,7 +1969,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
     </message>
     <message>
         <source>Chroot Shell</source>
-        <translation>Chroot Shell</translation>
+        <translation>Chroot-komentotulkki</translation>
     </message>
     <message>
         <source>Chroot shell</source>
@@ -2064,7 +2120,7 @@ Anna %2:n (sudo) salasana. Sitä käytetään vain tähän sudo-tunnistukseen, l
         <translation>Kopioi ja varmista</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Kopioi ja todenna tiedostot kumpaankin suuntaan vartioidun apurin kautta (cp -a sekä omistusten palauttaminen ja per-file byte-vertaus). Auttimen tiedostokopion luotain avaa ohjaimet ja pitää suunnan ja polun estotarkistukset.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ Auttaja pitää suunnistus- ja reittirajoitustarkistuksensa; herkkä korjausjär
         <translation>Syötä komento ajaa ensin.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Syötä laitteen numerot korjattavaksi (avaruus- tai pilkku eroteltu, esimerkiksi "1 3") tai 0 ohittaa.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Syötä laitteen numerot korjattavaksi (avaruus- tai pilkku eroteltu, esimerkiksi &quot;1 3&quot;) tai 0 ohittaa.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Anna %1:n salasana.
 
 Se lähetetään vain kryptaukseen auttimen vakiosyötteen yli eikä sitä koskaan kirjaudu tai sijoiteta komentoriville.</translation>
@@ -2276,7 +2332,7 @@ Se lähetetään vain kryptaukseen auttimen vakiosyötteen yli eikä sitä koska
         <translation>Auttajaistunto on järjestettävä nyt.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etsi-aika kohde asetukset tiedostot; saatavuus on skannattu vain lukemaan auttimen diagnostiikka.</translation>
     </message>
     <message>
@@ -2429,7 +2485,7 @@ Se lähetetään vain kryptaukseen auttimen vakiosyötteen yli eikä sitä koska
     </message>
     <message>
         <source>Host</source>
-        <translation>Palvelin</translation>
+        <translation>Isäntä</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2554,12 +2610,12 @@ Auttaja itse tarkistaa uudelleen, että valitut levyn taustat /, /boot ja /boot/
         <translation>Asenna puuttuva tuki...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Asenna paketti '%1' valittuun korjauskohteeseen suojatun pakettitaustaosan kautta? Tämä muuttaa korjauskohdetta ja mitätöi välimuistin diagnostiikan.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Asenna paketti &apos;%1&apos; valittuun korjauskohteeseen suojatun pakettitaustaosan kautta? Tämä muuttaa korjauskohdetta ja mitätöi välimuistin diagnostiikan.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Asenna paketti "%1" käynnissä isäntä kautta vartioitu paketti taustaosa? Tämä muuttaa käynnissä isäntä ja mitätöi välimuistin käynnissä-host diagnostiikkaa.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Asenna paketti &quot;%1&quot; käynnissä isäntä kautta vartioitu paketti taustaosa? Tämä muuttaa käynnissä isäntä ja mitätöi välimuistin käynnissä-host diagnostiikkaa.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2579,11 +2635,11 @@ Auttaja itse tarkistaa uudelleen, että valitut levyn taustat /, /boot ja /boot/
     </message>
     <message>
         <source>LUKS volume unlocked; the committed target topology changed, so cached diagnostics were invalidated. Run diagnostics again.</source>
-        <translation type="unfinished" />
+        <translation>LUKS-taltio avattu; sitoutuneen kohteen topologia muuttui, joten välimuistissa olleet diagnoosit mitätöitiin. Suorita diagnostiikka uudelleen.</translation>
     </message>
     <message>
         <source>LUKS volume:</source>
-        <translation type="unfinished" />
+        <translation>LUKS- tilavuus:</translation>
     </message>
     <message>
         <source>Leave Host Maintenance and return to repair-target mode.</source>
@@ -2650,6 +2706,50 @@ Auttaja tarkistaa /boot/grub/menu.lst, asettaa ...oletus &lt;N&gt;...-direktiivi
         <translation>Puuttuva näytönhallinta: asenna %1-paketti kapasiteettitaulukosta.</translation>
     </message>
     <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI -työkalu</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>GRUB-määritystyökalut</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB asennustyökalu</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Puuttuu %1: asenna vastaava paketti(s) %2 Boot-ominaisuustaulusta.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Puuttuu %1: asenna vastaava paketti Boot-ominaisuustaulukosta.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI-rakentaja</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>boot-stack ennakkoedellytys</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramf-työkalut</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
+    </message>
+    <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
         <translation>Puuttuvat otsikot (viimeisimmässä kernel:ssä ei ole vastaavia otsikoita): %1.</translation>
     </message>
@@ -2694,8 +2794,12 @@ Auttaja tarkistaa /boot/grub/menu.lst, asettaa ...oletus &lt;N&gt;...-direktiivi
         <translation>Uusin asennettu kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Ei 'Legacy ominaisuus komentotulkki:' rivi on välimuistissa; suorita diagnostiikka valitun soveltamisalan arvioida auttajan Chroot / aikakatkaisu estoanturit (vika suljettu).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Ytimen koostaja: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Ei &apos;Legacy ominaisuus komentotulkki:&apos; rivi on välimuistissa; suorita diagnostiikka valitun soveltamisalan arvioida auttajan Chroot / aikakatkaisu estoanturit (vika suljettu).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Ei diagnostisia tuloksia.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Tiedostojärjestelmän virheitä ei havaittu %1-juurta, /boot- tai /home-tiedostojärjestelmissä. Korjauksia ei tehty.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Korjaustyökalua ei ole valittu.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>%1:n juurissa, /boot- tai /home-tiedostojärjestelmissä ei havaittu korjattavia tiedostojärjestelmän virheitä, mutta %2. Korjauksia ei tehty.</translation>
     </message>
     <message>
@@ -2838,7 +2942,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Selvä.</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Offline-komennot ajavat yksi kerrallaan tuoreessa chroot eikä voi vastata interaktiivisiin kehotuksiin (apt-get -y päivitys toimii). Host-shell-komennot suoritetaan suoraan käynnissä isäntä. Avustajan luotainlinjat avaavat komentokentän; tarkka syy näkyy työkaluvihjeessä.</translation>
     </message>
     <message>
@@ -2883,7 +2987,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
     </message>
     <message>
         <source>Orphaned kernel components (no owning package): %1.</source>
-        <translation type="unfinished" />
+        <translation>Orvon ytimen komponentit (ei omistuspakettia): %1.</translation>
     </message>
     <message>
         <source>Ownership:</source>
@@ -3003,11 +3107,11 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
     </message>
     <message>
         <source>Rebuild DKMS modules</source>
-        <translation type="unfinished" />
+        <translation>Rakenna DKMS-moduulit uudelleen</translation>
     </message>
     <message>
         <source>Rebuild all initramfs images</source>
-        <translation type="unfinished" />
+        <translation>Rakenna kaikki initramfs-kuvat uudelleen</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -3015,7 +3119,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
     </message>
     <message>
         <source>Refresh APT package metadata</source>
-        <translation type="unfinished" />
+        <translation>Päivitä APT-paketin metatiedot</translation>
     </message>
     <message>
         <source>Refresh Capabilities</source>
@@ -3026,11 +3130,11 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Päivitä laitteet</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Uudista %1 GRUB -kokoonpano</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Uudista %1 extlinux -kokoonpano</translation>
     </message>
     <message>
@@ -3186,7 +3290,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Suorita komento valitun korjausjärjestelmän sisällä juurina (sudoa ei tarvita). Komennot suoritetaan yksi kerrallaan tuoreissa chroot eikä voi vastata interaktiivisia kehotuksia; käytä ei-interaktiiviset liput kuten apt-get-y päivitys. Tulosta säilytetään tässä ikkunassa ja sovelluslokissa.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Suorita käynnissä olevan isännän komento juurina (Host Shell) tai valitun korjausjärjestelmän sisällä juurina (Chroot Shell); sudoa ei tarvita kummassakaan. Host-Shell-komennot suoritetaan suoraan aktiivisessa järjestelmässä; chroot-komennot suoritetaan yksi kerrallaan tuoreessa chroot-kehossa, eikä niihin voi vastata interaktiivisia hälytyksiä, joten ei-interaktiiviset liput, kuten apt-get -y päivitystä suositellaan edelleen valvomattomille juoksuille. Tulosta säilytetään tässä ikkunassa ja sovelluslokissa. Avustajan lukuluotaimet avaavat komentokentän; kun Shell ei ole käytettävissä, sivu näyttää tarkan syyn kentän alapuolella.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Suorita diagnostiikka tämän soveltamisalan avata aidattu toimia. Diagnostiikka on ainoa todiste.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Suorita diagnostiikka luotaimeen, jonka asetustiedostot ovat olemassa; auttajan lukuluotain päättää luettelon.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
         <translation>Suorita isäntä</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation type="unfinished" />
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Suorita yksi korjaustyökalu tai käytä täydellistä korjaussuunnitelmaa valitulle korjausasemalle. Valitse Isäntähuolto Järjestelmät-kohdasta suorittaaksesi samat tuetut, vartioidut vaiheet suojattua käynnissä olevaa isäntää vastaan. Valitse täydellisen korjauksen vaiheet Asetuksista. Käytössä olevat vaiheet suoritetaan näytetyssä järjestyksessä. Jokainen määritettävä vaihe näkyy alla myös yksittäisenä työkaluna; täydellisen korjauksen sarake vastaa sen nykyistä Asetukset-tilaa. Käynnistystyökalut (GRUB-määritys, boot pinon yhteensovitus ja Make Default) ovat riippumattomia: suorita ne missä tahansa järjestyksessä, ja myöhempi toiminto tarkistaa uudelleen, mitä aiempi muutti, ja raportoi oman tuloksensa. Aktiivinen soveltamisala näkyy Korjaus-kohdan vieressä: valittu korjausasema tai käynnissä oleva isäntähuolto. Jokainen toiminto pysyy poissa käytöstä, kunnes välimuistissa olevat kyvykkyysrivit sanovat available, ja apuri pitää ajon aikaiset esitarkistuksensa. Kirjoitustoiminnot pyytävät vahvistuksen ja suorittavat sitten apurin omat ajon aikaiset esitarkistukset; GUI ei koskaan heikennä niitä. Korjaus, jota ei ole todistettu &apos;unchanged&apos;, mitätöi välimuistissa olevat diagnoosit ja poistaa käytöstä aidatut toiminnot, kunnes diagnostiikka suoritetaan uudelleen.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Suorita yksi arvosteltu komento juurina kohteen sisällä Chroot kautta auttaja vartioitu kuori verbi.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Suorita yksi arvosteltu komento juuri käynnissä isäntä läpi auttaja vartioitu isäntäkuori verbi.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Lehdistölle Authorize on Systems or Repair välilehden perustaa istunnon, tai s
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Tehdä koko korjaussuunnitelma?
@@ -3295,7 +3399,7 @@ Auttaja pitää ajoaikansa ennen lentoa; komentoa käytetään yhtenä argumentt
     </message>
     <message>
         <source>Running kernel: %1.</source>
-        <translation type="unfinished" />
+        <translation>Käynnissä oleva ydin: %1.</translation>
     </message>
     <message>
         <source>Running system protection unresolved</source>
@@ -3386,7 +3490,7 @@ Auttaja pitää ajoaikansa ennen lentoa; komentoa käytetään yhtenä argumentt
         <translation>Valitse fyysinen asema käytettävissä korjauskohteiden luettelossa Systems-välilehden ensin, tai käytä Host Maintenance suojattu käynnissä isäntä.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Valitse fyysinen asema; Boot Bitch ratkaisee todennäköisimmän Linux-järjestelmän äänenvoimakkuuden automaattisesti. Juokseva isäntä pysyy suojattuna tavallisilta kohteiden korjauksilta, ja sillä on oma erillinen huoltopolku omaa järjestelmää varten. Yksityiskohdat-painike näyttää suojatun isännän faktat yksityiskohtapaneelissa; minkä tahansa asemarivin valinta palauttaa per-ajopaneelin.</translation>
     </message>
     <message>
@@ -3512,6 +3616,14 @@ Auttaja pitää ajoaikansa ennen lentoa; komentoa käytetään yhtenä argumentt
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Näytä laitteet ilman tunnistettua Linux-asennusta</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Kun pois, piilottaa vain lukea squashfs säiliön tilavuus (snap-tyyli), joka ei voi olla Linux asentaa kohteita.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Näytä squashfs-silmukkalaitteet</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3679,7 +3791,7 @@ Menetelmä: auttajavarmistettu kartoitus viimeisimmästä luku-vain diagnostiika
     </message>
     <message>
         <source>Stop the running shell command.</source>
-        <translation type="unfinished" />
+        <translation>Pysäytä käynnissä oleva Shell-komento.</translation>
     </message>
     <message>
         <source>Stopping the running diagnostic... The Logs tab keeps the complete transcript.</source>
@@ -3691,11 +3803,11 @@ Menetelmä: auttajavarmistettu kartoitus viimeisimmästä luku-vain diagnostiika
     </message>
     <message>
         <source>Stopping the running shell command... The Logs tab keeps the complete transcript.</source>
-        <translation type="unfinished" />
+        <translation>Pysäytän käynnissä olevan Shell-komennon... Lokit-välilehti pitää koko tekstin.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Ehdotettu paketti</translation>
+        <source>Packages</source>
+        <translation>Paketit</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3756,8 +3868,8 @@ Juokseva isäntä tarkastetaan itsenäisesti uudelleen ja etuoikeutettu avustaja
         <translation>Full Repair -suunnitelma ohjaa valittuja perintövaiheita vartioidun apurin kautta; yksittäiset työkalut kulkevat yksivaihe kerrallaan. Jokainen toiminta pysyy poissa käytöstä, kunnes välimuistissa olevat valmiuslinjat ovat käytettävissä ja apuri pitää ajoaikansa ennen lentoa.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Full Repair -suunnitelma ohjaa valittuja perintövaiheita vartioidun apurin kautta; yksittäiset työkalut kulkevat yksivaihe kerrallaan. Jokainen toiminta pysyy poissa käytöstä, kunnes välimuistissa olevat valmiuslinjat ovat käytettävissä ja apuri pitää ajoaikansa ennen lentoa. Kirjoita toiminnot pyytää vahvistusta ja sitten ajaa auttajan omia ajoaika ennen lentoa; käyttöliittymä ei koskaan heikennä niitä. Korjaus, joka ei ole todistettu 'muuttumaton' mitätöi välimuistin diagnostiikan ja poistaa aidat toiminnot kunnes diagnostiikka toimii uudelleen.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Full Repair -suunnitelma ohjaa valittuja perintövaiheita vartioidun apurin kautta; yksittäiset työkalut kulkevat yksivaihe kerrallaan. Jokainen toiminta pysyy poissa käytöstä, kunnes välimuistissa olevat valmiuslinjat ovat käytettävissä ja apuri pitää ajoaikansa ennen lentoa. Kirjoita toiminnot pyytää vahvistusta ja sitten ajaa auttajan omia ajoaika ennen lentoa; käyttöliittymä ei koskaan heikennä niitä. Korjaus, joka ei ole todistettu &apos;muuttumaton&apos; mitätöi välimuistin diagnostiikan ja poistaa aidat toiminnot kunnes diagnostiikka toimii uudelleen.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Paina Authorize on Systems tai Korjaa välilehti palauttaa istunnon, sitten ajaa
         <translation>Valitulla soveltamisalalla ei ole ratkaistua juurikomponenttia; käytä Päivitä laitteita ja toimita korjauskohde uudelleen.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Valittua sovelluksen levy- ja juurikomponenttia ei voitu ratkaista.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Paina Authorize on Systems tai Korjaa välilehti palauttaa istunnon, sitten ajaa
         <translation>Tällä salatulla asemalla ei ole vielä näkyvää Linux-tiedostojärjestelmää. Avaa, virkistä laitteita ja valitse kohde sen jälkeen, kun sen Linux root on havaittu.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Tämä perinteinen rintama ei paljasta mitään %1-toimintaa; auttaja raportoi kyvyistä.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Saatavilla vain diagnostisen / capability - tämä perintö Frontend ei paljasta mitään korjausta; suorita interaktiivinen korjaus modernin käyttöliittymän.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ Auttaja avaa väliaikaisen laite-mapper-kartoituksen kryptalla ja pitää sen au
         <translation>VAROITUS: tallennettua GUI-asetustiedostoa %1 ei voi lukea; sen asetukset luetaan oletuksina, ei tallennettuina arvoina.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>VAROITUS: tallennettua GUI-asetustiedostoa %1 ei voida lukea tai poistaa; sen asetukset luetaan oletuksiksi. Poista se (tai tee ~/.qt kirjoitettava), jotta tallennettuja asetuksia voidaan jälleen tallentaa.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Poistettu %1 lukukelvotonta vanhentunutta asetustiedostoa: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Lukukelvottomia vanhentuneita asetustiedostoja %1 ei voitu poistaa; oletusasetukset ovat voimassa, kunnes ne poistetaan.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Kun pois päältä, asemat salatulla laitteella piilotetaan kunnes äänenvoimakkuus on lukittu.</translation>
     </message>
@@ -4064,8 +4188,8 @@ Auttaja avaa väliaikaisen laite-mapper-kartoituksen kryptalla ja pitää sen au
         <translation>Kääri pitkät lokiviivat</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Kirjoita toiminnot pyytää vahvistusta ja sitten ajaa auttajan omia ajoaika ennen lentoa; käyttöliittymä ei koskaan heikennä niitä. Korjaus, joka ei ole todistettu 'muuttumaton' mitätöi välimuistin diagnostiikan ja poistaa aidat toiminnot kunnes diagnostiikka toimii uudelleen.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Kirjoita toiminnot pyytää vahvistusta ja sitten ajaa auttajan omia ajoaika ennen lentoa; käyttöliittymä ei koskaan heikennä niitä. Korjaus, joka ei ole todistettu &apos;muuttumaton&apos; mitätöi välimuistin diagnostiikan ja poistaa aidat toiminnot kunnes diagnostiikka toimii uudelleen.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,7 +4224,7 @@ Auttaja avaa väliaikaisen laite-mapper-kartoituksen kryptalla ja pitää sen au
         <translation>Hallinnointi</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
         <translation>korkeussijainti vaatii interaktiivisen sudo salasanan; suorita savu juurina tai niiden jälkeen ...</translation>
     </message>
     <message>
@@ -4180,7 +4304,7 @@ Komentoa ei aloitettu.</translation>
         <translation>Ei saatavilla - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>Ei saatavilla: katso auttaja Legacy ominaisuus tiedosto-kopio: luotain syy edellä</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ Komentoa ei aloitettu.</translation>
         <source>your account</source>
         <translation>tilisi</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Versiovarasto uusin kernel: %1 (uusin kuin asennettu uusin; %2).</translation></message><message><source>Try Again</source><translation>Yritä uudelleen</translation></message><message><source>Enter the note text</source><translation>Anna muistiinpanoteksti</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Tämä liite liitetään valittuun istuntolokiin %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>%1: %2:n liite</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Valittu lokikirja ei ole voimassa oleva istuntoloki; viestiä ei kirjoitettu.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Valittua istuntolokia %1 ei ole kirjoitettava; viestiä ei ole lisätty.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Versiovarasto uusin kernel: %1 (uusin kuin asennettu uusin; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Yritä uudelleen</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Anna muistiinpanoteksti</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Tämä liite liitetään valittuun istuntolokiin %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>%1: %2:n liite</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Valittu lokikirja ei ole voimassa oleva istuntoloki; viestiä ei kirjoitettu.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Valittua istuntolokia %1 ei ole kirjoitettava; viestiä ei ole lisätty.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Ei välimuistia juoksu-host diagnostiikkaa; ajaa luku-vain isäntä diagnostiikkaa isäntä huoltoa kansoittaa tämän rivin.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - Keskeytetty</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1-vaihe [s] ilmoitti muutoksista ennen pysähdystä; näitä muutoksia sovelletaan ja vaikuttaa diagnostiikan uusittiin</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>vaihe, josta ilmoitettiin muutos ennen pysähdystä; sen muutoksia voidaan jo soveltaa</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>muutoksia ei tehty</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Asennettu</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Korjaa EFI / UKI boot polku UEFI järjestelmien</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Näyttöohjatut näppäimistön, hiiren ja kosketuslevyn korjaus auttajamme interaktiivisella valikolla</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Näyttölähtöinen verkon korjaus auttaja interaktiivisen valikon kautta; live-yhteyden muutokset eivät koskaan koske oletusreittiä pitävää käyttöliittymää</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Paketit, joita ei ole saatavilla tämän järjestelmän arkistoissa</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1-ohjelmiston käynnistystiedostot ladattu.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1-ohjelmistojen sisäänpääsykatselu on saatavilla. Lataa tietueet vain UEFI: n lukemiseen.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Käynnistys</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Käynnistysmerkintöjen päivitys hylätty: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Saapumisluettelon tulos hylättiin: soveltamisala muuttui pyynnön ollessa käynnissä.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Saappaat</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Luokka</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Luokka: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Suora (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Aja</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Aja: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI- käynnistysmerkinnät</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Perääntyminen</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Firmware-kansioita ei voitu ladata. Katso lisätietoja lokeista.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Firmware- käynnistyslista epäonnistui.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB-valikko</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Merkitys</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Merkitys: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Listaa firmware- käynnistysmerkinnät</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Luettelo BootOrder: ei (firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Luettelo BootOrder: kyllä</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Lataa tietueet</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Lataa %1 UEFI firmware-saappaat vain luettavaksi.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Ladattu %1 %2 firmware boot entr%3 luku vain.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Loader</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Loader: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Ladataan %1 UEFI firmware-saappaat vain lukea %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Verkko</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Ei UEFI firmware boot tietueita löytyi Tämä järjestelmä on BIOS / tegacy tai puuttuu efibootmgr, joten ei ole firmware boot järjestyksessä hallita.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Kohdetta ei ole valittu</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Muut</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Korjaustavoite: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Korjaa kohde: ei valmis</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Korjaustavoite</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Rooli: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Suoritettava isäntä: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Juokseva isäntä: ei valittu</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Isäntä</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Valitse käyttöisännän isäntähuolto tai järjestelmäkorjauksen kohde, jotta voit hallita firmware-käynnistyksiä.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Valitse käyttöisännän isäntähuolto tai järjestelmäkorjauksen kohde, jotta voit hallita firmware-käynnistyksiä. Lataa Merkinnät listaa nykyisen sovelluksen UEFI vain luettavaksi.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>UEFI-ohjelmiston käynnistysmerkinnät (juoksevan isäntän NVRAM) on listattu vain tässä. Host Maintenancessa näet käynnissä olevan isännän omat merkinnät; korjauskohteella varustettuna näet NVRAM-tietueet, joiden osiopisteet ovat kyseisen aseman EFI-järjestelmän osiossa. Tämä näkymä ei koskaan muuta firmware-ohjelmistoa; BIOS-vain isäntä (Etch) ei ole firmware-käynnistysmerkintä eikä luettele mitään. GRUB-kengät-valikko (GRUB:n sisällä oleva lista ytimistä) on erillinen ja se uusitaan GRUB- tai boot-stack-korjauksella.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>UEFI firmware-alkumerkinnät BootOrder:ssä, listattu vain luettavaksi.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Tämä merkintä on tällä hetkellä aktiivinen (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>%1:ää ei voitu poistaa.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>Korjaa kohteen</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>korjauskohde</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>isäntien käyttö</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>juokseva isäntä</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>EFI-merkinnät</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Saapasvalikko</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Vaihda UEFI-ohjelmiston tietueiden ja lukuavain- käynnistysvalikon välillä.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Valikkomerkintä</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Lukeminen-vain käynnistysvalikko (käynnistyslaitteen ytimen/OS merkinnät tiedostojärjestyksessä).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>%1- käynnistysvalikko ladattu.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 käynnistysvalikon katselu on käytettävissä. Valitse Boot-valikko, jos haluat luetella käynnistysvalikon vain luku -tilassa.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware-sisäänpääsyn katselu on saatavilla. Valitse EFI-merkinnät luetellaksesi UEFI-tietueet vain luku -tilassa.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Valitse isännän huolto käynnissä olevasta koneesta tai järjestelmän korjauskohteesta nähdäksesi firmware-käynnistyssyötteet. Valitse EFI Entrys tai Boot Menu yllä ladata nykyisen soveltamisalan merkinnät vain lukea.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Ladataan %1-käynnistysvalikkoa vain %2:lle (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Listan käynnistysvalikko</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Käynnistysvalikon päivitys hylätty: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Käynnistysvalikkolista epäonnistui.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Käynnistysvalikon varavaihtoehto hylätty: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Boot-valikkolistan tulos hylättiin: soveltamisala muuttui pyynnön ollessa käynnissä.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Valikkomerkintä: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Merkinnän tunnus: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Tämä on alivalikko.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Lataa kokoonpanon: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Ulkomaalainen: osoittaa toiseen asemaan tai osioon.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Ytimen: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Oletusmerkintä: kyllä</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Oletusmerkintä: ei</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Oletus</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (alavalikko)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Ladattu %1 käynnistysvalikon merkint%2 vain luku -tilassa.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Ei GRUB-perintövalikkoa.lst tässä kentässä; kokeillaan GRUB grub.cfg-kengänvalikkoa.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Asemasta ei löytynyt käynnistysvalikon asetuksia. Järjestelmässä ei saa olla GRUB:ää, extlinux:ää/syslinux:ää tai GRUB:n perinteistä käynnistysvalikkoa tai sen kokoonpano elää muualla.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Käynnistysvalikon asetukset ovat olemassa, mutta merkinnät puuttuvat.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Alkuvalikkoa ei voitu ladata. Katso lisätietoja lokeista.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>oletus</translation>
+    </message>
+</context>
 </TS>

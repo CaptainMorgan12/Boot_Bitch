@@ -21,6 +21,9 @@
 #include <QTreeWidgetItem>
 #include <QVariant>
 
+#include <functional>
+#include <memory>
+
 class QAction;
 class QBoxLayout;
 class QGridLayout;
@@ -463,19 +466,41 @@ private:
     void refreshDevices();
     void refreshCapabilities();
     void resizeCapabilityRows();
-    // Re-attaches the capabilities table's per-row Install cell widgets to the
-    // rows their payloads belong to (after a header-click sort or a repopulate).
+    // Re-attaches the capabilities table's per-row Install/Enable cell widgets
+    // to the rows their payloads belong to (after a header-click sort or a
+    // repopulate).
     void reattachCapabilityActionCells();
-    // Creates the per-row Install button for one capabilities row and attaches
-    // it to the Action column (shared by the populate path and the post-sort
-    // re-attach).
+    // Creates the per-row Install/Enable button for one capabilities row and
+    // attaches it to the Action column (shared by the populate path and the
+    // post-sort re-attach).  action: "install" (plain package Install),
+    // "enable-config" (the snapshot Enable label, full-enable verb) or
+    // "enable-full" (the snapshot Install label routing to the full-enable
+    // verb).  routing "host" targets the recovery host regardless of the
+    // row's scope (the round-143 filesystem check-tool Install).
     void installMissingCapabilityCellWidget(int row, const QString &suggestedPackage,
-                                            bool targetScope);
+                                            bool targetScope, const QString &action,
+                                            const QString &routing = QString());
     // Boot capabilities table Install action: install a missing suggested
     // package into the selected repair target (target-scope) or onto the
     // running host (host-scope, Host Maintenance only) through the guarded
     // package backend, simulation-first and fail-closed.
     void installMissingCapability(const QString &package, bool targetScope);
+    // Round 143 (ITEM T4): the recovery-host-routed Install action — the
+    // filesystem check tools are the RECOVERY HOST's (a target-routed Install
+    // would fix the wrong scope), so the guarded install-host-package verb
+    // runs with Host Maintenance required regardless of the row's scope.
+    void installMissingCapabilityOnHost(const QString &package);
+    // Round 142: Boot capabilities table Enable action for the
+    // snapshot-rollback row — create the initial Snapper snapshot
+    // configuration through the guarded enable-snapshot-config /
+    // enable-host-snapshot-config helper verb (the round-134 CONFIRM prompt
+    // inside the helper is the single confirmation).
+    void enableSnapshotConfigAction(bool targetScope);
+    // Round 142: the snapshot-config Enable completion (the round-42 re-probe
+    // pattern: changed -> mapped invalidation, proven existing config ->
+    // modified=false re-probe, declined -> nothing).
+    void handleSnapshotConfigCompletion(const QString &verb, bool hostScope,
+                                        const QString &output);
     // Dynamic tab visibility (Snapshots and EFI boot entries) from the cached
     // capability evidence. The hidden tabs are REMOVED from the tab bar (never
     // merely greyed out); re-applied on every scope change and after every
@@ -500,6 +525,11 @@ private:
     void addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node);
     void indexDevice(const DeviceNode &node);
     void updateDeviceDetails();
+    // Round 152.1 (Item B): the helper-confirmed tree-row status for a
+    // top-level disk ("Linux detected — %1" when the round-152 target facts
+    // exist for that disk, empty otherwise — the caller keeps the inventory
+    // status).  Presentation only; the device tree stays inventory-based.
+    QString treeStatusForDisk(const QString &path) const;
     void showHostDetails();
     void selectHostForMaintenance();
     // Leaves explicit running-host maintenance through the single shared path
@@ -622,6 +652,11 @@ private:
     // `Snapshot rollback:` evidence. Fails closed when the active scope's
     // diagnostics have not run.
     bool snapshotRollbackAvailable(QString *reason = nullptr) const;
+    // Round 146 (ITEM 2): whether the guarded manual snapshot creation is
+    // available for the active scope. Fails closed like the rollback, but
+    // only the prerequisites the CREATION needs block it (a rollback-only
+    // refusal such as separate-boot does not).
+    bool manualSnapshotCreateAvailable(QString *reason = nullptr) const;
     // Running-host rollback flow and its persisted reboot-required state.
     void rollbackHostSnapshot(const QString &snapshotId);
     void setHostRebootRequired(const QString &snapshotId);
@@ -631,14 +666,22 @@ private:
     QString currentBootId() const;
     void reconcileHostRebootRequired();
     // Renders parsed snapshot rows into the inventory with numeric/date sort
-    // keys and re-applies the active (or default Created-descending) sort.
+    // keys and the round-146 single-first default ordering; the type filter
+    // and the row visibility are applied by applySnapshotFilter().
     void populateSnapshotTable(const QList<SnapshotInventoryRow> &rows);
+    // Round 146 (ITEM 2): applies the All/Single/Pre/Post filter to the
+    // snapshot inventory rows (type stored in the Type column's UserRole).
+    void applySnapshotFilter();
     // A non-Btrfs repair target has no Btrfs snapshot inventory. This is an
     // informational outcome: the Snapshots page states the applicability and
     // nothing is recorded at ERROR level.
     void showSnapshotInventoryNotApplicable(const QString &fileSystem);
     void inspectSelectedSnapshot();
     void rollbackSelectedSnapshot();
+    // Round 146 (ITEM 2): the guarded manual snapshot creation flow (the
+    // helper's snapshots/host-snapshots create verb with the CONFIRM prompt;
+    // a success reloads the snapshot inventory).
+    void createSnapshot();
     void runChrootShellCommand();
     // Session-scoped (in-memory only) command history navigation for the
     // Chroot/Host shell command field. +1 steps Up (toward older entries),
@@ -842,6 +885,13 @@ private:
     // committed component. Keeps the committed target, later requests and the
     // log on the one resolved system.
     bool reconcileResolvedTargetComponent(const QString &output);
+    // Round 152 (Item B): absorbs the helper-confirmed target facts from a
+    // successful read-only "Repair Target" diagnostic result (the environment
+    // section's byte-stable fact lines).  Merge-on-match: a run without these
+    // lines never clears previously stored facts.  Returns true when at least
+    // one fact line was stored (the caller re-renders the Systems details
+    // pane for the current selection).
+    bool absorbHelperTargetFacts(const QString &output);
     void rebuildDiagnosticLogIndex();
     // Replaceable repair sections. repairLogSectionIdentity() namespaces a
     // repair tool/stage key with the active host/target scope so the same tool
@@ -881,9 +931,30 @@ private:
     bool writeConfigContentFile(const QByteArray &content, QString *path);
     QString diagnosticResultForKey(const QString &key) const;
     QString runTargetDiagnosticHelper(const QString &key, bool *succeeded = nullptr,
-                                      bool showProgressDialog = false);
+                                      bool showProgressDialog = false,
+                                      const std::function<void(const QString &)> &outputLineSink = {});
     QString runHostDiagnosticHelper(const QString &key, bool *succeeded = nullptr,
-                                    bool showProgressDialog = false);
+                                    bool showProgressDialog = false,
+                                    const std::function<void(const QString &)> &outputLineSink = {});
+    // Round 108 (0.2.30 #10 — the round-54 M5 progressive-cache design):
+    // commits one completed diagnostic section into the scope's per-section
+    // register while the combined run is still streaming, and re-renders the
+    // Diagnostics list rows so the section appears the moment it completes.
+    // Purely progressive display: guarded by the running run and the
+    // unchanged scope/identity, and the authoritative end-of-run commit
+    // overwrites the value with an identical slice (the completion signal and
+    // the invalidation model are unchanged).  Returns whether the commit
+    // landed.
+    bool commitProgressiveDiagnosticSection(bool targetScope, const QString &key,
+                                            const QString &section);
+    // Undoes the progressive commits (the failure/scope-change paths of a
+    // combined run restore the exact pre-run cache state).
+    void revertProgressiveDiagnosticSections(bool targetScope, const QSet<QString> &keys);
+    // Round 118 (performance UX): paints the Diagnostics list row as running
+    // (title + " …") while its section streams, restored to the plain title
+    // when the section commits or the run ends.  The row state is display
+    // only; the cache register and the gating never read it.
+    void setDiagnosticRowRunning(const QString &key, bool running);
     void cacheTargetDiagnosticBundle(const QString &bundle);
     void cacheHostDiagnosticBundle(const QString &bundle);
     QString currentTargetDiagnosticCacheIdentity() const;
@@ -964,7 +1035,28 @@ private:
                                  const QString &statusIdentity = QString(),
                                  RepairProgressDialog *sharedProgressDialog = nullptr,
                                  bool quiet = false,
-                                 int *exitCodeOut = nullptr);
+                                 int *exitCodeOut = nullptr,
+                                 const std::function<void(const QString &)> &outputLineSink = {},
+                                 // Round 119 (ITEM 1): the individual-repair success
+                                 // terminal.  A non-empty key list + hook arm the
+                                 // at-DONE gate release: when the transcript proves a
+                                 // change, the gate is released at the DONE record and
+                                 // the hook is invoked deferred to the next event-loop
+                                 // turn (the unlock-deferral pattern), scheduling the
+                                 // scoped regeneration while the review popup is still
+                                 // open.  A proven no-op terminal keeps the gate
+                                 // released at frame end (the pre-round-119 lifetime).
+                                 const QStringList &repairSuccessTerminalKeys = QStringList(),
+                                 const std::function<void(const QString &)> &repairSuccessTerminalHook = {},
+                                 // Round 120 (ITEM 3): when true, the success
+                                 // terminal ALSO fires for a proven no-op
+                                 // (unchanged/skipped verdicts) — used by the
+                                 // capability-table Install actions, whose
+                                 // round-42 completion re-probes the capability
+                                 // evidence on BOTH verdicts.  Every other
+                                 // armed request keeps the round-119
+                                 // no-change-terminal skip.
+                                 bool terminalHookOnProvenNoOp = false);
     void closePrivilegedSession();
     // A8-04: the single user-facing Cancel affordance for a RUNNING privileged
     // operation (the progress dialog's Cancel for repairs, the Shell page's
@@ -1203,6 +1295,20 @@ private:
     // cache-invalidation rule for a cancelled repair (only a proven change
     // before the abort invalidates the scope's cached diagnostics).
     static bool repairTranscriptHasChangedStatus(const QString &output);
+    // Round 98 (ITEM 1): true when the transcript carries a menu-abort status —
+    // `Repair change status <key>: unchanged|reason:<tool>-aborted` (the
+    // interactive menu's Abort option; the helper exits 0).  The session ended
+    // aborted, so the result is never a ✓ success and never a plain no-op.
+    static bool repairTranscriptHasAbortStatus(const QString &output);
+    // Round 98 (ITEM 1): the number of distinct stages that reported
+    // `changed` in the transcript — the applied-changes count the
+    // menu-abort summary tail names.
+    static int repairTranscriptChangedStageCount(const QString &output);
+    // Round 98 (ITEM 1): the stop-evidence tail for an aborted repair — the
+    // force-stop wording (round 97) and the menu-abort wording with the
+    // applied-changes stage count.  Empty when the stop was neither.
+    QString repairAbortDetail(bool userCancelled, bool menuAborted,
+                              const QString &output);
     // True for `skipped|<reason>`: the stage ran its safety preflights but the
     // user declined the confirmation, so nothing was changed (the plan
     // continues).  Treated like unchanged for invalidation and rendered as the
@@ -1215,17 +1321,27 @@ private:
                                                   const QString &output);
     // Repair-result categorization. Every repair action result is reported as
     // exactly one of: success (exit 0 with a proven change), failed (non-zero
-    // exit or an issue that could not be repaired), no-repair-needed (exit 0
-    // with a proven no-op or a read-only preflight), skipped (the stage ran
-    // no check or repair at all, for example a mounted filesystem whose
-    // offline-only check was skipped) or not-run (a Full Repair stage the plan
-    // never reached because an earlier stage failed; it is not a failure of
-    // its own). The categorization uses the same change-status evidence and
-    // the same fail-safe default as invalidatingRepairToolKeys(), so
-    // no-repair-needed always implies no cached-evidence invalidation.
+    // exit or an issue that could not be repaired), aborted (round 97: a
+    // mutating repair the user force-stopped — cancel/session force-stop,
+    // helper exit 143 — it is neither a success nor a failure and never
+    // carries the failed-repair invalidation semantics unless a stage reported
+    // a change before the stop; round 98: also the interactive menu's Abort
+    // option, which ends the session with helper exit 0 and an
+    // `unchanged|reason:<tool>-aborted` status — the summary then names the
+    // changes that WERE applied before the stop, never "no changes were
+    // made" and never the ✓-successful glyph), no-repair-needed (exit 0 with
+    // a proven no-op or a read-only preflight), skipped (the stage ran no
+    // check or repair at all, for example a mounted filesystem whose
+    // offline-only check was skipped) or not-run (a Full Repair stage the
+    // plan never reached because an earlier stage failed or was aborted; it
+    // is not a failure of its own). The categorization uses the same
+    // change-status evidence and the same fail-safe default as
+    // invalidatingRepairToolKeys(), so no-repair-needed always implies no
+    // cached-evidence invalidation.
     enum class RepairResultCategory {
         Success,
         Failed,
+        Aborted,
         NoRepairNeeded,
         Skipped,
         NotRun
@@ -1243,7 +1359,8 @@ private:
     };
     static RepairResultCategory categorizeRepairResult(bool processSucceeded,
                                                        const QStringList &requestedKeys,
-                                                       const QString &output);
+                                                       const QString &output,
+                                                       bool userCancelled);
     // "Repair result: ✓ <action-accurate phrase>" and its sibling forms. The
     // phrase comes from the shared per-tool vocabulary table so the
     // single-action summary and the plan stage lines can never drift; an empty
@@ -1276,11 +1393,13 @@ private:
     static QString repairStageFailureReason(const QString &output, const QString &toolKey);
     // "Full Repair results: ✓ n successful · ✗ n failed · ▪ n no repair
     // needed [· ▪ n not checked — see the <tool> stage line] [· ▪ n not run
-    // — see the <tool> stage line]" plus one auditable result line per stage.
+    // — see the <tool> stage line] [· ▫ n aborted — stopped at your
+    // request]" plus one auditable result line per stage.
     // The not-checked reference names the skipped stage(s) so the aggregate
     // stays traceable to the stage line that carries the affected device
     // list; the not-run reference names the stages an earlier failure stopped
-    // before, so they are never confused with the failed stage.
+    // before, so they are never confused with the failed stage; the aborted
+    // reference names the stage the user's stop interrupted (round 97).
     QString fullRepairPlanSummary(const QList<RepairStageResult> &stages);
     // Records one Full Repair stage result; a no-op outside a running plan.
     void recordPlanStageResult(const QString &toolKey, RepairResultCategory category,
@@ -1313,6 +1432,51 @@ private:
     void invalidateDiagnosticsForRepair(const QStringList &toolKeys, bool failed,
                                         const QString &reason, LogEntryKind kind,
                                         bool modified = true);
+    // Round 119 (ITEM 1/2): the single completion-side entry point for a
+    // FINISHED individual repair — shared by the success terminal (invoked from
+    // the DONE record while the review popup is still open) and by the
+    // genuine-failure completion (after the request frame).  A failed run
+    // keeps the fail-safe complete set (the round-16/19 contract — a failed
+    // modifying run may have left any stage half-applied; the round-86
+    // input/network targeted exception lives inside
+    // invalidateDiagnosticsForRepair()); a successful run invalidates exactly
+    // the map's scoped set for the stages the transcript proves changed and a
+    // proven no-op terminal invalidates nothing (the map's conditional
+    // invalidation semantics — the evidence is still fresh by definition).
+    void scheduleRepairCompletionRegeneration(const QStringList &toolKeys,
+                                              const QString &transcript,
+                                              LogEntryKind kind, bool failed,
+                                              const QString &reason);
+    // Round 119 (ITEM 1): the success-terminal handler invoked from the DONE
+    // record (deferred one event-loop turn after the finishing request
+    // released the single-request gate).  It latches
+    // m_repairSuccessTerminalHandled and routes through the shared completion
+    // helper so the post-frame completion path does not apply the invalidation
+    // twice.
+    void handleIndividualRepairSuccessTerminal(const QStringList &toolKeys,
+                                               const QString &transcript,
+                                               LogEntryKind kind);
+    // Round 120 (ITEM 2): the Boot entries Save batch's success-terminal
+    // handler — invoked from the last sub-request's DONE record.  A partially
+    // failed batch (an earlier sub-request failed) does nothing (the
+    // completion path keeps the pending state); a fully successful batch
+    // latches the terminal and applies the boot-entry-save map row's scoped
+    // set (uki grub boot-evidence) while the result popup is still open.
+    void handleBootEntrySaveTerminal(const std::shared_ptr<bool> &batchAllSucceeded,
+                                     bool isHost);
+    // Round 120 (ITEM 2): the boot-entry-save scoped invalidation + the
+    // coalesced-regeneration scheduling — shared by the success terminal and
+    // the post-close batch completion (which skips when the terminal already
+    // handled it).
+    void invalidateBootEntrySaveDiagnostics(bool isHost);
+    // Round 120 (ITEM 3): the capability-table Install completion — shared by
+    // the success terminal (fired on BOTH verdicts via
+    // terminalHookOnProvenNoOp) and the post-close completion (which skips
+    // when the terminal already handled it).  A changed install invalidates
+    // the map's scoped set; a proven no-op keeps the round-42 re-probe
+    // (the modified=false "re-probed" wording).
+    void handleInstallCompletion(const QString &verb, const QString &package,
+                                 bool hostScope, const QString &output);
     // Accumulates the union of sections invalidated by a Full Repair plan so
     // the plan regenerates them once at the end.
     void accumulatePlanInvalidation(const QStringList &toolKeys, bool failed);
@@ -1359,6 +1523,14 @@ private:
     // the action the user chooses.  Nothing is removed or modified until an
     // action is picked; the running kernel is never offered for removal.
     void runKernelRepairSession();
+    // Interactive input-device repair session: the helper presents the
+    // evidence-driven action menu (apply → the same-window re-verify →
+    // fixed/not-fixed → the next option) as a terminal-style menu.
+    void runInputDevicesRepairSession();
+    // Interactive network repair session: the same evidence-guided menu flow
+    // (the module/driver/firmware actions; live connectivity mutations are
+    // never run through a repair-target chroot).
+    void runNetworkRepairSession();
 
     // ---- Presentation and responsive layout ----------------------------------
 
@@ -1700,6 +1872,8 @@ private:
     QPushButton *m_snapshotLoadButton = nullptr;
     QPushButton *m_snapshotInspectButton = nullptr;
     QPushButton *m_snapshotRollbackButton = nullptr;
+    QPushButton *m_snapshotCreateButton = nullptr;
+    QComboBox *m_snapshotFilterCombo = nullptr;
     bool m_snapshotPreloadScheduled = false;
     // Btrfs inventory dedupe. m_snapshotScopeGeneration is bumped on every
     // target/scope change (see updateSnapshotControls()); a completed
@@ -1906,6 +2080,9 @@ private:
     QCheckBox *m_showNonLinux = nullptr;
     QCheckBox *m_showRemovable = nullptr;
     QCheckBox *m_showEncrypted = nullptr;
+    // Device-discovery filter for snap-style squashfs loop devices (default
+    // off: they are hidden from the Systems list and target selectability).
+    QCheckBox *m_showSquashfsLoops = nullptr;
     QCheckBox *m_autoRefreshDiagnostics = nullptr;
     QCheckBox *m_fullRepairFilesystem = nullptr;
     QCheckBox *m_fullRepairDpkg = nullptr;
@@ -1948,6 +2125,20 @@ private:
     QMap<QString, QString> m_hostDiagnosticCache;
     QMap<QString, QDateTime> m_hostDiagnosticTimes;
     QString m_targetDiagnosticCacheIdentity;
+
+    // Round 152 (Item B): helper-confirmed target facts from the last
+    // successful read-only "Repair Target" diagnostic (the environment
+    // section's byte-stable fact lines — "Physical drive:", "Detected
+    // component:", "System:", "Filesystem:").  Cleared by
+    // invalidateAllTargetDiagnostics() so a target commit/change can never
+    // carry the previous disk's facts; the Systems "Selected drive details"
+    // pane renders them only for the matching top-level disk (never a child
+    // row or the host pane) — the legacy updateFactView/driveDetailsRows
+    // parity.
+    QString m_helperFactDisk;
+    QString m_helperFactComponent;
+    QString m_helperFactSystem;
+    QString m_helperFactFilesystem;
 
     // Round 13: session-persistent per-scope backend/distribution wording
     // evidence.  Seeded from the cached diagnostic evidence when it first
@@ -1993,6 +2184,9 @@ private:
     bool m_forceScopeEvidenceRefresh = false;
     bool m_diagnosticsRunInProgress = false;
     bool m_runAllDiagnosticsQueued = false;
+    // Round 118 (performance UX): the diagnostic section whose list row is
+    // currently painted as running ("…"); empty when no row is marked.
+    QString m_progressiveRunningKey;
     bool m_privilegedOperationActive = false;
     // True while the request that owns the single-request gate is a read-only
     // diagnostic. Diagnostics are the only kind the close path may abort: they
@@ -2018,6 +2212,13 @@ private:
     // This latch records the most recent request's user-cancel decision for
     // the caller's completion path; it is reset when the next request starts.
     bool m_lastPrivilegedRequestUserCancelled = false;
+    // Round 119 (ITEM 1): set by the success-terminal handler (the DONE record
+    // of an individual dialog-backed repair) after it invalidated the mapped
+    // sections and scheduled the scoped regeneration while the review popup
+    // was still open.  The repair completion path (runRepairHelper) consumes it
+    // so the post-frame invalidation is not applied twice; it is reset when
+    // the next request starts (like m_lastPrivilegedRequestUserCancelled).
+    bool m_repairSuccessTerminalHandled = false;
     // A8-04: set when the user cancelled a read-only diagnostics run.  The
     // per-section and single-diagnostic run loops observe it after the
     // interrupted section returns: they stop the run and invalidate the

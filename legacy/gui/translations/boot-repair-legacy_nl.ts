@@ -48,12 +48,12 @@
         <translation>Alpine gebruikt apk; dpkg configuratie is niet beschikbaar op Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
-        <translation>Alpine's belangrijkste repository heeft geen eigen NVIDIA DKMS driver; de GPU driver swap is niet beschikbaar op dit doel.</translation>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <translation>Alpine&apos;s belangrijkste repository heeft geen eigen NVIDIA DKMS driver; de GPU driver swap is niet beschikbaar op dit doel.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Alternatieve bootloader; Etch boots via GRUB-legacy, zodat extlinux geen deel uitmaakt van het standaard bootpad</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Alternatieve bootloader; op dit systeem maakt extlinux geen deel uit van het standaard bootpad</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Koppeling van de opstartstapel</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Blader door de mappen van het gerepareerde systeem alleen-lezen en podium de gekozen map.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Controleer en repareer de gedetecteerde bestandssystemen.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Controleer de mounts van het geselecteerde systeem, filesystem metadata, boot bestanden, mapper consistentie en afhankelijkheidsbereidheid voordat een reparatie actie. Dit is een onafhankelijke veiligheidsvoorvlucht in plaats van een optionele Full Repair fase.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Debian-familie initramfs helper</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian-family initramfs helper; op Etch loopt de herbouw door de bewaakte gewoon-chroot terugval</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Herbouwt de initramfs-images voor de geïnstalleerde kernels</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Schijfgebruik</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Toont de draaiende host of de fstab van het geselecteerde reparatiesysteem; reparatie-systeem inspectie is alleen-lezen gemonteerd.</translation>
     </message>
     <message>
@@ -364,7 +364,7 @@
         <translation>Controle van Initramfs</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspecteert EFI/UKI bewijs; niet beschikbaar op deze nalatenschap BIOS frontend met de helper sonde reden.</translation>
     </message>
     <message>
@@ -528,12 +528,12 @@
         <translation>Offline gerepareerd systeem</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation type="unfinished" />
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Een bewaakte pas: mapper/crypttab validatie, initramfs herbouw en bootloader configuratie regeneratie</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
-        <translation>Optionele LVM opslag-stack ondersteuning</translation>
+        <translation>Optionele ondersteuning voor LVM-opslagstack</translation>
     </message>
     <message>
         <source>Optional Linux MD RAID support</source>
@@ -556,16 +556,16 @@
         <translation>Process namespace isolatie</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Alleen-lezen op deze frontend; kernel removal/cleanup/install door het interactieve menu van de helper</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel verwijderen, opruimen en installeren door het interactieve menu van de helper; niets wordt verwijderd of gewijzigd totdat u een actie kiest en bevestigt</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Alleen-lezen mogelijkheden op deze frontend; de GPU-driver reparatie loopt door de helper</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Evidence-driver reparatie via het interactieve menu van de helper</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Alleen-lezen controle van de root- en /bootbestandssystemen van het geselecteerde systeem, repareer dan alleen de apparaten die fouten melden (e2fsck voor ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Alleen-lezen controleren van de root- en /boot-bestandssystemen van het geselecteerde systeem, dan alleen de apparaten repareren die fouten melden</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>De initramfs herbouwen voor de geselecteerde scope? De helper houdt zijn mapper/crypttab en back-up preflights.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Rebuild out-of-tree kernel modules; vereist alleen wanneer de target gebruik maakt van dkms modules</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Rebuild out-of-tree kernel modules; vereist alleen wanneer het systeem een module build systeem gebruikt</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Vergelijk de opstart stack.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Vergelijk de boot stack van het geselecteerde reparatiesysteem in één bewaakte legacy pas: mapper/crypttab validatie, initramfs herbouw en GRUB-legacy configuratie regeneratie, met de component back-ups en preflights ongewijzigd. Dit is het Etch equivalent van de moderne boot-stack verzoening en blijft uit het Full Repair plan.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Regenereer de extlinux configuratie.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Regenereer het GRUB-menu/configuratie van het geselecteerde reparatiesysteem na de verplichte veiligheidsvoorvlucht. De helper maakt een back-up van menu.lst, behoudt elke bestaande boot entry en rolt terug op elke storing.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>De configuratie van de extlinux bootloader van het geselecteerde systeem regenereren. Deze legacy frontend stelt geen extlinux actie bloot.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regenereert de Etch GRUB-legacy menu.lst configuratie (opgeborgen, elke item bewaard)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regenereert de GRUB configuratie (opgesteund, elk item bewaard)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Repareer het EFI / UKI bootpad.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Repareer het EFI / UKI bootpad van het geselecteerde systeem. Deze legacy frontend stelt geen EFI actie bloot; het Etch doel is een BIOS/GRUB-legacy systeem.</translation>
     </message>
     <message>
@@ -765,7 +765,7 @@
     </message>
     <message>
         <source>Required for target-side repair commands</source>
-        <translation>Vereist voor doel-kant reparatie commando's</translation>
+        <translation>Vereist voor doel-kant reparatie commando&apos;s</translation>
     </message>
     <message>
         <source>Required for verified Host-to-Repair and Repair-to-Host transfer</source>
@@ -812,11 +812,11 @@
         <translation>Herstel de legacy sysv display manager geconfigureerd voor het geselecteerde systeem: de /etc/X11/default-display-manager ingang en de ontbrekende runlevel S-symlink, met een back-up en rollback, nooit het starten van de GUI. Wanneer de boot een disk-unlock prompt verwacht, wordt de console routing ook gerepareerd: console=tty0 is als laatste toegevoegd aan de commandoregel voor bootloader (menu.lst op deze legacy GRUB; de seriële console blijft staan) zodat de prompt op het zichtbare scherm blijft in plaats van zwart. Beschikbaar voor de lopende host en een vaste reparatie doel.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Herstelt /etc/X11/default-display-manager en de ontbrekende sysv runlevel S-symlink zonder de GUI te starten</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Herstelt de geconfigureerde displaymanager en de opstartlink zonder de GUI te starten</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Bekijk de geïnstalleerde kernelinventaris en kies één concrete kernelreparatieactie: verwijder de oudste/superseded of nieuwste kernel, verwijder verweesde headers/componenten/build-ondersteuning, installeer ontbrekende headers, installeer een onvolledige kernel of installeer de laatste kernel van de repository. Niets wordt verwijderd of gewijzigd totdat u een actie kiest en bevestigt. De draaiende kernel wordt altijd beschermd en de resterende initramfs-afbeeldingen van kernels en de configuratie van de bootloader worden na een verwijdering gerecupereerd.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>De bewaakte reparatie uitvoeren? De helper houdt zijn simulatie-eerste voorvlucht en runtime bewakers.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Voer de read-only bestandssysteem controle op de root en /boot bestandssystemen van het geselecteerde systeem uit en rapporteer de controletool en het resultaat van elk apparaat zonder iets te veranderen. Deze legacy frontend stelt de alleen-lezen controle bloot; apparaat reparatie is niet bedraad.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Voer de alleen-lezen bestandssysteem controle op de root en /boot bestandssystemen van het geselecteerde systeem uit, en repareer dan alleen de apparaten die fouten melden. De Etch check tools (e2fsck voor ext2/ext3) draaien alleen nadat de helper zijn alleen-lezen mounts heeft vrijgegeven; een bestandssysteem dat nog steeds is gemonteerd, wordt nooit offline gerepareerd en niet-ondersteunde bestandssystemen worden eerder gemeld dan geraden.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Doe de alleen-lezen veiligheidsvoorvlucht.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Controleert het alleen-lezen bestandssysteem voor de root, /boot en andere bestandssystemen van het geselecteerde systeem.</translation>
     </message>
     <message>
@@ -925,7 +925,7 @@
     </message>
     <message>
         <source>Software RAID</source>
-        <translation>Software RAID</translation>
+        <translation>Software-RAID</translation>
     </message>
     <message>
         <source>Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction.</source>
@@ -1008,7 +1008,7 @@
         <translation>De geselecteerde scope heeft geen ondersteund bestandssysteemtype voor een alleen-lezen controle.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>De root, /boot, ESP en /home bestandssystemen van de geselecteerde scope konden niet worden opgelost.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Omgeving valideren</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Loop een evidence-geleide interactieve sessie om de kernel GPU driver te repareren (nvidia/nouveau/amdgpu/radeon/mesa), waarbij alleen de kleine bewaakte stap wordt toegepast die u kiest met zijn eigen rollback. Twee beslissingspunten leiden de sessie: kernel-vs-driver (vervang de nieuwste kernel waartegen de driver niet kan bouwen, of verwijder de oudere kernel waar de driver aan vastzit) en verkeerde stuurprogramma (pureer de foutieve stuurprogramma, installeer de juiste kernel en herbouw deze tegen elke geïnstalleerde kernel). Een aparte one-boot nomodeset fallback bereikt een console op een kapotte driver.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Loop een bewijsgestuurde interactieve sessie om de GPU driver te repareren; het menu past zich aan het kenmerkende bewijs aan, elke bewaakte stap wordt opnieuw geverifieerd in dit venster voor de volgende optie, en een one-boot nomodeset fallback houdt een console bereikbaar op een kapotte bestuurder.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1297,7 +1297,7 @@
     </message>
     <message>
         <source>read-only device-mapper state review</source>
-        <translation type="unfinished" />
+        <translation>alleen-lezen controle van de device-mapper-status</translation>
     </message>
     <message>
         <source>read-only disk usage summary</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>validatie is alleen-lezen</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Invoerapparaten / toetsenbord</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Netwerk/connectiviteit</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Beoordeelt de invoerapparaatstack: gedetecteerde toetsenbord/muis/touchpad-apparaten en -klassen, de geladen, ingebouwde, beschikbare en geblokkeerde HID/toetsenbord-kernelmodules, de buscontrollerstatus, de toetsenbordindeling, de initramfs-opname en het ingebouwde toetsenbordmodule-bewijs voor de LUKS-ontgrendelprompt, plus recent opstartbewijs.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Bekijkt de netwerk stack: de gedetecteerde config backend, adapters en hun gebonden drivers/modules, blacklist en firmware staat, en de lopende host route, DNS en begrensde bereikbaarheid bewijs, zonder iets te veranderen.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>alleen-lezen invoerapparaat en initramfs toetsenbordinspectie</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>alleen-lezen netwerkadapter en connectiviteitsinspectie</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Reparatie van invoerapparaat</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Repareer invoerapparaten</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Doorloop een bewijsgestuurde interactieve sessie om toetsenbord-, muis- en touchpad-invoer te repareren; het menu past zich aan het diagnostisch bewijs aan, elke actie wordt in dit venster opnieuw geverifieerd vóór de volgende optie, en de bewaakte stappen dekken stuurprogramma&apos;s, modules, firmware, blokkadelijsten, de HID-terugval en de initramfs-toetsenbordmodules.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Kies een invoerapparaat reparatie actie uit het bewijs.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Netwerk / connectiviteit reparatie</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Reparatienetwerk</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Loop een evidence-driven interactieve sessie om de netwerk stack te repareren; het menu past zich aan het kenmerkende bewijs, elke actie wordt opnieuw geverifieerd in dit venster voor de volgende optie, en de bewaakte stappen omvatten stuurprogramma&amp;apos;s, modules, firmware, zwarte lijsten, initramfs NIC modules, adressing, routes en DNS. Live connectiviteit verandert nooit de interface met de standaard route.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Kies een netwerk reparatie actie uit het bewijsmateriaal.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Niet beschikbaar: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1564,7 +1620,7 @@ Niet beschikbaar: %1</translation>
         <translation>; best gedetecteerde systeemcomponent: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Ontwikkelaar:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt; Deze GUI is het ingangspunt van het pakket: een Qt 3.3.x frontend met de geporteerde bewaakte helper voor Debian Etch-era-systemen.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Bewaakte reparatiemodus:&lt;/b&gt; alleen-lezen diagnostica kan ofwel de beschermde Running Host inspecteren, ofwel een expliciet geselecteerde reparatieschijf. De bewaakte Debian/APT-pakketfasen (gestoorde configuratie, gebroken afhankelijkheden, metadata vernieuwen, upgraden), GRUB-legacy configuratieregeneratie, LUKS-doel ontgrendelen en bewaakte doelbestandbewerking uitvoeren door de geporteerde helper na bevestiging; Host Maintenance maakt dezelfde ondersteunde stadia in het actieve systeem na het herhalen van de host-identiteit en boot-mount controles.&lt;/p&gt;&lt;p&gt; De moderne-alleen-functies - geverifieerde bestandskopie, Btrfs snapshot rollback, EFI/UKI en extlinux reparatie, boot-stack verzoening en Make Default - zijn grijs met de helper eigen sonde redenen op deze frontend; Arch/Alpine/Fedora pakket backends blijven diagnostiek-alleen hier. &lt;/p&gt;&lt;p&gt; De eerste geprivilegieerde actie geeft toestemming voor een gecachede administratorsessie per scope via een verborgen ingangsmodus (de Qt GUI blijft onbevoorrecht). Het kan op elk moment worden beëindigd vanuit Bestand - Administrator-sessie vergrendelen.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1772,7 +1828,7 @@ Voer het wachtwoord in voor %2 (sudo). Het wordt alleen gebruikt voor deze sudo 
         <translation>Automatische installatie vereist expliciete pakket mapping en privilege machtiging.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Automatische installatie vereist expliciete pakket mapping en privilege autorisatie; installeert de geselecteerde ontbrekende mogelijkheden voorgesteld pakket op de huidige scope (lopende host of commit reparatie doel) via de bewaakte helper.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Voer het wachtwoord in voor %2 (sudo). Het wordt alleen gebruikt voor deze sudo 
         <translation>Boot Bitch legacy GUI klaar. Elk bevoorrecht commando loopt via de geporteerde helper; acties blijven uitgeschakeld totdat een reparatiedoel is vastgelegd (of Host Maintenance actief is) en diagnostics melden hun capaciteit lijn.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch moet draaien vanuit een andere opgestarte Linux omgeving dan het systeem dat wordt gerepareerd. Gebruik een Linux live medium of een andere Linux installatie op een andere fysieke schijf.&lt;br&gt;&lt;br&gt; De lopende host is beschermd tegen gewone reparatie-doel selectie, maar het kan expliciet worden geselecteerd via &lt;b&gt;Host Maintenance&lt;/b&gt; voor bewaakte inheemse diagnostiek en ondersteunde onderhoudsfasen.&lt;br&gt;&lt;br&gt; Diagnostics volg de Systems pagina: de toegewijde reparatie schijf terwijl Host Maintenance is uitgeschakeld, of de beschermde lopende host terwijl het actief is.&lt;br&gt;&lt;br&gt; De eerste geprivilegieerde actie vraagt toestemming voor beheerder eenmaal voor dit Boot Bitch venster; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; eindigt die helper sessie onmiddellijk. Elke reparatie houdt de helper zijn eigen vluchttijd voor vluchten.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Voer het wachtwoord in voor %2 (sudo). Het wordt alleen gebruikt voor deze sudo 
         <translation>Blader door reparatiemappen...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Blader door de mappen van het gerepareerde systeem alleen-lezen en podium de gekozen map.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Blader door het geselecteerde reparatiesysteem via de tijdelijke alleen-lezen mounts van de helper en kies een absoluut bestemmingspad. Er worden geen doelbestanden gewijzigd tijdens het surfen.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Voer het wachtwoord in voor %2 (sudo). Het wordt alleen gebruikt voor deze sudo 
         <translation>Kies host doelmap</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Kies welke mogelijkheden de tabel laat zien.</translation>
     </message>
     <message>
@@ -2064,8 +2120,8 @@ Voer het wachtwoord in voor %2 (sudo). Het wordt alleen gebruikt voor deze sudo 
         <translation>Kopiëren en verifiëren</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
-        <translation>Kopieer en verifieer bestanden in beide richtingen via de bewaakte helper (cp -a plus eigendomsherstel en een byte-vergelijk per bestand). De helper's bestandskopie sonde poorten de controles en houdt de richting en pad insluiting controles.</translation>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <translation>Kopieer en verifieer bestanden in beide richtingen via de bewaakte helper (cp -a plus eigendomsherstel en een byte-vergelijk per bestand). De helper&apos;s bestandskopie sonde poorten de controles en houdt de richting en pad insluiting controles.</translation>
     </message>
     <message>
         <source>Copy staged items and verify the result. Existing destination names are overwritten when source content differs; unrelated destination files are never deleted.</source>
@@ -2252,13 +2308,13 @@ De helper behoudt zijn richting en pad insluiting controles; een gevoelige repar
         <translation>Voer eerst het commando in om uit te voeren.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Voer de apparaatnummers in om te repareren (ruimte- of komma-gescheiden, bijvoorbeeld "1 3"), of 0 om over te slaan.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Voer de apparaatnummers in om te repareren (ruimte- of komma-gescheiden, bijvoorbeeld &quot;1 3&quot;), of 0 om over te slaan.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Voer de wachtwoordzin in voor %1.
 
 Het wordt alleen verzonden naar cryptsetup via de standaard invoer van de helper en wordt nooit gelogd of geplaatst op een commandoregel.</translation>
@@ -2276,7 +2332,7 @@ Het wordt alleen verzonden naar cryptsetup via de standaard invoer van de helper
         <translation>Stel de bevoorrechte helper sessie voor de huidige reikwijdte nu.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etch-era doel configuratie bestanden; beschikbaarheid wordt alleen-lezen door de helper diagnostiek onderzocht.</translation>
     </message>
     <message>
@@ -2429,7 +2485,7 @@ Het wordt alleen verzonden naar cryptsetup via de standaard invoer van de helper
     </message>
     <message>
         <source>Host</source>
-        <translation type="unfinished" />
+        <translation>Host</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2554,12 +2610,12 @@ De helper controleert onafhankelijk of de geselecteerde schijf backs /, /boot en
         <translation>Ontbrekende ondersteuning installeren...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Installeer het pakket '%1' in het geselecteerde reparatiedoel via de bewaakte pakket backend? Dit wijzigt de reparatie doel en ongeldig maakt gecached diagnostiek.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Installeer het pakket &apos;%1&apos; in het geselecteerde reparatiedoel via de bewaakte pakket backend? Dit wijzigt de reparatie doel en ongeldig maakt gecached diagnostiek.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Installeer het pakket '%1' op de lopende host via de bewaakte pakket backend? Dit wijzigt de lopende host en ongeldig maakt gecached running-host diagnostiek.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Installeer het pakket &apos;%1&apos; op de lopende host via de bewaakte pakket backend? Dit wijzigt de lopende host en ongeldig maakt gecached running-host diagnostiek.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2583,7 +2639,7 @@ De helper controleert onafhankelijk of de geselecteerde schijf backs /, /boot en
     </message>
     <message>
         <source>LUKS volume:</source>
-        <translation type="unfinished" />
+        <translation>LUKS volume:</translation>
     </message>
     <message>
         <source>Leave Host Maintenance and return to repair-target mode.</source>
@@ -2635,7 +2691,7 @@ De helper controleert onafhankelijk of de geselecteerde schijf backs /, /boot en
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Maak de canonieke geïnstalleerde kernel entry de standaard GRUB-legacy boot entry op de lopende host?
 
-De helper overtuigt /boot/grub/menu.lst, stelt de richtlijn "instant &lt;N&gt;" in op de canonieke ingang, back-upt het menu als eerste en herstelt het bij een fout.</translation>
+De helper overtuigt /boot/grub/menu.lst, stelt de richtlijn &quot;instant &lt;N&gt;&quot; in op de canonieke ingang, back-upt het menu als eerste en herstelt het bij een fout.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2648,6 +2704,50 @@ De helper overtuigt /boot/grub/menu.lst, stelt de richtlijn "instant &lt;N&gt;" 
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Ontbrekende displaymanager: installeer het %1-pakket uit de tabel Capaciteiten.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI gereedschap</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>GRUB-configuratiegereedschap</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB installatiegereedschap</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Ontbrekende %1: installeer het bijpassende pakket(s) %2 uit de Boot mogelijkheden tabel.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Ontbrekende %1: installeer het bijbehorende pakket uit de Boot mogelijkheden tabel.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI bouwer</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>voorwaarde voor boot-stack</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initrams-gereedschappen</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2694,8 +2794,12 @@ De helper overtuigt /boot/grub/menu.lst, stelt de richtlijn "instant &lt;N&gt;" 
         <translation>Nieuwste geïnstalleerde kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Geen 'Legacy feature shell:'-regel wordt gecached; voer diagnostieken uit voor de geselecteerde scope om de chroot/timeout insluitingssondes van de helper te evalueren (mislukt).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Kernel compiler: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Geen &apos;Legacy feature shell:&apos;-regel wordt gecached; voer diagnostieken uit voor de geselecteerde scope om de chroot/timeout insluitingssondes van de helper te evalueren (mislukt).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
         <translation>Nog geen diagnostische resultaten op te slaan.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Er werden geen bestandssysteemfouten gedetecteerd op de %1 root, /boot of /home bestandssystemen. Er werd geen reparatie uitgevoerd.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
         <translation>Er is geen reparatiegereedschap geselecteerd.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>Er werden geen herstelbare bestandssysteemfouten gedetecteerd op de %1 root, /boot of /home bestandssystemen, maar %2. Er werd geen reparatie uitgevoerd.</translation>
     </message>
     <message>
@@ -2835,11 +2939,11 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
     </message>
     <message>
         <source>OK</source>
-        <translation type="unfinished" />
+        <translation>OK</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
-        <translation>Offline commando's draaien één voor één in een frisse chroot en kunnen geen interactieve prompts beantwoorden (apt-get -y upgrade werkt). Host-shell commando's draaien direct op de lopende host. De sondelijnen van de helper poorten het commando veld; de exacte reden verschijnt in de tooltip.</translation>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <translation>Offline commando&apos;s draaien één voor één in een frisse chroot en kunnen geen interactieve prompts beantwoorden (apt-get -y upgrade werkt). Host-shell commando&apos;s draaien direct op de lopende host. De sondelijnen van de helper poorten het commando veld; de exacte reden verschijnt in de tooltip.</translation>
     </message>
     <message>
         <source>Offline repair modes refuse mounted filesystems; the running host root is never repaired offline.</source>
@@ -3007,7 +3111,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
     </message>
     <message>
         <source>Rebuild all initramfs images</source>
-        <translation type="unfinished" />
+        <translation>Alle initramfs-afbeeldingen herstellen</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -3015,7 +3119,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
     </message>
     <message>
         <source>Refresh APT package metadata</source>
-        <translation type="unfinished" />
+        <translation>APT-pakketmetadata vernieuwen</translation>
     </message>
     <message>
         <source>Refresh Capabilities</source>
@@ -3026,11 +3130,11 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
         <translation>Apparaten verversen</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
-        <translation type="unfinished" />
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
+        <translation>Regenereer de %1 GRUB configuratie</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Regenereer de %1 extlinux configuratie</translation>
     </message>
     <message>
@@ -3183,15 +3287,15 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
     </message>
     <message>
         <source>Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as apt-get -y upgrade. Output is kept in this window and in the application log.</source>
-        <translation>Voer een commando uit in het geselecteerde reparatiesysteem als root (sudo is niet nodig). Commando's worden een voor een uitgevoerd in een frisse chroot en kunnen geen interactieve prompts beantwoorden; gebruik niet-interactieve vlaggen zoals apt-get -y upgrade. Uitvoer wordt bewaard in dit venster en in het programmalogboek.</translation>
+        <translation>Voer een commando uit in het geselecteerde reparatiesysteem als root (sudo is niet nodig). Commando&apos;s worden een voor een uitgevoerd in een frisse chroot en kunnen geen interactieve prompts beantwoorden; gebruik niet-interactieve vlaggen zoals apt-get -y upgrade. Uitvoer wordt bewaard in dit venster en in het programmalogboek.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
-        <translation>Voer een commando uit op de lopende host als root (Host Shell) of in het geselecteerde reparatiesysteem als root (Chroot Shell); sudo is ook niet nodig. Host-Shell commando's worden direct uitgevoerd op het actieve systeem; chroot commando's worden één voor één uitgevoerd in een frisse chroot en kunnen geen interactieve prompts beantwoorden, dus niet-interactieve vlaggen zoals apt-get -y upgrade blijven aanbevolen voor onbeheerde commando's. Uitvoer wordt bewaard in dit venster en in het programmalogboek. De alleen-lezen sondes van de helper openen het commandoveld; terwijl de Shell niet beschikbaar is, toont de pagina de exacte reden onder het veld.</translation>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <translation>Voer een commando uit op de lopende host als root (Host Shell) of in het geselecteerde reparatiesysteem als root (Chroot Shell); sudo is ook niet nodig. Host-Shell commando&apos;s worden direct uitgevoerd op het actieve systeem; chroot commando&apos;s worden één voor één uitgevoerd in een frisse chroot en kunnen geen interactieve prompts beantwoorden, dus niet-interactieve vlaggen zoals apt-get -y upgrade blijven aanbevolen voor onbeheerde commando&apos;s. Uitvoer wordt bewaard in dit venster en in het programmalogboek. De alleen-lezen sondes van de helper openen het commandoveld; terwijl de Shell niet beschikbaar is, toont de pagina de exacte reden onder het veld.</translation>
     </message>
     <message>
         <source>Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system; output is kept in this window and in the application log.</source>
-        <translation>Voer een commando uit op de lopende host als root (sudo is niet nodig). Commando's worden direct uitgevoerd op het actieve systeem; de uitvoer wordt bewaard in dit venster en in het programmalogboek.</translation>
+        <translation>Voer een commando uit op de lopende host als root (sudo is niet nodig). Commando&apos;s worden direct uitgevoerd op het actieve systeem; de uitvoer wordt bewaard in dit venster en in het programmalogboek.</translation>
     </message>
     <message>
         <source>Run a copy dry-run through the guarded helper. No files are changed.</source>
@@ -3206,7 +3310,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
         <translation>Doe diagnostiek voor deze scope om de gesloten acties te ontgrendelen. Diagnostics zijn alleen-lezen en de enige bewijsbron.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Voer diagnostiek uit om te onderzoeken welke doelconfiguratiebestanden bestaan; de alleen-lezen sonde van de helper bepaalt de lijst.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
         <translation>Uitvoeren op host</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Voer een reparatie tool of gebruik het volledige reparatie plan tegen de geselecteerde reparatie drive. Kies Host Maintenance op Systems om dezelfde ondersteunde, bewaakte stadia uit te voeren tegen de beschermde Running Host. Kies volledige reparatie stadia in Instellingen. Ingeschakelde stadia draaien in de getoonde volgorde. Elke configureerbare fase verschijnt ook hieronder als een individueel hulpmiddel; de Full Repair kolom weerspiegelt de huidige status van instellingen. De boot tools (GRUB configuratie, boot-stack verzoening en Make Default) zijn onafhankelijk: voer ze in elke volgorde uit, en een latere actie herverifieert wat een eerdere men veranderde en rapporteert zijn eigen resultaat. De actieve scope wordt naast Repair getoond: geselecteerde reparatie drive of Running Host onderhoud. Elke actie blijft uitgeschakeld totdat de cache-capaciteit lijnen zeggen beschikbaar en de helper houdt zijn runtime preflights. Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is 'ongewijzigd' maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Voer een reparatie tool of gebruik het volledige reparatie plan tegen de geselecteerde reparatie drive. Kies Host Maintenance op Systems om dezelfde ondersteunde, bewaakte stadia uit te voeren tegen de beschermde Running Host. Kies volledige reparatie stadia in Instellingen. Ingeschakelde stadia draaien in de getoonde volgorde. Elke configureerbare fase verschijnt ook hieronder als een individueel hulpmiddel; de Full Repair kolom weerspiegelt de huidige status van instellingen. De boot tools (GRUB configuratie, boot-stack verzoening en Make Default) zijn onafhankelijk: voer ze in elke volgorde uit, en een latere actie herverifieert wat een eerdere men veranderde en rapporteert zijn eigen resultaat. De actieve scope wordt naast Repair getoond: geselecteerde reparatie drive of Running Host onderhoud. Elke actie blijft uitgeschakeld totdat de cache-capaciteit lijnen zeggen beschikbaar en de helper houdt zijn runtime preflights. Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is &apos;ongewijzigd&apos; maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
-        <translation>Voer een herzien commando als root in de doel chroot door de helper's bewaakte shell werkwoord.</translation>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
+        <translation>Voer een herzien commando als root in de doel chroot door de helper&apos;s bewaakte shell werkwoord.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Voer een herzien commando uit als root op de lopende host via het bewaakte host-shell werkwoord van de helper.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Druk op Machtigen op het tabblad Systems of Repair om de sessie vast te stellen,
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Het volledige reparatieplan uitvoeren?
@@ -3386,7 +3490,7 @@ De helper houdt zijn runtime preflights; het commando wordt doorgegeven als éé
         <translation>Selecteer eerst een fysieke schijf in de lijst met beschikbare hersteldoelen op het tabblad Systems, of gebruik Host Maintenance voor de beschermde host.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Selecteer een fysieke schijf; Boot Bitch lost het meest waarschijnlijke Linux systeemvolume automatisch op. De lopende host blijft beschermd tegen gewone doel reparaties, met een aparte expliciete host-onderhoud pad voor zijn eigen systeem. De Details-knop toont de feiten van de beschermde host in het detailpaneel; het selecteren van een rij schijf herstelt de per-drive paneel.</translation>
     </message>
     <message>
@@ -3512,6 +3616,14 @@ De helper houdt zijn runtime preflights; het commando wordt doorgegeven als éé
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Devices tonen zonder geïdentificeerde Linux installatie</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Wanneer uit, verbergt alleen-lezen squashfs container volumes (snap-style) die niet Linux install targets.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>squashfs-lusapparaten tonen</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3667,7 +3779,7 @@ Methode: helper-bevestigde mapping van de laatste alleen-lezen diagnostiek.</tra
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished" />
+        <translation>Status</translation>
     </message>
     <message>
         <source>Status:</source>
@@ -3694,12 +3806,12 @@ Methode: helper-bevestigde mapping van de laatste alleen-lezen diagnostiek.</tra
         <translation>Stoppen met het uitvoeren van Shell commando... Het tabblad Logs bewaart het volledige transcript.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Aanbevolen pakket</translation>
+        <source>Packages</source>
+        <translation>Verpakkingen</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
-        <translation type="unfinished" />
+        <translation>Overgewaardeerde kernel(s) beschikbaar voor verwijdering: %1.</translation>
     </message>
     <message>
         <source>Systems</source>
@@ -3756,8 +3868,8 @@ De running host wordt onafhankelijk opnieuw gecontroleerd en geweigerd door de b
         <translation>Het Full Repair plan draait de geselecteerde legacy stadia in orde door middel van de bewaakte helper; de individuele tools lopen een fase tegelijk. Elke actie blijft uitgeschakeld totdat de cache-capaciteit lijnen zeggen beschikbaar en de helper houdt zijn runtime preflights.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Het Full Repair plan draait de geselecteerde legacy stadia in orde door middel van de bewaakte helper; de individuele tools lopen een fase tegelijk. Elke actie blijft uitgeschakeld totdat de cache-capaciteit lijnen zeggen beschikbaar en de helper houdt zijn runtime preflights. Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is 'ongewijzigd' maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Het Full Repair plan draait de geselecteerde legacy stadia in orde door middel van de bewaakte helper; de individuele tools lopen een fase tegelijk. Elke actie blijft uitgeschakeld totdat de cache-capaciteit lijnen zeggen beschikbaar en de helper houdt zijn runtime preflights. Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is &apos;ongewijzigd&apos; maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Druk op Authorize op het tabblad Systems of Repair om de sessie te herstellen en
         <translation>De geselecteerde scope heeft geen opgelost root component; gebruik Refresh Devices en commit het reparatiedoel opnieuw.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>De schijf- en rootcomponent van de geselecteerde scope kon niet worden opgelost.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Druk op Authorize op het tabblad Systems of Repair om de sessie te herstellen en
         <translation>Deze versleutelde schijf heeft nog geen zichtbaar Linux bestandssysteem. Gebruik Unlock, vernieuw apparaten, en selecteer het doel nadat de Linux root is gedetecteerd.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Deze legacy frontend stelt geen %1 actie bloot; de helper rapporteert de mogelijkheid als beschikbaar.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Verkrijgbaar als een diagnostische / capability alleen - deze erfenis frontend bloot geen reparatie actie; voer de interactieve reparatie van de moderne GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ De helper opent een tijdelijke apparaat-mapper mapping met cryptsetup en houdt h
         <translation>WAARSCHUWING: de opgeslagen GUI instellingen bestand %1 kan niet worden gelezen; de opties gelezen als hun standaardwaarden, niet als de opgeslagen waarden.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>WAARSCHUWING: de opgeslagen GUI instellingen bestand %1 kan niet worden gelezen of verwijderd; de opties gelezen als hun standaardwaarden. Verwijder het (of maak ~/.qt schrijfbaar) zodat opgeslagen instellingen weer kunnen aanhouden.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Verwijderd %1 onleesbare verouderde instellingenbestand(en): %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Kon de onleesbare verouderde instellingenbestand(en) %1 niet verwijderen; standaardinstellingen zijn van toepassing totdat ze verwijderd zijn.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Wanneer uit, rijden met een gecodeerd apparaat worden verborgen totdat het volume is ontgrendeld.</translation>
     </message>
@@ -4064,8 +4188,8 @@ De helper opent een tijdelijke apparaat-mapper mapping met cryptsetup en houdt h
         <translation>Lange logregels omdraaien</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is 'ongewijzigd' maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Schrijf acties vragen om bevestiging en voer dan de eigen runtime preflights van de helper uit; de GUI verzwakt ze nooit. Een reparatie die niet bewezen is &apos;ongewijzigd&apos; maakt de cache diagnostiek ongeldig en schakelt de gesloten handelingen uit totdat de diagnostiek weer loopt.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,7 +4224,7 @@ De helper opent een tijdelijke apparaat-mapper mapping met cryptsetup en houdt h
         <translation>Vergunning van de beheerder</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
         <translation>hoogte vereist een interactief sudo-wachtwoord; run de rook als root of na</translation>
     </message>
     <message>
@@ -4180,7 +4304,7 @@ Het commando is niet gestart.</translation>
         <translation>niet beschikbaar - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>niet beschikbaar: zie de Legacy-functie van de helper bestandskopie: sonde reden hierboven</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ Het commando is niet gestart.</translation>
         <source>your account</source>
         <translation>uw account</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Repository nieuwste kernel: %1 (nieuwer dan de nieuwste geïnstalleerde; %2).</translation></message><message><source>Try Again</source><translation>Opnieuw proberen</translation></message><message><source>Enter the note text</source><translation>Voer de notitietekst in</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Deze notitie wordt toegevoegd aan de geselecteerde sessie log %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>NOTE toegevoegd aan vorige sessie log %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Het geselecteerde logboek is geen geldig sessielogboek; de notitie is niet geschreven.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>De geselecteerde sessie log %1 is niet beschrijfbaar; de noot is niet toegevoegd.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Repository nieuwste kernel: %1 (nieuwer dan de nieuwste geïnstalleerde; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Opnieuw proberen</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Voer de notitietekst in</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Deze notitie wordt toegevoegd aan de geselecteerde sessie log %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>NOTE toegevoegd aan vorige sessie log %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Het geselecteerde logboek is geen geldig sessielogboek; de notitie is niet geschreven.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>De geselecteerde sessie log %1 is niet beschrijfbaar; de noot is niet toegevoegd.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Geen gecached running-host diagnostics; voer alleen-lezen host diagnostics in Host Maintenance om deze rij te vullen.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - Gestopt op uw verzoek</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 fase(s) gemeld veranderingen vóór de stop; deze veranderingen worden toegepast en de getroffen diagnoses werden geregenereerd</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>een fase waarin een verandering werd gemeld vóór de stop; de wijzigingen ervan kunnen reeds worden toegepast</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>er zijn geen wijzigingen aangebracht</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Geïnstalleerd</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Repareert het EFI / UKI opstartpad voor UEFI systemen</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Evidence-gedreven toetsenbord, muis en touchpad reparatie via het interactieve menu van de helper</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Evidence-driven netwerk reparatie via het interactieve menu van de helper; live connectiviteit verandert nooit de interface met de standaard route</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Pakketten niet beschikbaar in de repositories van dit systeem</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 firmware boot items geladen alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware-invoerweergave is beschikbaar. Ingangen laden om de UEFI-items alleen-lezen te tonen.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Opstarten</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Opstartingangen geweigerd: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Boot entry list resultaat afgewezen: het toepassingsgebied veranderde tijdens het uitvoeren van het verzoek.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Boots</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Klasse</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Klasse: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Direct (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Rijden</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI-opstartitems</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Terugval</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Firmware-opstartitems konden niet geladen worden. Zie Logs voor details.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Firmware-opstartlijst mislukt.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB-menu</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Label: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Firmware-opstartitems tonen</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Vermeld in BootOrder: nee (toegestaan door firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Vermeld in BootOrder: ja</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Invoeren laden</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Laad de %1 UEFI firmware boot items alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Geladen %1 %2 firmware boot entr%3 alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Loader</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Loader: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Het laden van %1 UEFI firmware boot ingangen alleen-lezen voor %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Netwerk</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Geen UEFI firmware boot items werden gevonden Dit systeem is BIOS / legacy of mist efibootmgr, dus er is geen firmware boot order om te beheren.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Geen toepassingsgebied geselecteerd</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Andere</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Repareren doel: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Repareren doel: niet klaar</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Reparatiedoel</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Rol: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Uitvoeren host: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Uitvoeren host: niet geselecteerd</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Uitvoeren-host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Selecteer Host Maintenance op de lopende host, of een reparatie doel in Systems, om firmware boot ingangen te beheren.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Selecteer Host Maintenance op de lopende host, of een reparatie doel in Systems, om firmware boot ingangen te beheren. Ingangen laden toont de huidige scope&apos;s UEFI items alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>De UEFI firmware boot items (de lopende host NVRAM) staan hier alleen-lezen. In Host Maintenance zie je de eigen ingangen van de draaiende host; met een reparatie doel vastgelegd zie je de NVRAM ingangen waarvan de partitie punten op dat station EFI systeempartitie. Deze weergave verandert nooit de firmware; een BIOS-only host (Etch) heeft geen firmware-opstartingangen en lijsten geen. Het GRUB boot menu (de lijst met kernels binnen GRUB) is apart en wordt gerecupereerd door de GRUB of boot-stack reparatie.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>De UEFI firmware boot items in BootOrder, vermeld alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Dit item is momenteel actief (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Kon %1 niet verwijderen.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>repareren doel</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>reparatiedoel</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>host&apos;s draaien</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>running-host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>EFI-vermeldingen</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Opstartmenu</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Schakel tussen de UEFI firmware en het alleen-lezen opstartmenu.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Menu-item</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Het alleen-lezen opstartmenu (de kernel/OS-items van de bootloader in bestandsvolgorde).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>%1 boot menu-items geladen alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 opstartmenu is beschikbaar. Kies het Opstartmenu om het alleen-lezen opstartmenu te tonen.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware-invoerweergave is beschikbaar. Kies EFI-items om de UEFI-items alleen-lezen te tonen.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Selecteer Host Onderhoud op de lopende host, of een reparatie doel in Systems, om firmware boot ingangen te bekijken. Kies EFI-vermeldingen of het menu Opstarten hierboven om de ingangen van de huidige scope alleen-lezen te laden.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Het laden van %1 boot menu alleen-lezen voor %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Opstartmenu tonen</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Opstartmenu vernieuwen geweigerd: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Opstartmenulijst mislukt.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Bootmenu terugval geweigerd: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Boot menulijst resultaat afgewezen: de scope veranderde tijdens het uitvoeren van het verzoek.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Menu-item: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Entry ID: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Dit is een submenu.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Laden configuratie: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Vreemd: wijst naar een andere schijf of partitie.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Standaard invoer: ja</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Standaard item: nee</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Standaard</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (submenu)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Geladen %1 opstartmenu entr%2 alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Geen GRUB legacy menu.lst op deze scope; probeer het GRUB grub.cfg boot menu alleen-lezen.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Er is geen configuratie gevonden voor het bootmenu op dit station. Het systeem mag geen GRUB, extlinux/syslinux of GRUB legacy boot menu hebben, of de configuratie leeft elders.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>De configuratie van het bootmenu bestaat maar bevat geen items.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Het bootmenu kon niet geladen worden. Zie Logs voor details.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>standaard</translation>
+    </message>
+</context>
 </TS>

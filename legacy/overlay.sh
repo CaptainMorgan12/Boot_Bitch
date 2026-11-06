@@ -3423,6 +3423,17 @@ function helper_menu_prompt {
                 HELPER_MENU_ANSWER="$LEGACY_ANSWER_RAW"
                 break
             fi
+            # Round 101 (abort parity for the interactive GPU/kernels menus):
+            # the popup Cancel touches the cancel surface, but the stage-
+            # boundary checks cannot see it while this poll owns the request
+            # — without this check the run ignores the stop, the menu expires
+            # into a "finished" no-op and any answer typed after the cancel
+            # still proceeds with a mutation the user wanted stopped.  The
+            # modern CANCEL record wakes the same wait through the broker
+            # pipe; the file-based channel needs the explicit poll.
+            if legacy_cancel_requested; then
+                abort_mutating_request
+            fi
             now="$(shell_now_epoch)"
             (( now >= deadline )) && break
             sleep 1

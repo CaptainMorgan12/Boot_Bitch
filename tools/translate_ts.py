@@ -28,11 +28,15 @@ What it does
        - ``\\n`` newlines are never sent to MT: each source is split on newlines
          and rejoined exactly, so leading/trailing and ``\\n\\n`` newlines survive;
        - glyphs ``… • → ✓ ✗ ▪ &`` -> tokens, restored deterministically;
+        - box-drawing/separator runs of ``─``/``═`` (round 150) -> one
+          length-carrying token per run, restored deterministically;
         - technical terms (``initramfs``, ``mkinitcpio``, ``grub-install``, ``GRUB``,
           ``LUKS``, ``ESP``, ``UEFI``, ``EFI``, ``UKI``, ``btrfs``, ``Boot Bitch``,
-          ``pacman``/``apk``/``dnf``/``apt``/``dpkg``/``dkms``, ... and the
-          standard Linux filesystems) -> tokens, matched case-insensitively, so
-          Argos cannot mangle them (``initramfs`` -> ``initramf``).
+          ``pacman``/``apk``/``dnf``/``apt``/``dpkg``/``dkms``, the path terms
+          ``/boot``/``/home``/``/boot/efi``/``/dev``, the kernel tokens
+          ``initrd``/``vmlinuz``, and the standard Linux filesystems) -> tokens,
+          matched case-insensitively, so Argos cannot mangle them
+          (``initramfs`` -> ``initramf``).
 5. Verifies placeholder integrity for every candidate (override or MT): the set
    of ``%N`` / ``%n`` placeholders (Qt translators legitimately reorder them, so
    this is a multiset comparison) and the number of ``\\n`` characters must match
@@ -43,7 +47,7 @@ What it does
 
 Overrides format
 ----------------
-tools/translate_overrides.tsv is a tab-separated file with the columns::
+tools/translate_overrides.tsv is a tab-separated file with the base columns::
 
     source<TAB>de<TAB>fr<TAB>es
 
@@ -52,6 +56,10 @@ mean "no confident override for this language" (the string then falls through to
 machine translation, or stays English if no backend is available).  The source
 column is compared against the *unescaped* <source> text (i.e. ``&File``, not
 ``&amp;File``).
+
+An optional header row (first cell ``source``, second ``de``) extends the
+column map with further language columns (e.g. ``uk``, ``ko``) for the rows
+that follow it; rows before the header use the base de/fr/es columns.
 
 Short button/action label glossary
 ----------------------------------
@@ -101,9 +109,17 @@ from collections import Counter
 
 # The Qt locale codes the application ships .ts/.qm catalogs for. The Argos
 # backend maps a small number of these to a different package code below.
+# "vi" is the round-96 tracked addition: NO Argos vi model exists, so its
+# catalog stays English-fallback (lupdate-refreshed, MT fill leaves it
+# unfilled) — documented in Development/docs/translation.md.
+# "nb" is the round-110 addition: the shipped boot-repair_nb.ts catalog
+# (Bokmål, the modern Qt locale spelling) is fillable via the installed
+# translate-en_nb model.  "no" and "nb" are both kept as targets: the
+# overrides table may pin each independently.
 SUPPORTED_TARGETS = (
     "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko",
-    "sv", "da", "fi", "no", "cs", "hu", "ro", "tr", "el", "ar", "uk",
+    "sv", "da", "fi", "no", "nb", "cs", "hu", "ro", "tr", "el", "ar", "uk",
+    "vi",
 )
 
 # Qt locale code -> Argos Translate package code. Qt calls Norwegian "no";
@@ -147,6 +163,16 @@ GLYPH_TOKENS = (
     ("GL6X", "\u25aa"),  # ▪
 )
 
+# Box-drawing/separator RUNS (round 150): a maximal run of ─ (U+2500) or ═
+# (U+2550) is replaced by ONE opaque token carrying the run length mid-token
+# ("RLA8X" = 8 × ─), so Argos' tokenizer can never drop, reflow or duplicate
+# a repeated single-char token run (the "GL7XGL7XGL7X…" hazard).  Runs are
+# matched {2,} — a lone ─/═ is ordinary punctuation.
+RUN_TOKENS = (
+    ("RLA", "\u2500"),  # ─ run
+    ("RLB", "\u2550"),  # ═ run
+)
+
 # Technical terms that must survive MT verbatim (e.g. Argos turns "initramfs"
 # into "initramf").  They are matched CASE-INSENSITIVELY and word-bounded so a
 # short command name cannot match inside an ordinary word ("apt" must never
@@ -158,26 +184,73 @@ GLYPH_TOKENS = (
 # acronyms, proper nouns as-is — which is the form restored after MT.  The list
 # is sorted longest-first below so a compound term (update-initramfs,
 # systemd-sysv-install) is protected before its constituent part.
+#
+# Round 150 (the protected-terms audit): the list is the COMPLETE inventory of
+# technical tokens the pipeline must never translate — the
+# filesystem/partition/device/mount/boot terms (the path terms /boot /home
+# /boot/efi /dev included — a "/" is a \W boundary, so the path prefix is
+# protected inside longer paths too), the initramfs/kernel tokens (initrd,
+# vmlinuz, the per-kernel package names, the lsinit*/mkinitramfs readers),
+# the package-manager/tool names (dnf5, apt-get, snapper, btrfs-progs,
+# e2fsck/fsck), the layout/config nouns (crypttab, fstab, subvolume/subvol,
+# mapper, GRUB2, BLS, GPT/MBR, grubenv/grub.cfg), the service/infra names
+# (systemd, openrc, sysvinit, chroot, timeshift), the display managers
+# (gdm/sddm/lightdm), the module names, and the virtual-GPU vendor proper
+# nouns.  Anything added to a catalog source must be added here BEFORE the
+# next fill, or Argos will mangle it exactly like the round-110 corruption
+# class documented in Development/docs/translation.md.
+#
+# Round 150 REMOVALS (wrong entries — translatable words, not technical
+# tokens): "kernel" (the catalogs correctly translate it — jádro/noyaux/
+# ядро/内核 — and the survive check flagged every legitimate translation as a
+# loss), "swap" (an ordinary prose word; the fstab fstype value never reaches
+# a tr() source), and "Shell" (prose "shell" must translate; the standalone
+# tab label is pinned verbatim for every language via a translate_overrides
+# row instead of the word-level protection).
 PROTECTED_TERMS = tuple(sorted((
     # compound boot/recovery commands (longest first)
     "systemd-sysv-install", "update-initramfs", "update-grub", "grub-mkconfig",
     "grub-install", "grub-probe", "systemd-boot",
     # proper nouns / mixed-case names (kept as-is)
-    "Boot Bitch", "TUXEDO", "WebFAI", "Shell", "BootCurrent", "BootOrder",
+    "Boot Bitch", "TUXEDO", "WebFAI", "BootCurrent", "BootOrder",
     "BootNext", "iPXE",
+    # virtual-GPU vendor proper nouns (the round-150 additions)
+    "VirtualBox", "Hyper-V", "VMware", "QEMU", "Bochs", "Cirrus", "QXL",
+    "Virtio",
     # tools / commands (lowercase)
     "mkinitcpio", "mkinitfs", "initramfs", "extlinux", "syslinux",
     "pacman", "dracut", "os-prober", "menuentry", "shim",
-    "lvm2", "lvs", "mdadm", "kernel",
+    "lvm2", "lvs", "mdadm",
     "apt", "apk", "dnf", "dpkg", "dkms", "akmods", "pkexec", "Polkit",
+    "gcc",
+    # initramfs/kernel/boot-chain tokens (the round-150 additions)
+    "initramfs-tools", "zfs-initramfs", "grub2-mkconfig", "mkinitramfs",
+    "lsinitramfs", "lsinitcpio", "lsinitrd", "initrd.img", "initrd",
+    "vmlinuz", "kernel-devel", "kernel-headers", "linux-image",
+    "linux-headers", "efibootmgr", "grubenv", "grub.cfg", "bootctl",
+    "snapper", "btrfs-progs", "apt-get", "dnf5",
+    # layout/config nouns (the round-150 additions)
+    "crypttab", "fstab", "subvolume", "subvol", "mapper",
+    "e2fsck", "fsck.fat", "fsck",
+    # service/infrastructure names (the round-150 additions)
+    "systemd", "openrc", "sysvinit", "chroot", "timeshift",
+    "modprobe", "modules-load.d", "cpio", "zcat", "cryptsetup",
+    "findmnt", "lsblk", "blkid", "objcopy", "sbverify", "pesign",
+    "mokutil", "gdm", "sddm", "lightdm",
+    # kernel module names (the round-150 additions)
+    "nvidia", "hid_apple", "hid-generic", "virtio_net",
+    # filesystem path terms (the round-150 additions; "/" is a boundary, so
+    # "/boot" also protects the prefix of "/boot/grub/grub.cfg" and "/dev"
+    # the prefix of "/dev/mapper/…")
+    "/boot/efi", "/boot", "/home", "/dev",
     # acronyms (UPPERCASE)
-    "LVM", "RAID", "ZFS", "UEFI", "NVRAM", "GRUB", "LUKS", "ESP", "EFI", "UKI",
-    "RPM", "AKMS", "PARTUUID",
+    "LVM", "RAID", "ZFS", "UEFI", "NVRAM", "GRUB2", "GRUB", "LUKS", "ESP",
+    "EFI", "UKI", "RPM", "AKMS", "BLS", "GPT", "MBR", "PARTUUID",
     # filesystems (lowercase canonical form; FAT/NTFS/exFAT are covered by
     # case-insensitivity and zfs is the ZFS acronym above)
     "ext", "ext2", "ext3", "ext4", "btrfs", "xfs", "jfs", "reiserfs", "reiser4",
     "nilfs", "nilfs2", "vfat", "fat", "fat12", "fat16", "fat32", "exfat",
-    "ntfs", "ntfs3", "f2fs", "swap", "iso9660", "udf", "squashfs", "cramfs",
+    "ntfs", "ntfs3", "f2fs", "iso9660", "udf", "squashfs", "cramfs",
     "romfs", "overlayfs", "overlay", "tmpfs", "devtmpfs", "devpts", "proc",
     "sysfs", "efivarfs", "debugfs", "tracefs", "securityfs", "pstore",
     "configfs", "fusectl", "hugetlbfs", "mqueue", "autofs", "minix", "sysv",
@@ -196,6 +269,22 @@ TERM_TOKENS = {
 # by a hyphen does not (so "apt" is not split out of "apt-get").
 TERM_BOUNDARY_PATTERNS = tuple(
     (term, re.compile(r"(?<![\w])" + re.escape(term) + r"(?![\w-])",
+                      re.IGNORECASE))
+    for term in PROTECTED_TERMS
+)
+
+# Round 150 (the CJK term-boundary class + the compound-boundary class): the
+# SURVIVE check scans TRANSLATIONS, where a term is legitimately ADJACENT to
+# CJK ideographs (Python's ``\w`` matches them, so "btrfs快照" failed the
+# ``(?![\w-])`` boundary even though the term is preserved) or FOLLOWED BY A
+# HYPHEN in a compound ("Btrfs-Snapshot", "GRUB-konfigurasjon",
+# "extlinux- konfiguration" — the documented round-110 hyphenated-compound
+# class).  The survive pattern therefore uses an ASCII-alnum-only boundary:
+# an adjacent CJK/non-Latin letter or a following hyphen never hides the
+# term, while "apt" in "captured", "GRUB" in "GRUB2" and "subvol" in
+# "subvolume" still fail the boundary exactly as before.
+TERM_SURVIVE_PATTERNS = tuple(
+    (term, re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9])",
                       re.IGNORECASE))
     for term in PROTECTED_TERMS
 )
@@ -344,8 +433,12 @@ def write_ts(parsed: dict, path: str) -> None:
 def load_overrides(path: str) -> dict:
     """Load the overrides TSV into {source: {target: translation}}.
 
-    Empty cells are omitted so a language without a confident override falls
-    through to the machine-translation backend.
+    The base columns are source<TAB>de<TAB>fr<TAB>es.  A header row (first
+    cell "source", second "de") extends the column map with further language
+    columns (e.g. uk, ko); rows before the header use the base columns, rows
+    after it may carry values in the extended columns.  Empty cells are
+    omitted so a language without a confident override falls through to the
+    machine-translation backend.
     """
     overrides = {}
     if not os.path.isfile(path):
@@ -353,6 +446,7 @@ def load_overrides(path: str) -> dict:
               file=sys.stderr)
         return overrides
 
+    lang_by_col = {1: "de", 2: "fr", 3: "es"}
     with open(path, "r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle, delimiter="\t")
         for row in reader:
@@ -363,16 +457,25 @@ def load_overrides(path: str) -> dict:
             cells = [cell.strip() for cell in row]
             while len(cells) < 4:
                 cells.append("")
-            source, de, fr, es = cells[:4]
+            if cells[0] == "source" and cells[1] == "de":
+                # Extended-language column header: rebuild the column map
+                # from the header cells (column 0 is the source column).
+                lang_by_col = {
+                    index: language
+                    for index, language in enumerate(cells)
+                    if index > 0 and language
+                }
+                continue
+            source = cells[0]
             if not source:
                 continue
             entry = {}
-            if de:
-                entry["de"] = de
-            if fr:
-                entry["fr"] = fr
-            if es:
-                entry["es"] = es
+            for index, language in lang_by_col.items():
+                if index >= len(cells) or not language:
+                    continue
+                value = cells[index]
+                if value:
+                    entry[language] = value
             if entry:
                 overrides[source] = entry
     return overrides
@@ -439,9 +542,9 @@ def verify(source: str, translation: str, origin: str = "machine") -> bool:
         # Argos returned the input unchanged -> not actually translated.
         if translation.strip() == source.strip():
             return False
-        # A sentinel token survived untranslated (TR/PH/GL + digit + X, or the
+        # A sentinel token survived untranslated (TR/PH/GL/RL + digit + X, or the
         # "%n" token PHNX): a mangled machine output, not a translation.
-        if re.search(r"(?:TR|PH|GL)\d+X|PHNX", translation):
+        if re.search(r"(?:TR|PH|GL|RLA|RLB)\d+X|PHNX", translation):
             return False
         # A protected term present in the source must survive in the
         # translation (case-insensitive): a dropped or transliterated sentinel
@@ -453,14 +556,17 @@ def verify(source: str, translation: str, origin: str = "machine") -> bool:
 
 def protected_terms_survive(source: str, translation: str) -> bool:
     """True when every protected term present in ``source`` also appears in
-    ``translation`` (case-insensitive, same boundary as :func:`protect_segment`).
+    ``translation`` (case-insensitive, ASCII-word boundary — see
+    :data:`TERM_SURVIVE_PATTERNS`: CJK adjacency is the correct rendering, not
+    a boundary).
 
     A machine backend that drops or transliterates a term sentinel (e.g. Arabic
     rendering "TR50X" as "تراي50X") ships a translation missing the term, so
     this fails closed.
     """
-    for term, pattern in TERM_BOUNDARY_PATTERNS:
-        if pattern.search(source) and not pattern.search(translation):
+    for (term, source_pattern), (_, survive_pattern) in zip(
+            TERM_BOUNDARY_PATTERNS, TERM_SURVIVE_PATTERNS):
+        if source_pattern.search(source) and not survive_pattern.search(translation):
             return False
     return True
 
@@ -488,6 +594,13 @@ def protect_segment(segment: str) -> str:
     text = re.sub(r"(PH\d+X|PHNX)['\u2019]s\b", r"\1", text)
     for token, glyph in GLYPH_TOKENS:
         text = text.replace(glyph, token)
+    # Box-drawing/separator runs (round 150): one length-carrying token per run.
+    for prefix, glyph in RUN_TOKENS:
+        text = re.sub(
+            re.escape(glyph) + r"{2,}",
+            lambda match: prefix + str(len(match.group(0))) + "X",
+            text,
+        )
     # "&" is a mnemonic accelerator: keep a space after the sentinel so the
     # following word stays a separate token and still gets translated.
     text = text.replace("&", "GLAMX ")
@@ -504,6 +617,12 @@ def restore_segment(segment: str) -> str:
     text = text.replace(PH_N_SENTINEL, "%n")
     for token, glyph in GLYPH_TOKENS:
         text = text.replace(token, glyph)
+    for prefix, glyph in RUN_TOKENS:
+        text = re.sub(
+            re.escape(prefix) + r"(\d+)X",
+            lambda match: glyph * int(match.group(1)),
+            text,
+        )
     text = text.replace("GLAMX", "&")
     text = re.sub(r"& +", "&", text)  # mnemonic "&" stays attached to its letter
     for term, token in TERM_TOKENS.items():
@@ -940,10 +1059,10 @@ def main(argv=None) -> int:
         if override is not None:
             override_result[src] = override
         elif src in TERM_TOKENS:
-            # A source that is exactly a protected technical term (e.g. the
-            # standalone command-shell label "Shell") must stay identical in
-            # every language. Argos' Cyrillic/CJK models transliterate a lone
-            # sentinel token ("TR19X" -> "Т19Х"), so these never reach MT.
+            # A source that is exactly a protected technical term (e.g. a
+            # standalone tool label) must stay identical in every language.
+            # Argos' Cyrillic/CJK models transliterate a lone sentinel token
+            # ("TR19X" -> "Т19Х"), so these never reach MT.
             term_only_result[src] = src
         else:
             mt_sources.append(src)

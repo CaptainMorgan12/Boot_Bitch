@@ -31,7 +31,7 @@ for fn in diagnostic_gpu gpu_hardware_evidence gpu_loaded_module_evidence \
 done
 
 # The 15th capability key is registered and emits through the reasons array.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER" \
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER" \
     || fail 'the keys array does not carry the gpu capability key'
 grep -q 'reasons\[gpu\]="available"' "$HELPER" \
     || fail 'diagnostic_repair_capabilities does not gate gpu through the reasons array'

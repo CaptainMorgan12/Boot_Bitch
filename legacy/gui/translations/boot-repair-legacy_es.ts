@@ -48,12 +48,12 @@
         <translation>Alpine utiliza apk; la configuración dpkg no está disponible en Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>El repositorio principal de Alpine no tiene conductor de NVIDIA DKMS propietario; el intercambio de controladores GPU no está disponible en este objetivo.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Cargador de arranque alternativo; Botas Etch a través de GRUB-legacy, por lo que extlinux no es parte de la ruta de arranque predeterminada</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Cargador de arranque alternativo; en este sistema extlinux no es parte de la ruta de arranque predeterminada</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Reconciliación de la pila de arranque</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Examine las carpetas del sistema reparado sólo lectura y escenifique la carpeta elegida.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Compruebe y reparar los sistemas de archivos detectados.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Revise los montajes del sistema seleccionado, metadatos del sistema de archivos, archivos de arranque, consistencia de mapper y disponibilidad de dependencia antes de cualquier acción de reparación. Este es un preflight de seguridad independiente en lugar de una etapa de reparación completa opcional.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Ayudante initramfs de la familia Debian</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Ayudante de la familia Debian initramfs; en Etch la reconstrucción se ejecuta a través del retroceso de base simple vigilada</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Recupera las imágenes initramfs para los núcleos instalados</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Uso del disco</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Muestra la frestab del host en funcionamiento o el sistema de reparación seleccionado; la inspección del sistema de reparación se monta solo lectura.</translation>
     </message>
     <message>
@@ -364,7 +364,7 @@
         <translation>Verificación de Initramfs</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspecciona la evidencia EFI/UKI; no disponible en este frontend BIOS legado con la razón de sonda del ayudante.</translation>
     </message>
     <message>
@@ -528,8 +528,8 @@
         <translation>Reparación del sistema sin conexión</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Un pase vigilado (validación de mapper/crypttab, reconstrucción initramfs, regeneración del legado de GRUB) a través de la caída de raíz simple</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Un pase vigilado: validación de mapper/crypttab, reconstrucción initramfs y regeneración de configuración de arranque</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Proceso de aislamiento espacio-nombre</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Capacidad de sólo lectura en este frontend; eliminación kernel / limpieza / instalación corre a través del menú interactivo del ayudante</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel eliminar, limpiar e instalar correr a través del menú interactivo del ayudante; nada se elimina o se modifica hasta que usted elige una acción y confirmarla</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Capacidad de sólo lectura en este frontend; la reparación de GPU-driver corre a través del helper</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Reparación del controlador de GPU impulsado por pruebas a través del menú interactivo del ayudante</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Compruebe sólo lectura de los sistemas de archivos root y /boot del sistema seleccionado, reparar sólo los dispositivos que reportan errores (e2fsck para ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Compruebe sólo lectura de los sistemas de archivos root y /boot del sistema seleccionado, a continuación, reparar sólo los dispositivos que reportan errores</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>¿Reconstruir el initramfs para el alcance seleccionado? El ayudante mantiene sus preflights de mapper/crypttab y backup.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Recopila módulos kernel fuera del árbol; sólo cuando el objetivo utiliza módulos dkms</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Recupera módulos kernel fuera del árbol; sólo cuando el sistema utiliza un sistema de construcción de módulos</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Reconcile la pila de arranque.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Reconcile la pila de arranque del sistema de reparación seleccionada en un pase de legado vigilado: validación de mapper/crypttab, reconstrucción initramfs y regeneración de configuración de la división GRUB, sin cambios en las copias de seguridad de los componentes y los preflights. Este es el equivalente Etch de la moderna reconciliación de arranque y se mantiene fuera del plan de reparación completa.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Regenerar la configuración extlinux.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Regenerar el menú/configuración del sistema de reparación seleccionado después del preluz de seguridad obligatorio. El ayudante respalda menu.lst, preserva cada entrada de arranque existente y vuelve a rodar en cualquier fallo.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Regenerar la configuración de arranque extlinux del sistema seleccionado. Este frontend legado no expone ninguna acción extlinux.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regenera la configuración Etch GRUB-legacy menu.lst (retrocedido, cada entrada preservada)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regenera la configuración GRUB (retrocedido, cada entrada conservada)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Reparar el camino de arranque EFI / UKI.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Reparar la ruta de arranque EFI / UKI del sistema seleccionado. Este frontend legado no expone ninguna acción EFI; el objetivo Etch es un sistema BIOS/GRUB-legacy.</translation>
     </message>
     <message>
@@ -812,11 +812,11 @@
         <translation>Restaurar el administrador de pantalla sysv configurado para el sistema seleccionado: la entrada /etc/X11/default-display-manager y el S-symlink de nivel de ejecución perdido, con una copia de seguridad y devolución, nunca comenzando el GUI. Cuando la bota espera un impulso de desbloqueo de disco, la consola también se repara: consola=tty0 se anexa por última vez a la línea de comando bootloader (menu.lst en este legado GRUB; la consola de serie permanece) por lo que el impulso permanece en la pantalla visible en lugar de negro. Disponible para el host en funcionamiento y un objetivo de reparación comprometido.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Restores /etc/X11/default-display-manager y el controlador sysv faltante S-symlink sin iniciar el GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Restaura el gestor de pantalla configurado y su enlace de inicio sin iniciar el GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Revise el inventario del kernel instalado y elija una acción de reparación del kernel concreto: retire el kernel más antiguo/supersed o más nuevo, retire los encabezados/components/construir soporte, instale los encabezados perdidos, reinstale un kernel incompleto o instale el kernel repositorio-latest. Nada es eliminado o modificado hasta que elija una acción y lo confirme. El núcleo de funcionamiento siempre está protegido, y las imágenes initramfs de los kernels restantes y la configuración de arranque se regeneran después de una eliminación.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>¿Ejecutar la reparación cerrada? El ayudante mantiene su simulación-primer preflight y guardias de tiempo de ejecución.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Ejecute el sistema de archivos de sólo lectura para los sistemas de root y /boot del sistema seleccionado y informe la herramienta de verificación y el resultado de cada dispositivo sin cambiar nada. Este frontend heredado expone el solo control de lectura; la reparación del dispositivo no está cableada.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Ejecute el sistema de archivos de sólo lectura en los sistemas de raíz y /boot del sistema seleccionado, y luego repare sólo los dispositivos que reportan errores. Las herramientas de verificación Etch (e2fsck para ext2/ext3) funcionan sólo después de que el ayudante libera sus montajes de sólo lectura; un sistema de archivos todavía montado nunca se repara sin conexión y los sistemas de archivos no soportados se reportan en lugar de adivinar.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Ejecute el preflight de seguridad de sólo lectura.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Ejecute el sistema de archivos sólo lectura para la raíz del sistema seleccionado, /boot y otros sistemas de archivos.</translation>
     </message>
     <message>
@@ -953,7 +953,7 @@
     </message>
     <message>
         <source>Target</source>
-        <translation>Meta</translation>
+        <translation>Objetivo</translation>
     </message>
     <message>
         <source>Target/Host</source>
@@ -1008,7 +1008,7 @@
         <translation>El alcance seleccionado no tiene ningún tipo de sistema de archivos compatible para un cheque solo lectura.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Los sistemas de archivos root, /boot, ESP y /home del alcance seleccionado no podrían resolverse.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Validar el entorno</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Camine una sesión interactiva guiada por evidencias para reparar el controlador GPU del núcleo (nvidia/nouveau/amdgpu/radeon/mesa), aplicando sólo el pequeño paso vigilado que elija con su propio retorno. Dos puntos de decisión guían la sesión: kernel-vs-driver (reemplazar el kernel más nuevo que el controlador no puede construir contra, o eliminar el kernel más antiguo el controlador está conectado a) y el controlador incorrecto (purge el controlador incorrecto, instalar el correcto, y reconstruirlo contra cada núcleo instalado). Un nomodeset separado de un solo arranque llega a una consola en un conductor roto.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Camine una sesión interactiva impulsada por evidencias para reparar el controlador GPU; el menú se adapta a la evidencia diagnóstica, cada paso vigilado se reverifica en esta ventana antes de la siguiente opción, y un retroceso de nomodeset de un arranque mantiene una consola alcanzable en un controlador roto.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1161,7 +1161,7 @@
     </message>
     <message>
         <source>default.target and display-manager.service were already correct</source>
-        <translation type="unfinished" />
+        <translation>default.target y display-manager.service ya eran correctos</translation>
     </message>
     <message>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>validación sólo lectura</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Dispositivos de entrada / teclado</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Red / conectividad</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Revisa la pila de dispositivos de entrada: dispositivos y clases de teclado/ratón/panel táctil detectados, los módulos de núcleo HID/teclado cargados, integrados, disponibles y en lista negra, el estado de los controladores de bus, la distribución del teclado, la inclusión initramfs y la prueba de módulos de teclado en la imagen construida para la solicitud de desbloqueo LUKS, además de la evidencia de arranque reciente.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Revisa la pila de red: el backend de configuración detectado, los adaptadores y sus controladores/módulos vinculados, el estado de lista negra y firmware, así como la ruta, el DNS y la evidencia de accesibilidad acotada del host en ejecución, sin cambiar nada.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>inspección de solo lectura de dispositivos de entrada y del teclado initramfs</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>inspección de solo lectura del adaptador de red y de la conectividad</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Reparación de los dispositivos de entrada</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Reparar dispositivos de entrada</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Camine una sesión interactiva impulsada por evidencia para reparar teclado, ratón y entrada touchpad; el menú se adapta a la evidencia diagnóstica, cada acción se reverifica en esta ventana antes de la siguiente opción, y los pasos vigilados cubren controladores, módulos, firmware, listas negras, el retroceso HID y los módulos de teclado initramfs.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Elija una acción de reparación de dispositivos de entrada según la evidencia.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Reparación de red / conectividad</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Reparar la red</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Camine una sesión interactiva impulsada por pruebas para reparar la pila de red; el menú se adapta a la evidencia diagnóstica, cada acción se reverifica en esta ventana antes de la siguiente opción, y los pasos vigilados cubren controladores, módulos, firmware, listas negras, módulos initramfs NIC, dirección, rutas y DNS. Los cambios de conectividad en vivo nunca tocan la interfaz conteniendo la ruta predeterminada.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Elija una acción de reparación de la red según la evidencia.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ No disponible: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1564,8 +1620,8 @@ No disponible: %1</translation>
         <translation>; componente del sistema mejor detectado: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
-        <translation type="unfinished" />
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Desarrollador:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;Esta GUI es el punto de entrada del paquete: un frontend Qt 3.3.x con el ayudante protegido portado para sistemas de la era Debian Etch.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Modo de reparación protegida:&lt;/b&gt; los diagnósticos de solo lectura pueden inspeccionar el Host en ejecución protegido o una unidad de reparación seleccionada explícitamente. Las etapas de paquetes Debian/APT protegidas (configuración interrumpida, dependencias rotas, actualización de metadatos, upgrade), la regeneración de la configuración GRUB-legacy, el desbloqueo LUKS del objetivo y la edición protegida de archivos del objetivo se ejecutan a través del ayudante portado tras la confirmación; Host Maintenance habilita las mismas etapas admitidas de forma nativa en el sistema activo tras repetir las comprobaciones de identidad del host y de montaje de arranque.&lt;/p&gt;&lt;p&gt;Las funciones solo modernas — copia de archivos verificada, restauración de instantáneas Btrfs, reparación EFI/UKI y extlinux, reconciliación de la pila de arranque y Make Default — aparecen atenuadas con los motivos de sondeo del propio ayudante en este frontend; los backends de paquetes Arch/Alpine/Fedora aquí solo admiten diagnósticos.&lt;/p&gt;&lt;p&gt;La primera acción privilegiada autoriza una sesión de administrador en caché por ámbito a través de un modal de entrada oculta (la GUI Qt permanece sin privilegios). Puede finalizarse en cualquier momento desde Archivo - Bloquear sesión de administrador.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>A guarded repair is running; wait for it to finish before committing a repair target.</source>
@@ -1772,7 +1828,7 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
         <translation>La instalación automática requerirá una asignación explícita de paquetes y autorización de privilegios.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>La instalación automática requerirá un mapeo explícito de paquetes y una autorización de privilegios; instala el paquete sugerido de la capacidad de desaparición seleccionada en el alcance actual (correr el host o el objetivo de reparación comprometido) a través del ayudante vigilado.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
         <translation>GUI legado Boot Bitch listo. Cada comando privilegiado se ejecuta a través del ayudante portado; las acciones permanecen desactivadas hasta que se comete un objetivo de reparación (o el mantenimiento anfitriono es activo) y los diagnósticos reportan su línea de capacidad.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch debe funcionar desde un entorno Linux de arranque diferente al sistema que se está reparando. Utilice un medio vivo Linux u otra instalación Linux en una unidad física diferente. El host en funcionamiento está protegido de la selección ordinaria de los objetivos de reparación, pero puede ser seleccionado explícitamente a través de нелентенния mantenimiento/b contacto para los diagnósticos nativos vigilados y las etapas de mantenimiento soportadas. Diagnósticos siguen la página de Sistemas: la unidad de reparación comprometida mientras que Host Maintenance está apagado, o el anfitrión de funcionamiento protegido mientras está activo. La primera acción privilegiada solicita autorización de administrador una vez para esta ventana de Boot Bitch; &lt;b confianzaFile - Lock Administrator Sesión seleccionada/b confiar termina esa sesión de ayuda inmediatamente. Cada reparación mantiene los propios preflights del ayudante.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
         <translation>Busque carpetas de reparación...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Examine las carpetas del sistema reparado sólo lectura y escenifique la carpeta elegida.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Consulte el sistema de reparación seleccionado a través de los montajes de sólo lectura temporales del ayudante y elija una ruta de destino absoluta. No se cambian los archivos de destino mientras navega.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
         <translation>Elija la carpeta de destino anfitrión</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Escoge las capacidades de alcance caché que muestra la tabla.</translation>
     </message>
     <message>
@@ -2029,7 +2085,7 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
     </message>
     <message>
         <source>Configure Plan</source>
-        <translation>Configure Plan</translation>
+        <translation>Configurar plan</translation>
     </message>
     <message>
         <source>Confirm LUKS unlock</source>
@@ -2064,7 +2120,7 @@ Introduzca la contraseña para %2 (sudo). Se utiliza sólo para esta autenticaci
         <translation>Copiar y verificar</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Copiar y verificar archivos en cualquier dirección a través del ayudante vigilado (cp -a más restauración de la propiedad y un byte-compare per-file). La sonda de copia de archivos del ayudante cierra los controles y mantiene los controles de dirección y ruta de contención.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ El ayudante mantiene su dirección y control de contención de ruta; se rechaza 
         <translation>Introduzca el comando para ejecutar primero.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Introduzca los números del dispositivo para reparar (espacial o separado por coma, por ejemplo "1 3"), o 0 para saltar.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Introduzca los números del dispositivo para reparar (espacial o separado por coma, por ejemplo &quot;1 3&quot;), o 0 para saltar.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Introduzca la contraseña para %1.
 
 Se envía sólo a criptsetup sobre la entrada estándar del ayudante y nunca se registra o se coloca en una línea de comandos.</translation>
@@ -2276,7 +2332,7 @@ Se envía sólo a criptsetup sobre la entrada estándar del ayudante y nunca se 
         <translation>Establecer la sesión de ayuda privilegiada para el alcance actual ahora.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Archivos de configuración de destino Etch-era; la disponibilidad es probed sólo lectura por el diagnóstico del ayudante.</translation>
     </message>
     <message>
@@ -2429,7 +2485,7 @@ Se envía sólo a criptsetup sobre la entrada estándar del ayudante y nunca se 
     </message>
     <message>
         <source>Host</source>
-        <translation type="unfinished" />
+        <translation>Host</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2554,12 +2610,12 @@ El ayudante vuelve a comprobar independientemente que el disco seleccionado retr
         <translation>Instala el soporte perdido...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Instalar el paquete '%1' en el objetivo de reparación seleccionado a través del backend de paquete guardado? Esto modifica el objetivo de reparación e invalida el diagnóstico de caché.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Instalar el paquete &apos;%1&apos; en el objetivo de reparación seleccionado a través del backend de paquete guardado? Esto modifica el objetivo de reparación e invalida el diagnóstico de caché.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Instala el paquete '%1' en el host en ejecución a través del backend de paquete vigilado? Esto modifica el host en funcionamiento e invalida los diagnósticos de los conductores en caché.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Instala el paquete &apos;%1&apos; en el host en ejecución a través del backend de paquete vigilado? Esto modifica el host en funcionamiento e invalida los diagnósticos de los conductores en caché.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2635,7 +2691,7 @@ El ayudante vuelve a comprobar independientemente que el disco seleccionado retr
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>¿Hacer la entrada canónica del núcleo instalado la entrada de arranque predeterminada GRUB-legacy en el host en ejecución?
 
-El ayudante verifica /boot/grub/menu.lst, establece la directriz 'default' a la entrada canónica, respalda el menú primero y lo restaura en cualquier fallo.</translation>
+El ayudante verifica /boot/grub/menu.lst, establece la directriz &apos;default&apos; a la entrada canónica, respalda el menú primero y lo restaura en cualquier fallo.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2648,6 +2704,50 @@ El ayudante verifica /boot/grub/menu.lst, establece la directriz 'default' a la 
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Desaparecido gestor de pantalla: instalar el paquete %1 de la tabla Capacidades.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>Herramientas GRUB EFI</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>Herramientas de configuración GRUB</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>Herramientas de instalación GRUB</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Desaparecido %1: instale el paquete(s) empaquetado(s) %2 de la tabla de capacidades Boot.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Desaparecido %1: instalar el paquete de coincidencia de la tabla de capacidades Boot.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI constructor</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>requisito de arranque</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramfs-tools</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2694,8 +2794,12 @@ El ayudante verifica /boot/grub/menu.lst, establece la directriz 'default' a la 
         <translation>Nuevo kernel instalado: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>No 'Característica de Legacy:' línea es caché; ejecutar diagnóstico para el alcance seleccionado para evaluar las sondas de contención chroot/timeout del ayudante (fail cerrado).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Compilador de construcción del kernel: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>No &apos;Característica de Legacy:&apos; línea es caché; ejecutar diagnóstico para el alcance seleccionado para evaluar las sondas de contención chroot/timeout del ayudante (fail cerrado).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Todavía no hay resultados diagnósticos.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>No se detectaron errores del sistema de archivos en la raíz %1, /boot o /home filesystems. No hubo reparación.</translation>
     </message>
     <message>
@@ -2775,7 +2879,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
     </message>
     <message>
         <source>No repair stages are selected. Use Configure Plan to choose the stages Full Repair will run.</source>
-        <translation>No se seleccionan etapas de reparación. Use Configure Plan para elegir las etapas Full Repair funcionará.</translation>
+        <translation>No hay etapas de reparación seleccionadas. Use «Configurar plan» para elegir las etapas que ejecutará la reparación completa.</translation>
     </message>
     <message>
         <source>No repair target is committed. Choose Select Target on the Systems tab (or Host Maintenance for the protected running host) first.</source>
@@ -2786,7 +2890,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Ninguna herramienta de reparación seleccionada.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>No se detectaron errores de sistema de archivos reparables en la raíz %1, /boot o /home filesystems, pero %2. No hubo reparación.</translation>
     </message>
     <message>
@@ -2838,7 +2942,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Aceptar</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Los comandos Offline ejecutan uno a la vez en un chroot fresco y no pueden responder a los impulsos interactivos (apt-get -y obras de actualización). Los comandos Host-shell funcionan directamente en el host en ejecución. La sonda del ayudante cierra el campo de mando; la razón exacta aparece en el campo de herramientas.</translation>
     </message>
     <message>
@@ -3026,11 +3130,11 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Actualizar dispositivos</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Regenerar la configuración %1 GRUB</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Regenerar la configuración %1 extlinux</translation>
     </message>
     <message>
@@ -3186,7 +3290,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Ejecute un comando dentro del sistema de reparación seleccionado como root (sudo no es necesario). Los comandos se ejecutan uno a la vez en un chroot fresco y no pueden responder a los impulsos interactivos; utilizar banderas no interactivas como apt-get -y actualización. La salida se mantiene en esta ventana y en el registro de la aplicación.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Ejecute un comando en el host en ejecución como root (Host Shell) o dentro del sistema de reparación seleccionado como root (Chroot Shell); sudo no es necesario en ninguno de los dos. Los comandos Host-Shell se ejecutan directamente en el sistema activo; los comandos chroot se ejecutan uno a la vez en un chroot fresco y no pueden responder a los impulsos interactivos, por lo que las banderas no interactivas como apt-get -y actualización siguen siendo recomendadas para las carreras no programadas. La salida se mantiene en esta ventana y en el registro de la aplicación. Las sondas de sólo lectura del ayudante cierran el campo de comandos; mientras que el Shell no está disponible la página muestra la razón exacta debajo del campo.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Ejecute el diagnóstico para que este alcance desbloquee las acciones cerradas. Los diagnósticos son sólo leídos y la única fuente de evidencia.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Ejecute el diagnóstico para probar qué archivos de configuración de destino existen; la sonda de sólo lectura del ayudante decide la lista.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
         <translation>Ejecutar en host</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation type="unfinished" />
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Ejecute una herramienta de reparación o use el plan de reparación completa en la unidad de reparación seleccionada. Elija Mantenimiento del host en Sistemas para ejecutar las mismas etapas admitidas y protegidas contra el host en ejecución protegido. Elija las etapas de reparación completa en Ajustes. Las etapas habilitadas se ejecutan en el orden mostrado. Cada etapa configurable también aparece abajo como herramienta individual; la columna de reparación completa refleja su estado actual en Ajustes. Las herramientas de arranque (configuración GRUB, reconciliación de la pila de arranque y Make Default) son independientes: ejecútelas en cualquier orden, y una acción posterior vuelve a verificar lo que una anterior cambió e informa de su propio resultado. El alcance activo se muestra junto a Reparación: unidad de reparación seleccionada o mantenimiento del Host en ejecución. Cada acción permanece deshabilitada hasta que las líneas de capacidad en caché digan available y el ayudante mantiene sus comprobaciones previas en tiempo de ejecución. Las acciones de escritura piden confirmación y luego ejecutan las comprobaciones previas en tiempo de ejecución del propio ayudante; la GUI nunca las debilita. Una reparación que no demuestre &apos;unchanged&apos; invalida los diagnósticos en caché y deshabilita las acciones bloqueadas hasta que los diagnósticos se ejecuten de nuevo.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Ejecute un comando revisado como raíz dentro del objetivo chroot a través del verbo de shell vigilado del ayudante.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Ejecute un comando revisado como raíz en el anfitrión corriendo a través del verbo de host-shell vigilado del ayudante.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Presione Autorizar en la pestaña Sistemas o Reparación para establecer la sesi
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>¿Ejecutar el plan de reparación completa?
@@ -3283,7 +3387,7 @@ El ayudante mantiene sus preluz de tiempo de ejecución; el comando se transmite
     </message>
     <message>
         <source>Running all Target diagnostics</source>
-        <translation>Correr todos los diagnósticos de Meta</translation>
+        <translation>Ejecutando todos los diagnósticos del destino</translation>
     </message>
     <message>
         <source>Running all diagnostics</source>
@@ -3386,7 +3490,7 @@ El ayudante mantiene sus preluz de tiempo de ejecución; el comando se transmite
         <translation>Seleccione una unidad física en la lista de objetivos de reparación disponibles en la pestaña Sistemas primero, o utilice Host Maintenance para el anfitrión de funcionamiento protegido.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Seleccione una unidad física; Boot Bitch resuelve automáticamente el volumen del sistema Linux más probable. El host en funcionamiento se mantiene protegido de las reparaciones de destino ordinario, con un camino de mantenimiento explícito separado para su propio sistema. El botón Detalles muestra los hechos del host protegido en el panel de detalles; seleccionar cualquier fila de la unidad restaura el panel por goteo.</translation>
     </message>
     <message>
@@ -3512,6 +3616,14 @@ El ayudante mantiene sus preluz de tiempo de ejecución; el comando se transmite
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Mostrar dispositivos sin una instalación Linux identificada</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Desactivado: oculta los volúmenes de contenedor squashfs de solo lectura (estilo snap) que no pueden ser destinos de instalación de Linux.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Mostrar dispositivos de bucle squashfs</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3694,8 +3806,8 @@ Método: cartografía confirmada por el ayudante del último diagnóstico sólo 
         <translation>Dejar de ejecutar el comando Shell... La ficha Logs mantiene la transcripción completa.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Paquete sugerido</translation>
+        <source>Packages</source>
+        <translation>Paquetes</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3707,7 +3819,7 @@ Método: cartografía confirmada por el ayudante del último diagnóstico sólo 
     </message>
     <message>
         <source>Target</source>
-        <translation>Meta</translation>
+        <translation>Objetivo</translation>
     </message>
     <message>
         <source>Target configuration:</source>
@@ -3745,7 +3857,7 @@ El anfitrión en marcha es re-controlado independientemente y rechazado por el a
     </message>
     <message>
         <source>Target: none selected</source>
-        <translation>Meta: ninguno seleccionado</translation>
+        <translation>Destino: ninguno seleccionado</translation>
     </message>
     <message>
         <source>Text files (*.txt);;All files (*)</source>
@@ -3756,8 +3868,8 @@ El anfitrión en marcha es re-controlado independientemente y rechazado por el a
         <translation>El plan de reparación completa ejecuta las etapas heredadas seleccionadas para el ayudante vigilado; las herramientas individuales ejecutan una etapa a la vez. Cada acción se mantiene desactivada hasta que las líneas de capacidad de caché digan disponibles y el ayudante mantiene sus preflights de tiempo de ejecución.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>El plan de reparación completa ejecuta las etapas heredadas seleccionadas para el ayudante vigilado; las herramientas individuales ejecutan una etapa a la vez. Cada acción se mantiene desactivada hasta que las líneas de capacidad de caché digan disponibles y el ayudante mantiene sus preflights de tiempo de ejecución. Escribe acciones piden confirmación y luego ejecutan los propios preflights de tiempo de ejecución del ayudante; el GUI nunca los debilita. Una reparación que no se pruebe 'sin cambios' invalida el diagnóstico caché y desactiva las acciones cerradas hasta que el diagnóstico vuelva a funcionar.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>El plan de reparación completa ejecuta las etapas heredadas seleccionadas para el ayudante vigilado; las herramientas individuales ejecutan una etapa a la vez. Cada acción se mantiene desactivada hasta que las líneas de capacidad de caché digan disponibles y el ayudante mantiene sus preflights de tiempo de ejecución. Escribe acciones piden confirmación y luego ejecutan los propios preflights de tiempo de ejecución del ayudante; el GUI nunca los debilita. Una reparación que no se pruebe &apos;sin cambios&apos; invalida el diagnóstico caché y desactiva las acciones cerradas hasta que el diagnóstico vuelva a funcionar.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Pulse Autorizar en la pestaña Sistemas o Reparación para restablecer la sesió
         <translation>El alcance seleccionado no tiene componente raíz resuelto; use Dispositivos Refresh y vuelva a comprometer el objetivo de reparación.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>El disco y componente raíz del alcance seleccionado no podrían resolverse.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Pulse Autorizar en la pestaña Sistemas o Reparación para restablecer la sesió
         <translation>Esta unidad cifrada no tiene ningún sistema de archivos Linux visible todavía. Use Desbloquear, refrescar dispositivos y seleccione el objetivo después de que se detecte su raíz Linux.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Este frontend legado no expone ninguna acción %1; el ayudante reporta la capacidad disponible.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Disponible sólo como diagnóstico/capacidad - este frontend legado no expone ninguna acción de reparación; ejecutar la reparación interactiva del GUI moderno.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ El ayudante abre un mapeo temporal con criptsetup y lo mantiene abierto para est
         <translation>ADVERTENCIA: el archivo de configuración de GUI guardado %1 no se puede leer; sus opciones se leen como sus defectos, no como los valores guardados.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>ADVERTENCIA: el archivo de configuración de GUI guardado %1 no puede ser leído ni eliminado; sus opciones se leen como valores predeterminados. Elimínelo (o haga que ~/.qt se pueda escribir) para que los ajustes guardados puedan persistir de nuevo.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Eliminados %1 archivos de configuración obsoletos e ilegibles: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> No se pueden eliminar los archivos de configuración obsoletos e ilegibles %1; los valores predeterminados se aplican hasta que se eliminen.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Cuando se apaga, las unidades con un dispositivo cifrado se ocultan hasta que el volumen se desbloquea.</translation>
     </message>
@@ -4057,15 +4181,15 @@ El ayudante abre un mapeo temporal con criptsetup y lo mantiene abierto para est
     </message>
     <message>
         <source>Wrap Log Lines</source>
-        <translation type="unfinished" />
+        <translation>Wrap Log Lines</translation>
     </message>
     <message>
         <source>Wrap long log lines</source>
         <translation>Líneas de registro largas</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Escribe acciones piden confirmación y luego ejecutan los propios preflights de tiempo de ejecución del ayudante; el GUI nunca los debilita. Una reparación que no se pruebe 'sin cambios' invalida el diagnóstico caché y desactiva las acciones cerradas hasta que el diagnóstico vuelva a funcionar.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Escribe acciones piden confirmación y luego ejecutan los propios preflights de tiempo de ejecución del ayudante; el GUI nunca los debilita. Una reparación que no se pruebe &apos;sin cambios&apos; invalida el diagnóstico caché y desactiva las acciones cerradas hasta que el diagnóstico vuelva a funcionar.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,8 +4224,8 @@ El ayudante abre un mapeo temporal con criptsetup y lo mantiene abierto para est
         <translation>Autorización del administrador</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>elevación requiere una contraseña interactiva de sudo; ejecutar el humo como raíz o después de `sudo -S -v` con --elevate 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>elevación requiere una contraseña interactiva de sudo; ejecutar el humo como raíz o después de `sudo -S -v` con --elevate &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4180,7 +4304,7 @@ El comando no comenzó.</translation>
         <translation>no disponible - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>indisponible: vea la característica Legacy del ayudante copia de archivo: razón de sonda arriba</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ El comando no comenzó.</translation>
         <source>your account</source>
         <translation>su cuenta</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Repositorio más reciente kernel: %1 (más reciente que el más reciente instalado; %2).</translation></message><message><source>Try Again</source><translation>Reintentar</translation></message><message><source>Enter the note text</source><translation>Introduzca el texto de la nota</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Esta nota se adjuntará al registro de sesión seleccionado %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>NOTA adjunta al registro de sesión anterior %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>El registro seleccionado no es un registro válido de sesión; la nota no fue escrita.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>El registro de sesión seleccionado %1 no es obligatorio; la nota no fue agregada.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Repositorio más reciente kernel: %1 (más reciente que el más reciente instalado; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Reintentar</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Introduzca el texto de la nota</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Esta nota se adjuntará al registro de sesión seleccionado %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>NOTA adjunta al registro de sesión anterior %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>El registro seleccionado no es un registro válido de sesión; la nota no fue escrita.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>El registro de sesión seleccionado %1 no es obligatorio; la nota no fue agregada.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>No hay diagnósticos en caché de los hospedadores; ejecute solo diagnósticos en Host Maintenance para poblar esta fila.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - abortado - detenido a petición</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 etapa(s) reportó cambios antes de la parada; estos cambios se aplican y los diagnósticos afectados fueron regenerados</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>Una etapa informó de un cambio antes de la parada; sus cambios puede que ya se hayan aplicado.</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>no se hicieron cambios</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Instalado</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Repara la pista de arranque EFI / UKI para sistemas UEFI</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Teclado basado en evidencia, ratón y touchpad reparación a través del menú interactivo del ayudante</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Reparación de red impulsada por pruebas a través del menú interactivo del ayudante; cambios de conectividad en vivo nunca toque la interfaz conteniendo la ruta predeterminada</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Los paquetes no están disponibles en los repositorios de este sistema</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>Las entradas de arranque de firmware %1 cargaron solo lectura.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware visualización de entrada está disponible. Cargar entradas para listar las entradas de UEFI sólo lectura.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Arranque</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Boot entries refrescante refused: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Resultado de la lista de entrada de arranque descartado: el alcance cambió mientras la solicitud se estaba ejecutando.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Arranque</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Clase</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Clase: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Directo (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Disco</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>Entradas de arranque EFI</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Fallback</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Las entradas de arranque de firmware no se pueden cargar. Ver Registros para detalles.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>La lista de entrada de firmware falló.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>Menú GRUB</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Etiqueta</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Etiquetas: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Lista de entradas de firmware</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Listed in BootOrder: no (omitted by firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Listado en BootOrder: sí</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Cargar entradas</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Cargue las entradas de arranque de firmware %1 UEFI sólo lectura.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Cargado %1 %2 firmware boot entr%3 sólo lectura.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Cargador</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>%1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Carga de entradas de firmware %1 UEFI sólo lectura para %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Red</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>No se encontraron entradas de botas de firmware UEFI: este sistema es BIOS/legacy o carece de efibootmgr, por lo que no hay orden de arranque de firmware para manejar.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>No hay alcance seleccionado</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Otros</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Objetivo de reparación: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Objetivo de reparación: no listo</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Reparación-target</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Papel: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Huésped de ejecución: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Huésped de ejecución: no seleccionado</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Running-host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Seleccione Mantenimiento de Host en el host en ejecución, o un objetivo de reparación en Sistemas, para gestionar las entradas de arranque de firmware.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Seleccione Mantenimiento de Host en el host en ejecución, o un objetivo de reparación en Sistemas, para gestionar las entradas de arranque de firmware. Las entradas de carga enumeran las entradas de UEFI del alcance actual sólo lectura.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>Las entradas de botas de firmware UEFI (el host en ejecución NVRAM) se enumeran solo aquí. En Host Maintenance usted ve las entradas del host en ejecución; con un objetivo de reparación comprometido usted ve las entradas de NVRAM cuyos puntos de partición en la partición del sistema EFI de la unidad. Esta vista nunca cambia el firmware; un host solo BIOS (Etch) no tiene entradas de arranque de firmware ni lista ninguna. El menú de arranque GRUB (la lista de núcleos dentro de GRUB) es separado y es regenerado por la reparación GRUB o boot-stack.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Las entradas de botas de firmware UEFI en BootOrder, listadas solo lectura.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Esta entrada está actualmente activa (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Incapaz de eliminar %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>el objetivo de reparación</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>destino de reparación</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>huyendo del host</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>host en ejecución</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>EFI Entries</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Menú de arranque</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Interruptor entre las entradas de firmware de la UEFI y el menú de arranque sólo lectura.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Entrada de menú</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>El menú de arranque de sólo lectura (las entradas del kernel/OS del cargador de arranque en orden de archivo).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>Entradas de menú de arranque %1 cargadas solo lectura.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>El menú de arranque %1 está disponible. Elija Boot Menu para listar el menú de arranque solo.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 visualización de entrada de firmware está disponible. Elija EFI Entries para listar las entradas de la UEFI sólo lectura.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Seleccione Mantenimiento de Host en el host en ejecución, o un objetivo de reparación en Sistemas, para ver entradas de arranque de firmware. Elija EFI Entries o Boot Menu arriba para cargar las entradas del alcance actual solo lectura.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Carga %1 menú de arranque sólo lectura para %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Lista menú de arranque</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Boot menu refrescante refused: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>La lista de menús de arranque falló.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Boot menu fallback refused: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Resultado de la lista de menús de arranque descartado: el alcance cambió mientras se ejecutaba la solicitud.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Entrada del menú: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>ID de entrada: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Esto es un submenú.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Configuración de cargas: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Extranjero: apunta a una unidad o partición diferente.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Entrada por defecto: sí</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Entrada por defecto: no</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Predeterminado</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (submenú)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Cargado %1 menú de arranque entr%2 solo lectura.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>No hay menú heredado de GRUB.st en este ámbito; probar el menú de arranque GRUB grub.cfg solo lectura.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>No se encontró configuración del menú de arranque en esta unidad. El sistema puede no tener un menú de arranque tradicional GRUB, extlinux/syslinux o GRUB, o su configuración vive en otro lugar.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>La configuración del menú de arranque existe pero no lista entradas.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>El menú de arranque no se puede cargar. Ver Registros para detalles.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>por defecto</translation>
+    </message>
+</context>
 </TS>

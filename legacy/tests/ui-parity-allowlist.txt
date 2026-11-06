@@ -39,7 +39,7 @@
 # round 66: the modern Add Note memo placeholder (the legacy Qt3 dialog keeps
 # the QInputDialog flow with no in-field placeholder).
 Enter the note text
-When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (the serial console stays) so the prompt remains on the visible screen instead of going black.
+Restore the display manager detected from the running host or selected repair system's boot evidence and configuration, set graphical.target as the default and repair display-manager.service, each step re-verified in this window. When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.
 Fedora runs one guarded dnf upgrade transaction after a removal- and downgrade-free, signature-checked simulation.
 Fedora uses dnf makecache as its standalone metadata stage.
 Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.
@@ -50,8 +50,8 @@ The detected GRUB EFI layout uses a guarded grub-install on the validated ESP an
 The detected vendor UKI layout (for example the TUXEDO TUX.EFI builder) is rebuilt or re-registered through its official builder.
 The detected syslinux/extlinux layout is repaired through its configuration and boot code, never through EFI.
 Repair the running host or selected repair system's boot path with the detected backend's guarded installer or vendor builder, restoring one verified default-loader entry and preserving every other ESP's firmware entries and BootOrder.
-Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, repair the detected bootloader path (vendor UKI builder, GRUB EFI, extlinux or Fedora BLS), reconcile one canonical default destination per purpose, and regenerate the detected bootloader configuration.
-Restore the display manager identified from the running host or selected repair system's boot evidence and configuration (for example SDDM, GDM/GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service.
+Reconcile the running host or selected repair system's root with its boot artifacts from the cached read-only diagnostics: validate mapper/crypttab, rebuild the installed-kernel initramfs images, repair the detected bootloader path and regenerate its configuration, each component re-verified in this window. This is the focused recovery for a root/boot mismatch after a partial update or snapshot restore; it never deletes kernels or unrelated boot entries.
+Restore the display manager detected from the running host or selected repair system's boot evidence and configuration, set graphical.target as the default and repair display-manager.service, each step re-verified in this window. When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.
 %1 boot menu entries loaded read-only.
 %1 boot menu viewing is available. Load Menu to list the boot menu read-only.
 %1 default boot entry
@@ -96,8 +96,6 @@ Class
 Class: %1
 Command, for example: dnf update -y or update-grub
 Committed repair target: Repair, Diagnostics, Snapshots and File Copy target this drive until Select Target picks another. %1
-Confirm running-host snapshot rollback
-Confirm transactional snapshot rollback
 Copy and verify files in either direction. Host to Repair remounts only the selected target filesystem read-write after safety checks; Repair to Host keeps the repair target read-only. Browse Target Folders reads the selected repair tree through temporary read-only mounts, while transfers use rsync without --delete, path containment, ownership validation and post-copy verification.
 Correlate the boot chain, loader, kernel/initramfs and unlock evidence.
 Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.
@@ -247,7 +245,6 @@ Preflight running-host rollback %1
 Preflight snapshot rollback %1
 Preserve pre-rollback Btrfs root and auto-restore it on validation failure
 Privileged request '%1' exceeded the %2 safety limit; aborting the request and closing the unresponsive helper session so the UI cannot stay busy indefinitely.
-Promote snapshot %1 to the normal writable @ root?
 Protect every physical device backing /, /boot and /boot/efi
 Re-create or re-label missing UKI/fallback/WebFAI/iPXE entries.
 Read-only check of root, /boot, ESP and /home, then per-device repair.
@@ -272,7 +269,7 @@ Rebuild initramfs images for the running host or selected repair system only aft
 Rebuild initramfs images.
 Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system using the detected %1 build system. The helper refuses this action when the detected build system is not installed in the selected system.
 Rebuild out-of-tree kernel modules in the %1 using the detected %2 build system
-Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, repair the detected bootloader path (vendor UKI builder, GRUB EFI, extlinux or Fedora BLS), reconcile one canonical default destination per purpose, and regenerate the detected bootloader configuration. 
+Reconcile the running host or selected repair system's root with its boot artifacts from the cached read-only diagnostics: validate mapper/crypttab, rebuild the installed-kernel initramfs images, repair the detected bootloader path and regenerate its configuration, each component re-verified in this window. This is the focused recovery for a root/boot mismatch after a partial update or snapshot restore; it never deletes kernels or unrelated boot entries.
 Refresh Debian/Ubuntu APT metadata in the running host or selected repair system without upgrading installed packages. Arch and Alpine deliberately refuse a partial metadata-only transaction; their guarded upgrade refreshes the package index itself. This maps directly to Settings → Refresh package metadata.
 Refresh package metadata (dnf makecache)
 Regenerate Alpine GRUB configuration
@@ -325,7 +322,7 @@ Restore detected graphical login manager (OpenRC runlevel)
 Restore detected graphical login manager and graphical.target
 Restore one verified default-loader entry when the guarded installer only wrote files
 Restore the detected display manager and graphical.target without starting the GUI inside chroot
-Restore the display manager identified from the running host or selected repair system's boot evidence and configuration (for example SDDM, GDM/GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service. 
+Restore the display manager detected from the running host or selected repair system's boot evidence and configuration, set graphical.target as the default and repair display-manager.service, each step re-verified in this window. When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.
 Restore the graphical login manager.
 Restore the host's %1 and make it the default.
 Restore the host's %1 and place it first in BootOrder.
@@ -339,11 +336,9 @@ Reviews kernel files and verifies matching initramfs images through a read-only 
 Role: %1
 Roll back the running host to snapshot %1
 Roll back to Btrfs snapshot %1
-Roll the running host back to snapshot %1?
 Rollback already staged
 Rollback attempt finished: %1\n\n%2\n\nCached diagnostics and snapshot inventory were cleared because the rollback request may have changed and/or restored target state.
 Rollback completed: %1\n\n%2\n\nSnapshot inventory was cleared because the active root changed. Choose Load Snapshots to refresh it.
-Rollback finished: %1\n\n%2
 Rollback preflight captured: %1\n\n%2
 Rollback preflight failed
 Rolling back again preserves the currently running root as a new @rollback-before-* backup and replaces the staged snapshot. The earlier staged root remains on disk but is no longer the recorded undo point.\n\nContinue only if you intend to replace the staged rollback.
@@ -351,14 +346,13 @@ Rolling back running-host snapshot %1
 Rolling back snapshot %1
 Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.
 Run a guarded rsync dry-run.
-Run a read-only file system check on the selected system's root, /boot, ESP and /home filesystems, then repair only the devices that report errors. Detected tools are used per file system — e2fsck/xfs_repair and the other native checkers, btrfs/zpool scrub, and the FAT/exFAT/NTFS tools — with the risky btrfs check --repair gated behind a separate backup confirmation. Offline tools refuse mounted filesystems, the online modes run where available, the running host root is never repaired offline, and unsupported filesystems are reported rather than guessed about.
+Check the running host or selected repair system's root, /boot, ESP and /home file systems read-only first, then repair only the devices that reported errors with their detected native check tools, each outcome reported back in this window. Offline repair refuses still-mounted file systems, the running host root is never repaired offline, and unsupported file systems are reported rather than guessed about.
 Run a read-only rollback preflight, then promote a writable copy to @.
 Run an rsync dry-run through the guarded helper. No files are changed.
 Run dangerous Btrfs repair
 Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (EFI / UKI bootloader, GRUB or extlinux configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.
 Run the %1 diagnostic before starting kernel repair.
 Run the %1 diagnostic before starting the GPU driver repair.
-Running host: %1\nRoot filesystem: %2\n\nThe running host keeps running the current root until you reboot. On the next reboot it will start the selected snapshot instead.\n\nSnapper/Boot Bitch take a snapshot of the current system first, so the present state is preserved automatically as an @rollback-before-* undo point.\n\nBoot Bitch cannot guarantee that no data is lost: changes made after the selected snapshot are not part of the rolled-back root, and separate subvolumes such as /home are not rolled back.\n\nAll users are signed out and unsaved work is lost when the host reboots. The reboot is never automatic.
 Running kernel: %1.
 Running-host default boot entry selection is unavailable.
 Running-host rollback attempt finished: %1\n\n%2\n\nCached running-host diagnostics and snapshot inventory were cleared. Do not reboot until you review the Snapshots output and Logs.
@@ -403,7 +397,6 @@ Superseded kernel(s) available for removal: %1.
 Switch between the UEFI/UKI firmware entries and the read-only boot menu.
 Switch the view selector to Boot menu to list the current scope's boot menu read-only.
 Switch to the EFI/UKI entries view and load it to list this disk's firmware entries.
-Target disk: %1\nLinux filesystem: %2\n\nBoot Bitch will keep the source snapshot unchanged, preserve the current @ under a timestamped rollback backup, set the promoted copy as the Btrfs default, then rebuild/verify initramfs and the detected bootloader path (UKI, GRUB EFI, extlinux or Fedora BLS) and its configuration.\n\nIf a critical post-switch validation or boot-stack stage fails, Boot Bitch will automatically restore the preserved @ and reconcile its boot stack.\n\nSeparate Btrfs subvolumes such as /home remain outside the root rollback according to the target fstab.
 The boot menu could not be loaded. See Logs for details.
 The cached running-host diagnostics do not decide whether the host default entry can be restored. Regenerate running-host diagnostics in Host Maintenance, and update Boot Bitch if the helper format changed.
 The detected Fedora GRUB2/BLS backend repairs the boot code on a BIOS layout, leaving /boot/grub2/grub.cfg and the BLS entries intact. 
@@ -429,12 +422,9 @@ This entry is currently active (BootCurrent).
 This entry is the current GRUB default.
 This entry is the current GRUB legacy default.
 This entry is the current extlinux default.
-This operation changes the active Btrfs root and rebuilds boot artifacts.\n\nType ROLLBACK exactly to continue:
-This operation stages the selected snapshot as the running host's next root and rebuilds boot artifacts.\n\nType ROLLBACK exactly to continue:
 To manage the running host's own entries, switch to Host Maintenance first.
 Trial-build and rebuild initramfs for installed kernels
 Trial-build and then rebuild all initramfs images for the %1
-Type ROLLBACK to continue
 Unrecognised running-host default-entry capability evidence: %1. Run running-host diagnostics again, and update Boot Bitch if the helper format changed.
 Update GRUB2 configuration
 Update extlinux configuration
@@ -446,8 +436,8 @@ Validate a rollback plan, promote a writable copy to @, and reconcile the boot s
 Validate a rollback plan, promote a writable copy to @, and reconcile the bootloader.
 Verify kernel files and matching initramfs images read-only.
 What booting this firmware entry does.
-When OpenRC is the detected service manager, the same action restores the detected manager's default runlevel symlink without starting it. Boot Bitch deliberately does not start a graphical session inside a repair chroot or host helper; use Diagnostics to inspect installed packages, service configuration, and recent boot/journal evidence first when graphical boot fails.
-When the EFI / UKI bootloader repair already ran for the same system in this session, this action reuses it (skipping the duplicate bootloader rebuild and GRUB regeneration) while mapper/crypttab validation and initramfs reconciliation still run. This is the focused recovery action for a root/boot mismatch after a partial update or snapshot restore; it never deletes kernels or unrelated boot entries.
+With OpenRC the action restores the manager's default runlevel symlink without starting it.
+When the EFI / UKI bootloader repair already ran for this system in this session, it is reused here while mapper/crypttab validation and initramfs reconciliation still run.
 \nReuse: the bootloader repair from this session will be reused (the duplicate bootloader rebuild and GRUB regeneration are skipped).
 an earlier snapshot
 btrfs check --repair is a last-resort tool
@@ -540,7 +530,6 @@ Complete interrupted package configuration.
 Configure the Full Repair plan and preferences.
 Confirm File Copy
 Connection
-Continue to Confirmation
 Copy files between the host and the repair system.
 Copy staged items and verify them; same-name destinations are overwritten.
 Copy the diagnostic results to the clipboard.
@@ -690,6 +679,12 @@ Validate mapper/crypttab against the %1
 Validate repair target
 Validate running host
 # --- [helper] helper reason/msg localisations (shown verbatim) ---
+# round 117 (#9): the new host-shell-declined msg key — the legacy GUI shows
+# the helper's msg: line verbatim, never as its own label.
+WARNING: Running-host shell command was declined at an interactive prompt (exit code %1); nothing was changed.
+# round 117 (#8 re-check): the round-115 dkms-status-no-modules msg key — the
+# legacy GUI shows the helper's msg: line verbatim, never as its own label.
+DKMS preflight: no modules are registered to rebuild; nothing to do.
 No disk-unlock prompt is expected from this boot configuration (no passphrase-keyed crypttab entry and no cryptdevice kernel parameter); the console layout cannot move an unlock prompt off the visible screen.
 The console-routing fix is not implemented for the detected %1 boot configuration; the visible-console fix was not applied.
 The effective kernel command line could not be determined read-only; the console routing was not changed.
@@ -1125,6 +1120,7 @@ RPM missing-file detection: no missing package files; recording read-only dnf5 d
 RPM missing-file repair: reinstalling %1 package(s) with missing files: %2
 RPM package file verification (rpm -Va --nofiledigest, read-only)
 RUNNING-HOST SNAPSHOT ROLLBACK COMPLETE
+RUNNING-HOST SNAPSHOT ROLLBACK SKIPPED: the confirmation prompt was declined or expired; no changes were made.
 Read Fedora grubenv (grub2-editenv list)
 Rebuild Alpine initramfs for %1 with mkinitfs
 Rebuild Arch initramfs images with mkinitcpio -P
@@ -1256,6 +1252,7 @@ SKIP: boot-stack EFI/UKI rebuild skipped because the EFI / UKI bootloader stage 
 SKIP: boot-stack GRUB regeneration skipped because the EFI / UKI bootloader stage already regenerated the GRUB configuration in the same run (--post-efi).
 SKIP: package backend %1 is not runnable for stage '%2': %3
 SNAPSHOT ROLLBACK COMPLETE
+SNAPSHOT ROLLBACK SKIPPED: the confirmation prompt was declined or expired; no changes were made.
 Scheduling running-host reboot through OpenRC.
 Scheduling running-host reboot through systemd.
 Scheduling running-host reboot through the system reboot command.
@@ -1638,8 +1635,8 @@ File system check unavailable
 File system repair failed
 File system repair in progress
 File system repair unavailable
-Full Repair plan finished with failures. Review the per-stage results (✓/✗/▪) in Logs, then close this window.
-Full Repair plan finished. Review the per-stage results (✓/✗/▪) in Logs, then close this window.
+Full Repair plan finished with failures. Review the per-stage results (%1) in Logs, then close this window.
+Full Repair plan finished. Review the per-stage results (%1) in Logs, then close this window.
 Full Repair plan: %1
 Full Repair plan: unavailable
 Full diagnostics will run after the current diagnostic finishes.
@@ -1932,9 +1929,7 @@ Requesting an explicit running-host reboot after the second confirmation.
 Running-host reboot cancelled at the second confirmation; the staged rollback remains in effect.
 Running-host reboot scheduled by the privileged helper.
 Running-host reboot was not scheduled; the staged rollback and its reminder remain in effect.
-Running-host rollback cancelled after preflight; no host data was changed.
 Running-host rollback cancelled at the replacement warning; the previously staged rollback remains in effect.
-Running-host rollback cancelled because the confirmation text did not match ROLLBACK.
 running-host snapshot %1 rollback did not complete; cached host diagnostics and snapshots were invalidated. Review the operation output before the next repair or reboot.
 Running-host snapshot %1 rollback preflight failed; no host data was changed.
 running-host snapshot %1 rollback staged the promoted root for the next reboot; snapshot inventory and cached host diagnostics were invalidated. The running host keeps the current root until reboot.
@@ -1944,8 +1939,6 @@ Snapshot %1 read-only inspection failed.
 snapshot %1 rollback changed the active root; snapshot inventory and cached diagnostics were invalidated. Regenerate diagnostics before the next repair.
 snapshot %1 rollback did not complete; cached diagnostics and snapshots were invalidated. Regenerate diagnostics and review the operation output before the next repair or reboot.
 Snapshot %1 rollback preflight failed; no target data was changed.
-Snapshot rollback cancelled after preflight; no target data was changed.
-Snapshot rollback cancelled because the confirmation text did not match ROLLBACK.
 Starting File Copy preview (%1).
 Starting privileged default boot entry operation on %1 (%2).
 Starting privileged firmware boot entry changes on %1 (%2).
@@ -2084,6 +2077,47 @@ a snapshot inventory request for this scope is already in flight.
 no repair scope is committed, so there is no snapshot inventory to load.
 the completed snapshot inventory request for this scope already covers it.
 the snapshot inventory for this scope is already loaded.
+# --- [feature] round-134 snapshot-rollback in-window confirmation (the legacy
+# GUI has no Snapshots tab/rollback flow — a greyed modern-only feature; the
+# plan popup, the in-window CONFIRM prompt and the decline wording never
+# occur there) ---
+Rollback skipped: %1\n\n%2\n\nThe rollback confirmation was declined or expired; no target data was changed.
+Running-host rollback skipped — the confirmation was declined or expired; no changes were made. Close this window to continue.
+Running-host rollback skipped: %1\n\n%2\n\nThe rollback confirmation was declined or expired; no host data was changed.
+Running-host rollback staged. Review the output, then close this window.
+Running-host snapshot %1 rollback was declined at the confirmation prompt; no host data was changed.
+Running-host snapshot rollback
+Snapshot %1 rollback was declined at the confirmation prompt; no target data was changed.
+Snapshot rollback
+Snapshot rollback complete. Review the output, then close this window.
+Snapshot rollback skipped — the confirmation was declined or expired; no changes were made. Close this window to continue.
+The rollback preflight failed; no target data was changed. Review the output, then close this window.
+The running-host rollback did not complete successfully. Review the output, then close this window.
+The running-host rollback plan is being prepared. The plan appears below; the confirmation prompt is answered in this window before anything is changed.
+The running-host rollback preflight failed; no host data was changed. Review the output, then close this window.
+The snapshot rollback did not complete successfully. Review the output, then close this window.
+The transactional rollback plan is being prepared. The plan appears below; the confirmation prompt is answered in this window before anything is changed.
+# --- [feature] round-135 rollback cancel-path wording (the legacy GUI has no
+# Snapshots tab/rollback flow — the round-104/134 N-A precedent; the honest
+# cancelled presentation never occurs there) ---
+Rollback cancelled: %1\n\n%2\n\nThe rollback was cancelled before any change; nothing was modified.
+Rollback cancelled: %1\n\n%2\n\nThe rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically.
+Running-host rollback cancelled
+Running-host rollback cancelled. Review the output, then close this window.
+Running-host rollback cancelled: %1\n\n%2\n\nThe rollback was cancelled before any change; nothing was modified.
+Running-host rollback cancelled: %1\n\n%2\n\nThe rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically.
+Running-host rollback stopped at your request.
+Running-host snapshot %1 rollback was cancelled before any change; nothing was modified.
+Running-host snapshot %1 rollback was stopped at your request after the mutation intent was set; the affected cached host diagnostics were invalidated and the snapshot inventory was cleared.
+Snapshot %1 rollback was cancelled before any change; nothing was modified.
+Snapshot %1 rollback was stopped at your request after the mutation intent was set; the affected cached diagnostics were invalidated and the snapshot inventory was cleared.
+Snapshot rollback cancelled
+Snapshot rollback cancelled. Review the output, then close this window.
+Snapshot rollback stopped at your request.
+The running-host rollback was stopped at your request after the mutation began; the affected cached host diagnostics were invalidated and will be regenerated automatically. Review the Snapshots output and Logs.
+The running-host rollback was stopped at your request before any change was made. Nothing was modified; the snapshot inventory and the cached host diagnostics remain valid.
+The snapshot rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically. Review the Snapshots output and Logs.
+The snapshot rollback was stopped at your request before any change was made. Nothing was modified; the snapshot inventory and the cached diagnostics remain valid.
 # --- [feature] round-34 pkexec/Polkit lines (Etch elevates via sudo) ---
 The privileged Boot Bitch helper could not be prepared for pkexec: %1
 pkexec/Polkit is required to authorize privileged Boot Bitch operations.
@@ -2225,3 +2259,377 @@ Keep Running
 Try Again
 Write
 A diagnostic run is still in progress for this scope; file copy unlocks automatically when the run completes.
+
+# --- [feature] round 82 (plan item #4): the modern squashfs-loop
+# select-target refusal surface has no legacy equivalent — the Etch device
+# inventory never lists loop devices (looksLikeWholeDisk excludes them), so
+# a squashfs loop can never reach the commit path on the legacy GUI. The
+# Settings checkbox + its tooltip ARE ported (contract consistency) ---
+Read-only squashfs container volumes (snap-style) are not Linux install targets; enable Show squashfs loop devices in Settings to inspect this volume.
+Squashfs container cannot be selected
+This loop device carries a read-only squashfs container volume (snap-style) and is not a Linux install target. Enable “Show squashfs loop devices” in Settings to inspect it.
+
+# --- [feature] round-84 diagnostic list-item tooltips (modern-surface-only:
+# the modern Diagnostics list shows the short per-diagnostic tooltip; the
+# legacy list shows titles only — the same class as the existing 16 tooltips
+# already allowlisted above) ---
+Review keyboard, mouse and touchpad devices, modules and layout read-only.
+Review adapters, drivers, firmware and the live route/DNS state read-only.
+# --- Round 86 (the round-85 mirror evaluation, recorded): the modern
+# reason/msg REGISTRY entries of the round-85 input/network interactive
+# repairs have no legacy-GUI surface.  The legacy GUI renders helper
+# reason:/msg: tokens verbatim (display-only, never a gate), the legacy
+# repair surface exposes no input/network action (round-85 item 7 — the
+# display-only rows), so these registry sources are not ported. ---
+%1 command was declined at an interactive prompt; nothing was changed: %2
+A repair target has no live kernel to load modules into; the action is offered as the initramfs inclusion instead.
+Added the input modules %1 to the initramfs inclusion configuration.
+Added the network modules %1 to the initramfs inclusion configuration.
+Blacklisting %1 would remove the only module serving the live keyboard/pointer; the action is refused.
+Could not load the input module %1 on the running host.
+Every referenced bus-controller module is already loaded.
+Every requested module is already included in the initramfs inclusion configuration.
+Input device repair complete: %1.
+Input device repair refused: run the %1 diagnostic first (no cached input evidence).
+Input device repair unavailable
+Input re-verify: FIXED — the evidence now reports a healthy input stack (verdict ok).
+Input re-verify: NOT FIXED — the evidence still reports verdict %1; choose the next option.
+Input re-verify: verdict %1 → %2.
+Install the input device driver package
+Install the network firmware package
+Loaded the input module %1 on the running host.
+NOTE: re-reconciled the selected system's EFI firmware entries after the initramfs hook rebuilt the UKI (duplicate entries consolidated into the canonical entry; foreign drives and iPXE/WebFAI untouched).
+Network re-verify: FIXED — the evidence now classifies the network as verified.
+Network re-verify: NOT FIXED — the evidence still classifies %1; choose the next option.
+Network re-verify: classification %1 → %2.
+Network repair complete: %1.
+Network repair refused: run the %1 diagnostic first (no cached network evidence).
+Network repair unavailable
+No broken vendor HID driver is evidenced (no blacklisted hid-* module); the generic fallback has nothing to replace.
+No concrete package could be derived from the evidence; no install was offered rather than guessing.
+No firmware package could be derived from the missing firmware blobs; no install was offered.
+No input device, boot-log or module evidence was found; there is no input stack to repair.
+No missing firmware blob is evidenced; there is no firmware to install.
+No missing input module is evidenced; there is no module to load.
+No modules to include were derived from the evidence.
+No network adapter evidence was found anywhere; there is no driver or firmware action to apply.
+No referenced module is blacklisted; there is no blacklist to remove.
+No vendor fallback driver package could be derived from the evidence; the driver switch is refused rather than guessing.
+No wrong bound driver is evidenced; the driver switch has nothing to replace.
+Re-verifying the input evidence in this window…
+Re-verifying the network evidence in this window…
+Removed the input module blacklist entries for %1.
+Removed the network module blacklist entries for %1.
+The configuration is already byte-identical; nothing was written.
+The firmware download needs working connectivity, but the host network is not reachable; establish connectivity first.
+The input device repair was cancelled; no changes were made.
+The input evidence shows a repairable problem; run the interactive Input device repair tool to choose the fix.
+The input stack is healthy: no missing, blacklisted or unloaded input modules and no firmware load failures were found, so nothing was changed.
+The network driver module is already loaded on the running host.
+The network evidence shows a repairable problem; run the interactive Network / connectivity repair tool to choose the fix.
+The network repair was cancelled; no changes were made.
+The network stack is verified: adapters, drivers, firmware, route and DNS are all healthy, so nothing was changed.
+The package %1 is not available in the selected scope's own repositories; no install was offered.
+The rebuilt images were listed and the keyboard modules are still not inside any of them; the decrypt-prompt fix is not claimed.
+The rebuilt images were listed and the network driver modules are still not inside any of them; the initramfs inclusion is not claimed.
+The vendor driver package %1 is not available in the selected scope's own repositories; the driver switch is refused rather than guessing.
+Wrote the Apple hid_apple fnmode quirk (config + initramfs rebuild; never applied live).
+Wrote the blacklist for the conflicting input module %1.
+Wrote the blacklist for the wrong network module %1.
+Wrote the persistent modules-load.d entry for %1.
+[exit %1 — declined; nothing was changed]
+[exit %1 — failed; nothing was changed]
+[failed; nothing was changed]
+The simulated fix-broken transaction proposed no package changes
+ERROR: the file-system check must be re-run before repair
+PASS: file system repair (%1) completed for %2 with exit code 0.
+The network repair and the interactive menu require the repair-target mode or Host Maintenance.
+The input device repair and the interactive menu require the repair-target mode or Host Maintenance.
+# --- Round 86 (continued): the round-85 session strings whose legacy twins
+# are the legacy-specific wordings.  Round 102 (slice 4): the two modern
+# input/network descriptions are now adopted VERBATIM on the legacy (the
+# display-only rows became the interactive rows), so those entries collapsed
+# out of the allowlist; the modern run-first refusal strings below keep
+# their legacy-specific twins (the legacy refuses through
+# toolRunReady's cached-evidence wording). ---
+Run the %1 diagnostic before starting the input device repair.
+Run the %1 diagnostic before starting the network repair.
+# --- Round 86 (reported pre-round-84 carry, recorded now): modern mount-
+# adoption and decline-summary wordings whose legacy side uses its own
+# legacy-specific wording (N/A, evaluated) ---
+Selected component %1 (%2) is already mounted at %3 and carries no /etc/os-release: it is not a Linux install disk. The existing mount is never re-mounted, and the not-a-Linux-install check runs against it.
+Selected component %1 (%2) is already mounted at %3. Read-only image filesystems are not Linux install disks, so the existing mount is never adopted into the repair session.
+[declined; nothing was changed]
+# --- Round 91 (the driver-fallback chain): the new input/network msg/reason
+# wordings.  The legacy GUI passes msg:/reason: tokens through RAW for the
+# input/network tools (the round-85 precedent — those tools are display-only
+# rows on Etch and the sessions are never dispatched there), so these
+# modern-GUI-only registrations have no legacy surface (N/A, evaluated). ---
+Could not load the candidate network module %1 on the running host.
+Every candidate driver module is already loaded on the running host.
+Loaded the candidate network module %1 on the running host.
+No broken vendor HID driver is evidenced (no blacklisted or probe-failing hid-* module); the generic fallback has nothing to replace.
+No candidate driver module was derived from the evidence; there is nothing to load.
+The in-kernel replacement driver %1 is not available or built into the target's kernels; the driver switch is refused rather than claiming an unavailable driver.
+# --- Round 92 (the driver-fallback ladder, steps 3-4): the reinstall/rebuild
+# and older-version pin msg/reason wordings — same round-91 evaluation (the
+# legacy GUI passes the tokens through RAW; display-only rows on Etch,
+# sessions never dispatched there) ---
+Downgrading package %1 to the older version %2 (newest available: %3).
+Install the older input driver package version %1=%2
+Install the older network driver package version %1=%2
+No bound-driver package and no module build system were evidenced; there is no driver to reinstall or rebuild.
+No bound-driver package could be derived from the evidence; the version pin has nothing to pin.
+No provable older repository version of %1 exists; the older-version pin is not offered.
+Reinstall the input device driver package %1
+Reinstall the network driver package %1
+This package backend cannot prove older repository versions; the older-version pin is not offered.
+Wrote the apt Pin-Priority: -1 preference for package %1, version %2.
+
+# --- Round 93 (the driver-fallback ladder, step 9 + STEP 6): the conflict
+# resolution and the user-supplied artifact msg/reason wordings — the same
+# round-91/92 evaluation (the legacy GUI passes msg:/reason: tokens through
+# RAW; the input/network tools are display-only rows on Etch and the
+# sessions are never dispatched there) ---
+Blacklisting %1 would remove the module serving the live network uplink; the action is refused.
+Could not unload the input module %1 on the running host.
+Could not unload the network module %1 on the running host.
+Install the user-supplied driver package %1 through %2
+No conflicting driver pair is evidenced; there is no conflict to resolve.
+PASS: the user-supplied package %1 is now reported installed by the package manager (%2).
+Preflight for the user-supplied driver package: %1.
+Runtime swap: unloading the conflicting input module %1 and loading %2.
+Runtime swap: unloading the conflicting network module %1 and loading %2.
+The package manager does not report the user-supplied package %1 as installed after the apply; the install is not claimed.
+The user-supplied file %1 is not a provable driver package; no install was attempted.
+The user-supplied path %1 does not exist or is not a readable regular file; no install was attempted.
+This package backend has no guarded local-package install verb; the user-supplied driver package is not offered.
+WARNING: %1 is a user-supplied file that was NOT downloaded or verified by Boot Bitch; only the package-manager checks below apply.
+
+# --- Round 94 (P4, the connectivity actions 5-7): the DHCP renew, the
+# default-route repair and the DNS resolver repair msg/reason wordings —
+# the same round-85/91/92/93 evaluation (the legacy GUI passes msg:/reason:
+# tokens through RAW; the input/network tools are display-only rows on Etch
+# and the sessions are never dispatched there) + the round-94 network tool
+# description update ---
+A default route already exists on the running host; replacing it would mutate the live uplink route, so the action is refused.
+Applying the default route failed and the change was rolled back; the route is unchanged.
+Applying the default route via %1 on %2.
+No address-less carrier interface was found (or every eligible interface is the live uplink); there is no interface to renew.
+No carrier interface is available to carry the default route; nothing was changed.
+No fixable persistent DHCP configuration gap was found for the %1 backend; nothing was written.
+No lease DNS servers are evidenced and no systemd-resolved stub is available; there are no servers to write.
+No lease gateway (routers) value is evidenced; there is no gateway to write.
+Renewing the DHCP lease on %1 (%2).
+Renewing the DHCP lease on %1 would mutate the interface holding the live default route; the action is refused.
+Replaced the broken resolv.conf chain with a plain file.
+Restarting the systemd-resolved resolver.
+Rolled back the failed default-route change on %1.
+The %1 backend provides the gateway via DHCP (or has no static stanza); a static gateway write does not apply — re-run the DHCP repair instead.
+The %1 backend's trial validation rejected the written configuration; the previous configuration was restored.
+The detected config backend %1 has no single-interface live renew verb (its restart touches every interface, including the uplink); the lease was not renewed.
+The detected config backend %1 has no usable live renew tool (nmcli/dhcpcd/ifup/networkctl) on the running host; the lease was not renewed.
+The DHCP lease renew on %1 did not complete.
+The DHCP lease renew on %1 did not complete; no connectivity was established.
+The resolv.conf chain is a working configuration; it is never overwritten.
+Wrote a plain resolv.conf from the lease DNS servers.
+Wrote the persistent DHCP configuration (%1) for: %2.
+Wrote the persistent gateway %1 (%2).
+
+# --- Round 96 (ITEM 1c, the live-verified conflict override): the two
+# resolve-conflict refusal reasons — the same round-93 evaluation (the
+# legacy GUI passes reason: tokens through RAW; the input/network tools are
+# display-only rows on Etch and the sessions are never dispatched there) ---
+Blacklisting %1 is refused while the live reachability proves the network works; the conflict pair is informational.
+Blacklisting %1 would target a module of the live-verified working keyboard; the conflict pair is informational and the action is refused.
+# --- Round 97 (ITEM 1, the aborted repair-result classification): the
+# modern GUI's neutral hollow-glyph abort wording — the legacy GUI reports
+# its own "stopped at your request" status lines (round-16 ITEM 4e) and
+# renders no check/cross/bullet glyph family.  Round 102 (slice 2): the
+# legacy summary now reuses the modern stop-evidence fragments VERBATIM
+# (they collapsed out of the allowlist); the remaining entries below are
+# the modern glyph-framed lines and popups the legacy keeps its own
+# wording for. ---
+aborted — stopped at your request
+%1 aborted — %2
+ — the plan was stopped at your request.
+Host default operation stopped at your request.
+Host default operation stopped
+The host default operation was stopped at your request. Review Logs for the complete helper output.
+# --- Round 98 (ITEM 1, the menu-abort-after-changes summary + ITEM 3, the
+# module-load unchanged reasons): the modern GUI's applied-changes abort tail
+# (the legacy GUI's own result popup wording already names the stop) and the
+# two reason: registry prose entries (the legacy GUI passes reason: tokens
+# through RAW).  Round 102 (slice 2): the "%1 stage(s) reported changes…"
+# fragment is now shared verbatim and collapsed out.  Round 113 (ITEM 2): the
+# module-not-in-target-tree reason: registry prose joins the same [helper]
+# bucket (the legacy GUI passes the reason: token through RAW). ---
+ — the plan was stopped at your request; the stages that reported changes before the stop remain applied.
+None of the candidate driver modules resolved to a module the target actually carries; no modules-load.d entry was written.
+The evidence names no bound or candidate driver module to load persistently; there is nothing to write.
+The boot log bound the driver %1, but no module of that name is present in the target's kernel module tree; nothing was written.
+# --- Round 123 (the round-122 copy-progress evaluation, recorded late): the
+# modern File Copy's SHA/rsync progress status lines.  The round-122 ITEM
+# 14/15 evaluation named the legacy side not-applicable (the Qt3 copy flow
+# renders its own progress wording and has no line cap to raise), but the
+# allowlist was never updated, so the parity gate went red on the helper
+# round.  [status] bucket. ---
+SHA-256 verification in progress: %1 / %2 file(s)
+SHA-256 verification of %1 complete: %2 file(s) verified.
+Verifying SHA-256 integrity of %1: %2 file(s)…
+rsync metadata/content re-check of %1…
+# --- Round 123 (round-120-era boot-entry status): the modern GUI's
+# boot-entry-change invalidation status; the legacy GUI renders its own
+# firmware-entry status wording.  [status] bucket. ---
+firmware boot entry changes were incomplete after a modifying action. Regenerate diagnostics before the next repair.
+# --- Round 142 (the SNAPSHOT-CONFIG ENABLEMENT): the capability-row Enable
+# action, its completion/confirm wording and the new reason/msg-key
+# localisations.  The enable feature rides the modern capability table's
+# snapshot-rollback row only — Etch has no Btrfs/snapper, the legacy
+# capability table renders its own static Etch-host rows, and the ported
+# helper carries the identical markers (the round-141 evaluation).  The
+# reason/msg keys are [helper] bucket (the legacy GUI shows them verbatim
+# from the ported helper); the Enable-button/confirm strings are [feature]. ---
+A .snapshots store already exists without a Snapper root configuration; it is left untouched and no automatic merge is attempted.
+Create the initial Snapper snapshot configuration for the selected repair target.
+Create the initial Snapper snapshot configuration on the running host.
+Creating the initial Snapper root configuration.
+Enable
+Enable snapshot configuration
+Enable snapshot configuration failed
+Enable snapshot configuration for the repair target
+Enable snapshot configuration on the running host
+Enable snapshot configuration output\n%1
+Snapshot configuration declined; nothing was changed.
+The Snapper root configuration already exists in the repair target; no changes were made. The capability evidence is re-probed so the Boot capabilities row reflects the current state.
+The Snapper root configuration already exists in this scope; no changes were made.
+The Snapper root configuration already exists on the running host; no changes were made. The capability evidence is re-probed so the Boot capabilities row reflects the current state.
+The Snapper root configuration already exists; no changes were made.
+The guarded snapshot configuration creation failed. Review the captured helper output in Logs.
+The initial Snapper root configuration and the .snapshots store were created on %1.
+The snapshot configuration change was declined; nothing was changed.
+The snapshot configuration was declined; nothing was changed in the repair target.
+The snapshot configuration was declined; nothing was changed on the running host.
+# Round 142 addition (the store-only creation path): the two helper msg-key
+# localisations, the same [helper] bucket as the block above.
+Creating the missing .snapshots snapshot store (the Snapper root configuration already exists).
+The .snapshots snapshot store was created on %1 (the Snapper root configuration already existed).
+# --- Round 143 (the LAYOUT EXTENSION + the FULL-ENABLE Install action): the
+# name-agnostic root wording and the full-enablement completion strings.
+# The reason/msg-key localisations are [helper] bucket (the legacy GUI shows
+# them verbatim from the ported helper); the Install/Enable button tooltips
+# and the recovery-host filesystem-tool Install wording are [feature] (the
+# modern capability table only — the round-141/142 evaluation: Etch has no
+# Btrfs/snapper and the D2 decision bars new Install actions there).
+CRITICAL: the detected root subvolume name is missing; refusing to restore the preserved root instead of guessing a name.
+Create the initial Snapper snapshot configuration and the first snapshot for the selected repair target.
+Create the initial Snapper snapshot configuration and the first snapshot on the running host.
+Creating the first snapshot in the new store.
+Install %1 on the running host (the recovery environment that runs the filesystem check tools).
+Install the missing Snapper prerequisites into the repair target, then create the initial snapshot configuration and the first snapshot.
+Install the missing Snapper prerequisites on the running host, then create the initial snapshot configuration and the first snapshot.
+Installing the missing snapshot prerequisite package(s): %1
+No supported file system check tool is installed in the recovery environment (missing: %1).
+Snapshot enablement complete on %1: the packages, the initial Snapper root configuration, the .snapshots store and the first snapshot are in place.
+The running root subvolume is %1, not a named top-level root subvolume; the rollback renames the top-level root.
+The selected Btrfs filesystem has no detectable top-level root subvolume; transactional rollback requires the installed root to be a top-level subvolume.
+# --- Round 145 (the snapshot-enable COMPLETION POLISH): the truthful
+# missing-tool failure wording of the snapshot inventory load.  [status]
+# bucket (GUI status/log lines — the legacy GUI has no Snapshots tab or
+# snapshot inventory load at all, the round-134/135 N-A precedent; the
+# ported helper carries the identical SNAPSHOT_INVENTORY_UNAVAILABLE_REASON
+# marker and the missing-btrfs-progs reason key already has a [helper] entry).
+Btrfs snapshot inventory failed: %1
+Snapshot inventory failed: %1
+# --- Round 147 (ITEM 1/4/5b): the create-completion inline result (no
+# secondary popup), the kernel headers-installability preview wording and the
+# two target-rollback msg-key localisations.  [status]/[feature] bucket for
+# the GUI-composed lines (the legacy GUI has no Snapshots tab and no kernel
+# removal preview — the round-104/134/135/146 N-A precedent); [helper] bucket
+# for the msg-key localisations (the legacy GUI shows them verbatim from the
+# ported helper, which carries the identical migration verbs).
+%1 (headers not installable: %2)
+CRITICAL: could not move the nested .snapshots child back into the preserved root.
+Migrating nested %1/.snapshots child subvolume into the promoted root.
+The manual snapshot was created; the snapshot inventory is reloaded in the background.
+# --- Round 146 (the PRE/POST EXTENSION + the SNAPSHOTS-LIST UX): the manual
+# Create Snapshot flow, the All/Single/Pre/Post filter and the pre/post
+# rollback-enable wording.  [feature] bucket for the Snapshots-tab UI and the
+# GUI-composed log/status lines (the legacy GUI has no Snapshots tab or
+# rollback flow — the round-104/134/135 N-A precedent; Etch is a BIOS/GRUB
+# legacy system with no btrfs/snapper, and the D2 decision bars new Install
+# actions there); the two helper msg-key localisations are the [helper] bucket
+# (the legacy GUI shows them verbatim from the ported helper, which carries
+# the identical create verbs and CONFIRM prompt).
+A manual snapshot can be created on the repair target after the confirmation.
+A manual snapshot can be created on the running host after the confirmation.
+All snapshots
+Create Snapshot
+Create a manual snapshot on the repair target
+Create a manual snapshot on the running host
+Create one single-type 'Boot Bitch manual snapshot' on the repair target after the confirmation prompt.
+Create one single-type 'Boot Bitch manual snapshot' on the running host after the confirmation prompt.
+Create one single-type 'Boot Bitch manual snapshot'.
+Creating a manual snapshot on the repair target
+Creating a manual snapshot on the running host
+Creating one single-type 'Boot Bitch manual snapshot' on the repair target %1 (%2).
+Creating one single-type 'Boot Bitch manual snapshot' on the running host %1 (%2).
+Filter the snapshot list by Snapper type.
+Manual snapshot created: %1\n\n%2
+Manual snapshot creation failed: %1\n\n%2
+Post snapshots
+Pre snapshots
+Running-host snapshot creation is unavailable.
+Show:
+Single snapshots
+Snapshot created
+Snapshot creation failed
+Snapshot creation is unavailable for the selected target.
+Snapshot creation skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.
+Snapshot creation unavailable
+The manual snapshot creation did not complete. Review the Snapshots details pane and Logs.
+The manual snapshot creation failed.
+The manual snapshot creation was declined at the confirmation prompt; nothing was changed.
+The manual snapshot was created on %1.\n\nThe snapshot list is refreshed.
+The manual snapshot was created; the snapshot inventory is reloaded.
+MANUAL SNAPSHOT SKIPPED: the confirmation prompt was declined or expired; no changes were made.
+Manual snapshot created on %1: one single-type 'Boot Bitch manual snapshot' was added to the snapshot store.
+# --- Round 149/150 (the /boot capture + the target /home opt-in): the
+# helper msg-key localisations for the round-149 /boot capture expansion
+# (boot-capture-* / boot-restore-* / the separate-boot bounded-capture
+# wordings + the rollback-failed-safely CRITICAL line), the dnf5
+# obsolete-NEVRA re-resolve wordings and the round-150 target-side /home
+# opt-in keys.  [helper] bucket: the legacy GUI shows the ported helper's
+# msg: lines verbatim (the port carries the identical capture/opt-in verbs,
+# prompts and CRITICAL lines — Etch has no btrfs/snapper GUI, the
+# round-104/134/135/146/147 N-A precedent; the D2 decision bars new Install
+# actions there).
+A filesystem is mounted beneath /boot (%N); the bounded capture refuses to cross a mount boundary.
+Boot capture complete: %N (%N entries; the archive fingerprint was recorded).
+Boot restore verified: %N matches the capture fingerprint.
+CRITICAL ROLLBACK FAILURE: could not restore original @ or the /boot capture after a restore failure. Do not reboot.
+CRITICAL: the recovery could not restore the separate /boot capture.
+Capturing the separate /boot filesystem into the session (bounded, fingerprint-guarded).
+Restoring the captured /boot content over the mounted separate /boot filesystem.
+Restoring the separate /boot capture failed; automatically restoring the preserved root.
+ROLLBACK FAILED SAFELY: original @ and the captured /boot were restored; failed candidate retained as %N.
+The installed version of %N is no longer in the enabled repositories (newest available: %N); the reinstall cannot restore it. Upgrade the system to the currently available version instead.
+The installed version of %N is no longer in the enabled repositories; the reinstall cannot restore it. Upgrade the system to the currently available version instead.
+The requested package '%N' is no longer available at the recorded version; the reinstall was re-resolved to the currently installed version of '%N'.
+The separate /boot content (%N MiB) exceeds the bounded capture limit (%N MiB).
+The separate /boot filesystem is not mounted; the bounded capture cannot read it.
+The session directory cannot hold the separate /boot capture.
+The session directory for the separate /boot capture is not available.
+The size of the separate /boot filesystem could not be determined for the bounded capture.
+This transaction downloads approximately %N.
+/home inclusion OPTED IN: the separate /home subvolume %N will roll back with the root (full-restore semantics; the current subvolume is preserved as an undo point).
+/home retained BY DESIGN: the separate /home subvolume %N is not part of this rollback.
+Preserving the separate /home subvolume %N as the undo point %N.
+The /home subvolume %N now rolls back with the promoted root (full-restore opt-in).
+# --- Round 155 (Finding B — the input include verified-equivalent evidence):
+# the new helper msg-key localisation (input-inclusion-unshippable).  [helper]
+# bucket: the legacy GUI shows the ported helper's msg: lines verbatim (the
+# port carries the identical key — the round-85 item-7 N/A precedent: the
+# legacy GUI exposes no input/network repair action, display-only mirror
+# rows), so the localised string exists only in the modern GUI's kMsgSpecs.
+The input module %N is not shipped by any kernel of this system and cannot be included in an initramfs image; every includable module was verified in the rebuilt image.

@@ -41,19 +41,19 @@
     </message>
     <message>
         <source>Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).</source>
-        <translation>Alpine використовує OpenRC, mkinitfs і syslinux/extlinux; завантажувально-стецьке з'єднання не ввімкнено (запуск initramfs і extlinux окремо).</translation>
+        <translation>Alpine використовує OpenRC, mkinitfs і syslinux/extlinux; завантажувально-стецьке з&apos;єднання не ввімкнено (запуск initramfs і extlinux окремо).</translation>
     </message>
     <message>
         <source>Alpine uses apk; dpkg configuration is not available on Alpine.</source>
         <translation>Alpine використовує apk; налаштування dpkg не доступна на Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Головний репозиторій Alpine не має права власності драйвера NVIDIA DKMS; драйвер GPU не доступний на цій цілі.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Альтернативний завантажувач; Etch черевики через GRUB-legacy, тому extlinux не є частиною шляху завантаження за замовчуванням</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Альтернативний завантажувач; на цій системі extlinux не входить до шлях завантаження за замовчуванням</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,12 +108,12 @@
         <translation>Завантажувальний стенд</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Перегляд папок відновленої системи, що читається і спрацьовує вибрану папку.</translation>
     </message>
     <message>
         <source>Btrfs status</source>
-        <translation>Статус на сервери</translation>
+        <translation>Статус Btrfs</translation>
     </message>
     <message>
         <source>Btrfs support</source>
@@ -121,7 +121,7 @@
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Зареєструватися</translation>
+        <translation>Скасувати</translation>
     </message>
     <message>
         <source>Check File Systems</source>
@@ -132,12 +132,12 @@
         <translation>Перевірити і відновити виявлені файлові системи.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Перевірити вибрані розміри системи, метадані файлової системи, файли завантаження, консистенцію картографа та готовність залежностей до будь-яких заходів з ремонту. Це незалежне забезпечення безпеки, а не додаткове повне відновлення.</translation>
     </message>
     <message>
         <source>Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (EFI / UKI bootloader, GRUB or extlinux configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.</source>
-        <translation>Виберіть етапи повного ремонту в налаштуваннях. Увімкнути етапи виконання замовлення наведено. Кожна конфігурована сцена також з'являється нижче як окремий інструмент; Повна колонка відновлення відображає її поточний стан налаштувань. Завантажувальні інструменти (EFI / UKI Bootloader, GRUB або extlinux конфігурація, завантажувальну стійку примирення і зробити за замовчуванням) незалежні: запускати їх в будь-якому порядку, а пізніша дія повторює те, що раніше змінено і звітує власний результат. В активному об'ємі відводиться ремонт: обраний ремонтний привід або обслуговування пускових установок.</translation>
+        <translation>Виберіть етапи повного ремонту в налаштуваннях. Увімкнути етапи виконання замовлення наведено. Кожна конфігурована сцена також з&apos;являється нижче як окремий інструмент; Повна колонка відновлення відображає її поточний стан налаштувань. Завантажувальні інструменти (EFI / UKI Bootloader, GRUB або extlinux конфігурація, завантажувальну стійку примирення і зробити за замовчуванням) незалежні: запускати їх в будь-якому порядку, а пізніша дія повторює те, що раніше змінено і звітує власний результат. В активному об&apos;ємі відводиться ремонт: обраний ремонтний привід або обслуговування пускових установок.</translation>
     </message>
     <message>
         <source>Choose a GPU driver repair action from the evidence.</source>
@@ -224,8 +224,8 @@
         <translation>Debian-family initramfs помічник</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian-family initramfs помічник; на Etch перебудування проходить через захищений звичайно-кроотний недолік</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Знімки initramfs для встановлених ядер</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Використання диска</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Відображення ходового хосту або виділеної системи ремонту; контрольно-системної перевірки монтується читально.</translation>
     </message>
     <message>
@@ -333,11 +333,11 @@
     </message>
     <message>
         <source>Host</source>
-        <translation>Проживання</translation>
+        <translation>Хост</translation>
     </message>
     <message>
         <source>Host+Target</source>
-        <translation>Зареєструватися Мета</translation>
+        <translation>Хост+Ціль</translation>
     </message>
     <message>
         <source>Host/Repair</source>
@@ -364,7 +364,7 @@
         <translation>Перевірка Initramfs</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspects EFI/UKI докази; недоступні на цьому Legacy BIOS фронтенд з причиною ймовірності помічника.</translation>
     </message>
     <message>
@@ -409,7 +409,7 @@
     </message>
     <message>
         <source>Mapper status</source>
-        <translation>Статус на сервери</translation>
+        <translation>Статус mapper</translation>
     </message>
     <message>
         <source>Mount inspection</source>
@@ -521,15 +521,15 @@
     </message>
     <message>
         <source>OK</source>
-        <translation>Зареєструватися</translation>
+        <translation>ОК</translation>
     </message>
     <message>
         <source>Offline systemd repair</source>
         <translation>Ремонт автономних систем</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Один захищений прохід (перевірка/розшифрування, реставрація initramfs, регенерація GRUB-legacy) через резервне копіювання</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Один захищений прохід: регенерація картера/crypttab, регенерація initramfs та регенерація конфігурацій завантажувача</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Промислова ізоляція</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Готова можливість на цьому фронті; kernel видалення / очищення / встановлення через інтерактивне меню помічника</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>Видалення kernel, очищення та встановлення запуску через інтерактивне меню помічника; нічого не знімається або модифіковано, поки ви забираєте дію і підтверджуєте його</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Готова можливість на цьому фронті; ремонт GPU проходить через помічник</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Ремонт драйверів Evidence-driven GPU через інтерактивне меню помічника</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Перевірка кореневої системи та / завантаження файлових систем, після чого ремонт тільки пристрої, які повідомляють помилки (e2fsck для ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Перевірка кореня та / завантаження файлових систем, після чого ремонт тільки пристрої, які повідомляють помилки</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -613,7 +613,7 @@
     </message>
     <message>
         <source>Rebuild initramfs images for the selected repair system only after mapper and crypttab consistency checks pass. The helper backs up each image before the apply. On Etch the stage runs through the guarded plain-chroot fallback (no unshare required).</source>
-        <translation>Перебудувати зображення initramfs для вибраної системи ремонту тільки після проходження перевірок консистенції картера та crypttab. Помічник повертає кожне зображення перед застосуванням. На етч-сцену проходить охоронець звичайно-кроотним відступом (не обов'язково).</translation>
+        <translation>Перебудувати зображення initramfs для вибраної системи ремонту тільки після проходження перевірок консистенції картера та crypttab. Помічник повертає кожне зображення перед застосуванням. На етч-сцену проходить охоронець звичайно-кроотним відступом (не обов&apos;язково).</translation>
     </message>
     <message>
         <source>Rebuild initramfs images.</source>
@@ -628,19 +628,19 @@
         <translation>Перебудувати initramfs для обраного обсягу? Допоможитель зберігає свій картограф / crypttab і резервні копії.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Вирощування модулів kernel, необхідно тільки при використанні цільових модулів dkms</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Збудувати модулі kernel, необхідні тільки при використанні системи побудови модуля</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
-        <translation>Reconcile Черевики Stack</translation>
+        <translation>Узгодити завантажувальний стек</translation>
     </message>
     <message>
         <source>Reconcile the boot stack.</source>
         <translation>Відстеження завантажувального стека.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Здійснити завантаження виділеної системи ремонту в одному захищеному проходженні спадщини: реконструкція картера/crypttab, реконструкція initramfs та регенерація конфігурації GRUB-legacy, з резервними копіями компонентів та прожекторами незмінно. Це еквівалентний Etch сучасної завантажувальної конденсації і залишається з плану повного ремонту.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Відновлення конфігурації extlinux.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
-        <translation>Відновлення вибраної системи ремонту GRUB меню/конфігурація після обов'язкового забезпечення безпеки. Помічник повертає меню.lst, зберігає всі існуючі записи завантаження та розгортається назад на будь-який момент.</translation>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <translation>Відновлення вибраної системи ремонту GRUB меню/конфігурація після обов&apos;язкового забезпечення безпеки. Помічник повертає меню.lst, зберігає всі існуючі записи завантаження та розгортається назад на будь-який момент.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Відновити обрану конфігурацію завантажувача extlinux. Ця спадщина фронтенду не поширюється на дії extlinux.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Відновлює меню Etch GRUB-legacy.lst (збережено, кожен запис)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Відновлює конфігурацію GRUB (збережено, кожен запис)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -737,14 +737,14 @@
     </message>
     <message>
         <source>Repair package dependencies in the selected repair system after the mandatory safety preflight. This maps directly to Settings -&gt; Repair broken package dependencies.</source>
-        <translation>Ремонт залежності пакету в обраній системі ремонту після обов'язкової безпеки. Карти безпосередньо в налаштуваннях -&gt; Ремонт пошкоджених пакетних залежностей.</translation>
+        <translation>Ремонт залежності пакету в обраній системі ремонту після обов&apos;язкової безпеки. Карти безпосередньо в налаштуваннях -&gt; Ремонт пошкоджених пакетних залежностей.</translation>
     </message>
     <message>
         <source>Repair the EFI / UKI boot path.</source>
         <translation>Ремонт EFI / UKI шлях завантаження.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Ремонт виділеної системи EFI / UKI шлях завантаження. Ця передова передня спадщина не передбачає дії EFI, мета Etch – система BIOS/GRUB-legacy.</translation>
     </message>
     <message>
@@ -765,11 +765,11 @@
     </message>
     <message>
         <source>Required for target-side repair commands</source>
-        <translation>Обов'язкові для команд з технічного обслуговування</translation>
+        <translation>Обов&apos;язкові для команд з технічного обслуговування</translation>
     </message>
     <message>
         <source>Required for verified Host-to-Repair and Repair-to-Host transfer</source>
-        <translation>Обов'язкові для перевірки Хост-до-Ремонт і Ремонт-до-Host переказу</translation>
+        <translation>Обов&apos;язкові для перевірки Хост-до-Ремонт і Ремонт-до-Host переказу</translation>
     </message>
     <message>
         <source>Required only for conventional GRUB-based EFI systems</source>
@@ -809,14 +809,14 @@
     </message>
     <message>
         <source>Restore the legacy SysV display manager configured for the selected system: the /etc/X11/default-display-manager entry and the missing runlevel S-symlink, with a backup and rollback, never starting the GUI. When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (menu.lst on this legacy GRUB; the serial console stays) so the prompt remains on the visible screen instead of going black. Available for the running host and a committed repair target.</source>
-        <translation>Відновити менеджер з відображення спадщини sysv, налаштований на обрану систему: запис /etc/X11/default-displaymanager та відсутній рівень S-symlink, з резервною та зворотним зв'язком, ніколи не відпускаючи GUI. При бажанні завантаження диск-розблоку також відремонтовано консолі: консоль=tty0 приділено останнім до командного рядка завантажувача (menu.lst on this legacy GRUB; послідовна консоль залишається) так що підказка залишається на видимому екрані замість того, що йде чорний. Доступно для ходового хосту та скоєного ремонту.</translation>
+        <translation>Відновити менеджер з відображення спадщини sysv, налаштований на обрану систему: запис /etc/X11/default-displaymanager та відсутній рівень S-symlink, з резервною та зворотним зв&apos;язком, ніколи не відпускаючи GUI. При бажанні завантаження диск-розблоку також відремонтовано консолі: консоль=tty0 приділено останнім до командного рядка завантажувача (menu.lst on this legacy GRUB; послідовна консоль залишається) так що підказка залишається на видимому екрані замість того, що йде чорний. Доступно для ходового хосту та скоєного ремонту.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Відновлює /etc/X11/default-displaymanager та відсутній рівень sysv S-symlink без запуску GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Відновлює налаштований менеджер відображення та його посилання для запуску без запуску GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Ознайомтеся з встановленими запасами ядер та оберіть одну конкретну операцію з ремонту ядер: видаліть найстарішу/суперовану або найновішу ядру, видаліть сировинні заголовки/компоненти/будівельну підтримку, встановити відсутні заголовки, перевстановити неповне ядро або встановити репозиторійне ядро. Ніщо не знімається або змінюється, поки ви не забираєте дію і підтверджуєте її. Ядра бігу завжди захищена, а решта ядер initramfs зображень і конфігурації завантажувача регенеруються після видалення.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Запуск захищеного ремонту фіксатора? Допоможисер зберігає свої симуляції-перший приплив і охоронці робочого часу.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Запустіть перевірку файлової системи зчитування для кореня вибраної системи та / завантаження файлових систем та звітуйте інструмент перевірки кожного пристрою та не змінюючи нічого. Ця передня частина Legacy виводить тільки перевірку, але ремонт пристрою не ведеться.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Запустіть перевірку файлової системи зчитування на корені системи та / завантаження файлових систем, після чого відремонтуйте лише пристрої, які повідомляють помилки. Інструменти перевірки Etch (e2fsck для ext2/ext3) працюють тільки після того, як помічник випускає свої чителю-тільки кріпильні прилади; все одномонтована файлова система ніколи не відновлюється в автономному режимі і не підтримується файловими системами.</translation>
     </message>
     <message>
@@ -868,12 +868,12 @@
         <translation>Виконайте чителювальну безпеку.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Запускає перевірку файлової системи для кореня вибраної системи, / завантаження та інших файлових систем.</translation>
     </message>
     <message>
         <source>Select repair-system source folder</source>
-        <translation>Виберіть папку "Ремонт-система"</translation>
+        <translation>Виберіть папку &quot;Ремонт-система&quot;</translation>
     </message>
     <message>
         <source>Select the repair drive in Systems before choosing a source folder inside it.</source>
@@ -885,7 +885,7 @@
     </message>
     <message>
         <source>Session log retention removed %1 older file(s); at most 20 files / 10 MB are kept.</source>
-        <translation type="unfinished" />
+        <translation>Політика зберігання журналу сеансів видалила %1 старіший(х) файл(ів); зберігається щонайбільше 20 файлів / 10 МБ.</translation>
     </message>
     <message>
         <source>Shows Btrfs filesystem and subvolume information when the target uses Btrfs.</source>
@@ -1008,8 +1008,8 @@
         <translation>Вибраний обсяг не підтримує тип файлової системи для перевірки.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
-        <translation>Корінь вибраного об'єкта, / завантаження, ESP і /home файлові системи не можна вирішити.</translation>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <translation>Корінь вибраного об&apos;єкта, / завантаження, ESP і /home файлові системи не можна вирішити.</translation>
     </message>
     <message>
         <source>The syslinux package is not installed according to the detected package manager.</source>
@@ -1109,7 +1109,7 @@
     </message>
     <message>
         <source>Used to verify the kernel embedded in a rebuilt unified kernel image</source>
-        <translation>Використовується для перевірки ядер, вбудованого в перебудований об'єм ядра</translation>
+        <translation>Використовується для перевірки ядер, вбудованого в перебудований об&apos;єм ядра</translation>
     </message>
     <message>
         <source>Validate</source>
@@ -1120,8 +1120,8 @@
         <translation>Діє середовище</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Пройдемос-керований інтерактивний сеанс для ремонту драйвера ядра GPU (nvidia/nouveau/amdgpu/radeon/mesa), застосовуючи лише невеликий захищений крок, який ви обираєте з власним рухом. Два пункти прийняття рішення керують сеансом: ядро-vs-driver (замініть найновіше ядро, драйвер не може будувати проти, або видалити старше ядро драйвера кріпиться до) і невірно-привідний (припиніть неправильний драйвер, встановіть правильний, і перебудуйте його з кожного встановленого ядра). Окремий однозавантажувальний номодезний падін досягає консолі на зламаному воді.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Пройдемос-драйв інтерактивної сесії для ремонту драйвера GPU; меню адаптується до діагностичних доказів, кожен охоронець крок переоцінений в цьому вікні перед наступним варіантом, а одним завантаженням номодезного падіння зберігає консоль, що досягається на зламаному воді.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1137,7 +1137,7 @@
     </message>
     <message>
         <source>akms preflight found no build tree for installed kernel %1; install the matching %2 headers package (or boot a kernel that matches the installed headers) and retry.</source>
-        <translation>AKMS preflight не знайдено дерева для установки kernel %1; встановити відповідність пакету заголовків %2 (або завантажте kernel, яка відповідає встановленим заголовкам) та птицею.</translation>
+        <translation>Попередня перевірка AKMS не знайшла дерева збірки для встановленого ядра %1; встановіть відповідний пакет заголовків %2 (або завантажте ядро, яке відповідає встановленим заголовкам) і повторіть спробу.</translation>
     </message>
     <message>
         <source>akms preflight found no build tree for kernel %1: the installed %2 headers are newer (version %3). Reboot into the kernel matching the installed headers, or install headers matching %1 if they are still available.</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>Перевірка</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Вхідні пристрої / клавіатура</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Мережа / підключення</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Огляди вхідного пристрою стека: виявлення клавіатури / миші / утилізації пристроїв та класів, завантажені, вбудовані, доступні та blacklisted HID / клавіатури kernel модуля, автобусно-контролерний стан, розкладка клавіатури, включення initramfs та вбудований інструмент для розблокування LUKS, плюс останні докази завантаження.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Відгуки про мережу: виявлений config Backend, адаптери та їх обмежені драйвери/модули, чорний список та стан прошивки, а також маршрут пробігу, DNS та обмежені докази доступності, не змінюючи нічого.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>зчитування та перевірка клавіатури initramfs</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>перевірка мережевого адаптера та з’єднання</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Ремонт вхідних пристроїв</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Ремонт вхідних пристроїв</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Пройдемос-драйв інтерактивного сеансу для ремонту клавіатури, миші та введення сенсорної панелі; меню адаптується до діагностичних доказів, кожна дія перетворена в цьому вікні перед наступним варіантом, а захисні сходинки охоплюють драйвери, модулі, прошивку, шорти, HID випадання і клавіатурні модулі initramfs.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Виберіть вхідний пристрій, що відновлює дію з доказів.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Мережеві / ремонт з&amp;apos;єднання</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Ремонт мережі</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Пройдемос-драйв інтерактивний сеанс для ремонту мережевого стека; меню адаптується до діагностичних доказів, кожна дія переоцінюється в цьому вікні перед наступним варіантом, а захисні кроки охоплюють драйвери, модулі, прошивку, шорти, initramfs NIC модулі, адресування, маршрути та DNS. Зміни мережевого підключення ніколи не доторкнуться до інтерфейсу, що містить маршрут за замовчуванням.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Оберіть послугу з ремонту мережі з доказів.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Unavailable: %1</source>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1564,7 +1620,7 @@ Unavailable: %1</source>
         <translation>; Кращий виявлений системний компонент: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; КапітанMorgan12&lt;/p&gt;&lt;p&gt; Цей графічний інтерфейс є пунктом входу пакета: Qt 3.3.x переданий з захищеним охоронцем для Debian Etch-era систем.&lt;/p&gt;&lt;p&gt;&lt;p&gt;&lt;b&gt;Підібраний режим ремонту:&lt;/b&gt; Read-only діагностика може перевіряти або захищений пусковий хост або явно вибраний привід ремонту. Стійки пакету Debian/APT (змінна конфігурація, розбиті залежності, оновлення метаданих, оновлення), регенерація конфігурації GRUB-legacy, розблокування цілі LUKS та захист редагування цільового профілю, що виконується через портовий помічник після підтвердження; Обслуговування Host дозволяє тим самим підтримувані етапи нативно від активної системи після повторення ідентичності та перевірки завантаження.&lt;/p&gt;&lt;p&gt; Сучасні функції - перевірений файл Копіювання, Btrfs знімок, EFI/UKI і extlinux ремонт, завантажувального конденсату і зробити за замовчуванням - сірі з власними причинами зонду на цьому фронті; арка/Alpine/Fedora посилається на діагностику. &lt;/p&gt;&lt;p&gt; Перша привілейована дія авторизації одного окремого адміністратора за обсягом через модуль прихованого введення (Qt GUI залишається незареєстрованим). Він може бути завершений в будь-який час з файлу - Сесія адміністратора блокування.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1629,7 +1685,7 @@ Unavailable: %1</source>
     </message>
     <message>
         <source>Add Note</source>
-        <translation>Додати Примітка</translation>
+        <translation>Додати примітку</translation>
     </message>
     <message>
         <source>Add files to copy</source>
@@ -1673,7 +1729,7 @@ Unavailable: %1</source>
     </message>
     <message>
         <source>Administrator authorization is already active. The passphrase is sent only to cryptsetup over the privileged helper pipe and is never logged or placed on a command line.</source>
-        <translation>Авторизація адміністратора вже активно. Пасфразе відправляється тільки для розшифрування над привілейованої труби помічника і ніколи не з'єднується або розміщується на командному рядку.</translation>
+        <translation>Авторизація адміністратора вже активно. Пасфразе відправляється тільки для розшифрування над привілейованої труби помічника і ніколи не з&apos;єднується або розміщується на командному рядку.</translation>
     </message>
     <message>
         <source>Administrator authorization is required for %1.
@@ -1772,8 +1828,8 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Автоматична інсталяція зажадає явний пакет картографування та авторизації привілеїв.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
-        <translation>Автоматична інсталяція вимагає явного пакету картування та дозволу привілеїв; встановлює вибраний пакет, що не передбачено можливості на поточний об'єкт (виконавець або погодження) через захищений помічник.</translation>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <translation>Автоматична інсталяція вимагає явного пакету картування та дозволу привілеїв; встановлює вибраний пакет, що не передбачено можливості на поточний об&apos;єкт (виконавець або погодження) через захищений помічник.</translation>
     </message>
     <message>
         <source>Automatic read-only diagnostics regeneration is pending until a scope is ready (%1).</source>
@@ -1824,7 +1880,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Boot Bitch Legacy GUI готовий. Кожна привілейована команда працює через портативний помічник; дії, що залишаються відключені до моменту здійснення ремонтної мети (або Хост Обслуговування є активним) і діагностичним звітом про свою можливість лінії.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch повинен працювати з різних завантажених Linux середовища, ніж система, яка буде відновлена. Використовуйте Linux живу середню або іншу установку Linux на іншому фізичному диску.&lt;br&gt;&lt;br&gt; Ведуться роботи з звичайного вибору зубного знака, але його можна явно вибрати через &lt;b&gt;Host Обслуговування&lt;/b&gt; для охорони рідної діагностики та підтримуваних етапів технічного обслуговування.&lt;br&gt;&lt;br&gt;&lt;br&gt; Діагностика слідувати за сторінкою Системи: скоєний ремонт при проведенні технічного обслуговування, або захищений ходовий господар, при цьому він активний.&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt; Перша привілейована авторизація запитів адміністратора після цього вікна Boot Bitch; &lt;b&gt;File - Сесія адміністратора блокування&lt;/b&gt; закінчується, що помічник негайно. Кожен ремонт зберігає власні фари маніпулятора.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Розгортання папок ремонту ...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Перегляд папок відновленої системи, що читається і спрацьовує вибрану папку.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Перегляд виділеної системи ремонту за допомогою тимчасових читальних кріплень помічника і виберіть абсолютний шлях призначення. Не змінюються цільові файли під час перегляду.</translation>
     </message>
     <message>
@@ -1861,7 +1917,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Зареєструватися</translation>
+        <translation>Скасувати</translation>
     </message>
     <message>
         <source>Capabilities and dependencies</source>
@@ -1869,7 +1925,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Check</source>
-        <translation>Зареєструватися</translation>
+        <translation>Перевірити</translation>
     </message>
     <message>
         <source>Check File Systems (Full Repair pre-stage)</source>
@@ -1904,7 +1960,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Виберіть папку призначення ведучих</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Виберіть, які можливості з кешування, таблиці.</translation>
     </message>
     <message>
@@ -1961,7 +2017,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Command output will appear here.</source>
-        <translation>Командний вихід з'явиться тут.</translation>
+        <translation>Командний вихід з&apos;явиться тут.</translation>
     </message>
     <message>
         <source>Command to run, for example: apt-get update, apt-get upgrade</source>
@@ -2057,19 +2113,19 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Copy Results</source>
-        <translation>Статус на сервери</translation>
+        <translation>Копіювати результати</translation>
     </message>
     <message>
         <source>Copy and Verify</source>
-        <translation>Статус на сервери</translation>
+        <translation>Копіювати та перевірити</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Скопіюйте та перевірте файли в будь-якому напрямку через захищений помічник (cp -a плюс відновлення прав власності та байт-compare). Файл-копія помічника зонду забиває контроль і зберігає напрямок і контроль за доріжками.</translation>
     </message>
     <message>
         <source>Copy staged items and verify the result. Existing destination names are overwritten when source content differs; unrelated destination files are never deleted.</source>
-        <translation>Скопіювати застарілі елементи і перевірити результат. Виконувати імена пунктів призначення перезаписуються при різному вмісту джерела; не пов'язані файли призначення ніколи не видаляються.</translation>
+        <translation>Скопіювати застарілі елементи і перевірити результат. Виконувати імена пунктів призначення перезаписуються при різному вмісту джерела; не пов&apos;язані файли призначення ніколи не видаляються.</translation>
     </message>
     <message>
         <source>Copy the %1 staged item(s) to %2?
@@ -2161,7 +2217,7 @@ The helper keeps its direction and path containment checks; a sensitive repair-s
     </message>
     <message>
         <source>Diagnostic results appear here.</source>
-        <translation>З'являються результати діагностики тут.</translation>
+        <translation>З&apos;являються результати діагностики тут.</translation>
     </message>
     <message>
         <source>Diagnostic results copied to the clipboard.</source>
@@ -2241,7 +2297,7 @@ The helper keeps its direction and path containment checks; a sensitive repair-s
     </message>
     <message>
         <source>Eligible repair candidate</source>
-        <translation>Обов'язковий ремонт кандидата</translation>
+        <translation>Обов&apos;язковий ремонт кандидата</translation>
     </message>
     <message>
         <source>Enabled in Settings</source>
@@ -2252,13 +2308,13 @@ The helper keeps its direction and path containment checks; a sensitive repair-s
         <translation>Введіть команду для запуску першого.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
         <translation>Введіть номер мобільного, який Ви вказали при укладаннi договору з банком - для ідентифікації.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Введіть файл для %1.
 
 Відправляється тільки для розшифрування над стандартним введенням помічника і ніколи не ввійде або розміщується на командному рядку.</translation>
@@ -2276,7 +2332,7 @@ It is sent only to cryptsetup over the helper's standard input and is never logg
         <translation>Встановити примітивну програму помічника для поточного обсягу.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Цільові файли конфігураційної конфігурації Etch-era; доступність полягає в тому, щоб читати он-лайн діагностиці помічника.</translation>
     </message>
     <message>
@@ -2317,11 +2373,11 @@ It is sent only to cryptsetup over the helper's standard input and is never logg
     </message>
     <message>
         <source>File Copy - Copy and Verify</source>
-        <translation>Статус на сервери</translation>
+        <translation>Файл Копіювання - Копіювати та перевірити</translation>
     </message>
     <message>
         <source>File Copy - Preview Changes</source>
-        <translation>Статус на сервери</translation>
+        <translation>Файл Копіювання - Перегляд змін</translation>
     </message>
     <message>
         <source>File Copy direction changed to %1; staged paths were cleared to avoid mixing source/destination namespaces.</source>
@@ -2429,7 +2485,7 @@ It is sent only to cryptsetup over the helper's standard input and is never logg
     </message>
     <message>
         <source>Host</source>
-        <translation>Проживання</translation>
+        <translation>Хост</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2469,7 +2525,7 @@ It is sent only to cryptsetup over the helper's standard input and is never logg
     </message>
     <message>
         <source>Host capability scan refreshed (read-only PATH probes; nothing was executed). Missing optional tools disable only the related features.</source>
-        <translation>Можливість сканування освіжаючих (проблемних пробок PATH; нічого не виконано). З'являються додаткові інструменти, які відключаються тільки пов'язані функції.</translation>
+        <translation>Можливість сканування освіжаючих (проблемних пробок PATH; нічого не виконано). З&apos;являються додаткові інструменти, які відключаються тільки пов&apos;язані функції.</translation>
     </message>
     <message>
         <source>Host command</source>
@@ -2554,12 +2610,12 @@ The helper independently re-checks that the selected disk backs /, /boot and /bo
         <translation>Встановити Missing Support ...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
         <translation>Встановіть пакет «%1» в обрану конфігурацію ремонту через резервний пакет? Дана модіфікує діагностику ремонтних цілей та недійсних коштів.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Встановіть пакет "%1" на біговому хості через резервний пакет? Цей модіфікує ходовий хост і недійсний діагностику ходового ходу.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Встановіть пакет &quot;%1&quot; на біговому хості через резервний пакет? Цей модіфікує ходовий хост і недійсний діагностику ходового ходу.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2571,7 +2627,7 @@ The helper independently re-checks that the selected disk backs /, /boot and /bo
     </message>
     <message>
         <source>LUKS passphrase was not accepted for %1; offering retry.</source>
-        <translation>LUKS пасфрас не був прийнятий для %1; пропонуючи птицю.</translation>
+        <translation>Парольну фразу LUKS для %1 не було прийнято; пропонується повторна спроба.</translation>
     </message>
     <message>
         <source>LUKS unlock</source>
@@ -2635,7 +2691,7 @@ The helper independently re-checks that the selected disk backs /, /boot and /bo
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Зробіть запис канонічного встановленого ядра за замовчуванням GRUB-legacy завантажувальний вхід на запущений хост?
 
-Допомоги /завантаження/груб/меню.лст, встановлює `default &lt;N&gt;` пряма до канонічного в'їзду, повертає меню першим і відновлює його на будь-якій з ладу.</translation>
+Допомоги /завантаження/груб/меню.лст, встановлює `default &lt;N&gt;` пряма до канонічного в&apos;їзду, повертає меню першим і відновлює його на будь-якій з ладу.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2648,6 +2704,50 @@ The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive 
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Управління відображенням: встановити пакет %1 від таблиці можливостей.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI інструмент</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>Налаштування GRUB</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB монтаж інструменту</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Маючи %1: встановити пакет відповідності (s) %2 з таблиці можливостей завантаження.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Маючи %1: встановити пакет відповідності з таблиці можливостей завантаження.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI будівельник</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>завантажувального пристрою</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramfs-tools</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2694,8 +2794,12 @@ The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive 
         <translation>Найновіші встановлені kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>No 'Legacy функції оболонки:' рядок кешується; запустіть діагностику для вибраного обсягу, щоб оцінити прохідність хроот/timeout (замкнений закритий).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Компілятор збірки ядра: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>No &apos;Legacy функції оболонки:&apos; рядок кешується; запустіть діагностику для вибраного обсягу, щоб оцінити прохідність хроот/timeout (замкнений закритий).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2735,7 +2839,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>No cached capability evidence for this stage yet. Run diagnostics for the selected scope to populate the Full Repair plan; your selection is saved once the stage becomes available.</source>
-        <translation>На цьому етапі ще немає чіткості. Проводити діагностику для обраного об'єму, щоб з'єднати план повного ремонту; ваш вибір зберігається один раз на стадії.</translation>
+        <translation>На цьому етапі ще немає чіткості. Проводити діагностику для обраного об&apos;єму, щоб з&apos;єднати план повного ремонту; ваш вибір зберігається один раз на стадії.</translation>
     </message>
     <message>
         <source>No cached capability evidence for this stage yet. Your saved selection is kept and its availability is re-checked when diagnostics for this scope complete.</source>
@@ -2762,7 +2866,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Немає діагностичних результатів, щоб зберегти ще.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Не виявлено помилки файлової системи на корені %1, / завантаження або / домашньої файлової системи. Немає ремонту.</translation>
     </message>
     <message>
@@ -2786,12 +2890,12 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Не вибрано інструмент ремонту.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>На корені %1 виявлено помилки відновленої файлової системи, / завантаження або / домашньої файлової системи, але %2. Немає ремонту.</translation>
     </message>
     <message>
         <source>No selected stages are available. %1</source>
-        <translation type="unfinished" />
+        <translation>Вибрані етапи недоступні. %1</translation>
     </message>
     <message>
         <source>No stages selected</source>
@@ -2811,7 +2915,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>Not present in the selected target (omitted): %1</source>
-        <translation>Не присутні в обраній цілі (з'єднаних сторін): %1</translation>
+        <translation>Не присутні в обраній цілі (з&apos;єднаних сторін): %1</translation>
     </message>
     <message>
         <source>Note:</source>
@@ -2835,11 +2939,11 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>OK</source>
-        <translation>Зареєструватися</translation>
+        <translation>ОК</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
-        <translation>Команди офлайн працюють одночасно в свіжому вигляді і не можуть відповісти на інтерактивні підказки (апт-get -y оновлені роботи). Команди Host-shell працюють безпосередньо на біговому господарі. Пояснюється поле командного рядка помічника; точна причина з'являється в панелі інструментів.</translation>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <translation>Команди офлайн працюють одночасно в свіжому вигляді і не можуть відповісти на інтерактивні підказки (апт-get -y оновлені роботи). Команди Host-shell працюють безпосередньо на біговому господарі. Пояснюється поле командного рядка помічника; точна причина з&apos;являється в панелі інструментів.</translation>
     </message>
     <message>
         <source>Offline repair modes refuse mounted filesystems; the running host root is never repaired offline.</source>
@@ -2911,7 +3015,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>Passphrase required</source>
-        <translation>Пасфразе обов'язкове</translation>
+        <translation>Пасфразе обов&apos;язкове</translation>
     </message>
     <message>
         <source>Password required</source>
@@ -2955,7 +3059,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>Quit</source>
-        <translation>Навігація</translation>
+        <translation>Вийти</translation>
     </message>
     <message>
         <source>Re-establish the privileged helper session for the current scope now. The password is requested in the hidden-input modal and is never logged.</source>
@@ -3026,11 +3130,11 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Refresh Пристрої</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Відновлення конфігурації %1 GRUB</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Відновлення конфігурації %1 extlinux</translation>
     </message>
     <message>
@@ -3186,7 +3290,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Запуск команди всередині вибраної системи ремонту як корінь (sudo не потрібно). Команди виконують один раз в свіжому вигляді і не можуть відповісти на інтерактивні підказки; використовувати неактивні прапори, такі як apt-get -y оновлення. Вихід зберігається в цьому вікні і в журналі додатків.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Запустіть команду на біговому хості як корінь (Host Shell) або всередині обраної системи ремонту, як корінь (Chroot Shell); sudo не потрібно в обох. Команди Хост-ТР47X виконуються безпосередньо на активній системі; команди хроот виконують один раз в свіжому хрооті і не можуть відповісти на інтерактивні підказки, тому неінтерактивні прапори, такі як apt-get -y поновлення залишаються рекомендованими для вадованих трас. Вихід зберігається в цьому вікні і в журналі додатків. Ця сторінка показує точну причину нижче поля.</translation>
     </message>
     <message>
@@ -3199,14 +3303,14 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>Run diagnostics for the selected scope first.</source>
-        <translation>Діагностика запуску для обраного об'єкту.</translation>
+        <translation>Діагностика запуску для обраного об&apos;єкту.</translation>
     </message>
     <message>
         <source>Run diagnostics for this scope to unlock the gated actions. Diagnostics are read-only and the only evidence source.</source>
         <translation>Діагностика запуску для цієї сфери для розблокування воріт. Діагностика читаються і тільки джерело доказів.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Діагностика виконання завдань, які існують файли конфігурацій; контроль за читанням помічника</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Запуск на Хост</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Запустіть один інструмент ремонту або скористайтеся планом повного ремонту на обраний накопичувач. Виберіть ведення хосту на системах для запуску тих же підтриманих, захищених стадій від захищеного хосту. Виберіть етапи повного ремонту в налаштуваннях. Увімкнути етапи виконання замовлення наведено. Кожна конфігурована сцена також з'являється нижче як окремий інструмент; Повна колонка відновлення відображає її поточний стан налаштувань. Завантажувальні інструменти (конфігурація GRUB, завантажувальну стійку конденсацію та зробити за замовчуванням) самостійні: запускати їх в будь-який порядок, а пізніше дія повторює те, що раніше змінено і звітує свій результат. В активному об'ємі відводиться ремонт: обраний ремонтний привід або обслуговування пускових установок. Кожна акція залишається відключена до тих пір, поки не скажеться лініями кешування, і помічник зберігає свої робочі місця. Напишіть дії, які просять підтвердити, а потім запустіть власні просвіти помічника; GUI ніколи не ослабляє їх. Ремонт, який не зарекомендував себе недійсним, не несе відповідальності за діагностику та відключає дії, що ведуться до діагностування.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Запустіть один інструмент ремонту або скористайтеся планом повного ремонту на обраний накопичувач. Виберіть ведення хосту на системах для запуску тих же підтриманих, захищених стадій від захищеного хосту. Виберіть етапи повного ремонту в налаштуваннях. Увімкнути етапи виконання замовлення наведено. Кожна конфігурована сцена також з&apos;являється нижче як окремий інструмент; Повна колонка відновлення відображає її поточний стан налаштувань. Завантажувальні інструменти (конфігурація GRUB, завантажувальну стійку конденсацію та зробити за замовчуванням) самостійні: запускати їх в будь-який порядок, а пізніше дія повторює те, що раніше змінено і звітує свій результат. В активному об&apos;ємі відводиться ремонт: обраний ремонтний привід або обслуговування пускових установок. Кожна акція залишається відключена до тих пір, поки не скажеться лініями кешування, і помічник зберігає свої робочі місця. Напишіть дії, які просять підтвердити, а потім запустіть власні просвіти помічника; GUI ніколи не ослабляє їх. Ремонт, який не зарекомендував себе недійсним, не несе відповідальності за діагностику та відключає дії, що ведуться до діагностування.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Виконайте один рецензований команду як корінь всередині цільового chroot через службу підтримки.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Запуск одного рецензованої команди як корінь на біговому хості через службу підтримки.</translation>
     </message>
     <message>
@@ -3231,12 +3335,12 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     </message>
     <message>
         <source>Run the %1 diagnostic for the selected scope first (the cached evidence is missing).</source>
-        <translation>Запустіть діагностичну діагностику %1 для вибраного об'єкту (за наявності кешу).</translation>
+        <translation>Запустіть діагностичну діагностику %1 для вибраного об&apos;єкту (за наявності кешу).</translation>
     </message>
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Запустіть план повного ремонту?
@@ -3351,7 +3455,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     </message>
     <message>
         <source>Scope required</source>
-        <translation>Обов'язкові поля</translation>
+        <translation>Обов&apos;язкові поля</translation>
     </message>
     <message>
         <source>Search log:</source>
@@ -3386,7 +3490,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
         <translation>Виберіть фізичний диск у списку доступних завдань з ремонту на вкладці Системи спочатку, або скористайтеся сервісом Хост для захищеного бігу.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Виберіть фізичний диск; Boot Bitch вирішує найбільш ймовірний обсяг системи Linux автоматично. Пробіг ходового хосту залишається захищеним від звичайного капітального ремонту, з окремим явним стеблом забудови для власної системи. Кнопка деталі показує захищені факти хосту в деталях сковорідки; вибравши будь-який дисковий ряд відновлює запірну каструлю.</translation>
     </message>
     <message>
@@ -3419,7 +3523,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     </message>
     <message>
         <source>Select repair-system source folder</source>
-        <translation>Виберіть папку "Ремонт-система"</translation>
+        <translation>Виберіть папку &quot;Ремонт-система&quot;</translation>
     </message>
     <message>
         <source>Select the repair drive in Systems before choosing a destination inside it (Host Maintenance does not provide a repair tree to browse).</source>
@@ -3467,7 +3571,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     </message>
     <message>
         <source>Session log retention removed %1 older file(s); at most 20 files / 10 MB are kept.</source>
-        <translation>Збереження журналів сеансів: видалено %1 старіший(-их) файл(-ів); зберігається щонайбільше 20 файлів / 10 МБ.</translation>
+        <translation>Політика зберігання журналу сеансів видалила %1 старіший(х) файл(ів); зберігається щонайбільше 20 файлів / 10 МБ.</translation>
     </message>
     <message>
         <source>Session logs</source>
@@ -3512,6 +3616,14 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Показати пристрої без встановленої установки Linux</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>При вимкненні, приховує обсяги контейнера squashfs (замовлення), які не можуть встановлювати цілі Linux.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Показати петлю squashfs</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3563,7 +3675,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     </message>
     <message>
         <source>Stage at least one source and name a destination path first.</source>
-        <translation>Етап принаймні один джерело і ім'я пункту призначення першим.</translation>
+        <translation>Етап принаймні один джерело і ім&apos;я пункту призначення першим.</translation>
     </message>
     <message>
         <source>Staged Host \xE2\x86\x92 Repair destination: %1. No copy occurred.</source>
@@ -3607,7 +3719,7 @@ Error: the passphrase was not accepted; retry offered.</source>
         <translation>Стан: замкнений
 Компонент: %1
 Спосіб: розблокування помічника (cryptsetup)
-Помилка: пасфрас не прийнято; запропонована птиця.</translation>
+Помилка: парольну фразу не було прийнято; запропоновано повторну спробу.</translation>
     </message>
     <message>
         <source>State: locked or no encrypted component detected
@@ -3667,7 +3779,7 @@ Method: helper-confirmed mapping from the last read-only diagnostics.</source>
     </message>
     <message>
         <source>Status</source>
-        <translation>Статус на сервери</translation>
+        <translation>Статус</translation>
     </message>
     <message>
         <source>Status:</source>
@@ -3694,7 +3806,7 @@ Method: helper-confirmed mapping from the last read-only diagnostics.</source>
         <translation>Стопування запуску Shell команди ... Вкладка Logs зберігає повну транскрипцію.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
+        <source>Packages</source>
         <translation>Пакети</translation>
     </message>
     <message>
@@ -3756,7 +3868,7 @@ The running host is independently re-checked and refused by the privileged helpe
         <translation>План повного ремонту проходить вибрані етапи спадщини для того, щоб через захищений помічник; індивідуальні інструменти працюють на одному етапі. Кожна акція залишається відключена до тих пір, поки не скажеться лініями кешування, і помічник зберігає свої робочі місця.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
         <translation>План повного ремонту проходить вибрані етапи спадщини для того, щоб через захищений помічник; індивідуальні інструменти працюють на одному етапі. Кожна акція залишається відключена до тих пір, поки не скажеться лініями кешування, і помічник зберігає свої робочі місця. Напишіть дії, які просять підтвердити, а потім запустіть власні просвіти помічника; GUI ніколи не ослабляє їх. Ремонт, який не зарекомендував себе недійсним, не несе відповідальності за діагностику та відключає дії, що ведуться до діагностування.</translation>
     </message>
     <message>
@@ -3767,9 +3879,9 @@ The running host is independently re-checked and refused by the privileged helpe
         <source>The LUKS passphrase was not accepted.
 
 Try again?</source>
-        <translation>ТР22X пасфрас не було прийнято.
+        <translation>Парольну фразу LUKS не було прийнято.
 
-Спробуйте знову?</translation>
+Спробувати ще раз?</translation>
     </message>
     <message>
         <source>The cached administrator authorization expired or was refused; press Authorize (Systems or Repair tab) to re-establish the session.</source>
@@ -3779,7 +3891,9 @@ Try again?</source>
         <source>The cached administrator authorization for %1 expired or was refused.
 
 Press Authorize on the Systems or Repair tab to re-establish the session, then run the command again. No command was started.</source>
-        <translation type="unfinished" />
+        <translation>Кешована авторизація адміністратора для %1 закінчилась або була відхилена.
+
+Натисніть «Авторизувати» на вкладці «Системи» або «Ремонт», щоб відновити сеанс, а потім запустіть команду знову. Команду не було запущено.</translation>
     </message>
     <message>
         <source>The complete session register; Save As... writes every entry even while a filter hides lines. If a writable system share mount exists at /host, Save As... starts there; otherwise the log directory is the fallback. Prior session files are listed read-only.</source>
@@ -3843,7 +3957,7 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
     </message>
     <message>
         <source>The read-only probe found no editable target configuration file in this target. %1</source>
-        <translation type="unfinished" />
+        <translation>Зонд лише для читання не знайшов редагованого файлу цільової конфігурації в цій цілі. %1</translation>
     </message>
     <message>
         <source>The repair plan made no changes; cached diagnostics remain valid.</source>
@@ -3898,7 +4012,7 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
         <translation>Вибраний обсяг не врегульований кореневим компонентом; використовувати Refresh Devices і знову заблокувати поставлену задачу ремонту.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Вибраний диск і кореневий компонент не можна вирішити.</translation>
     </message>
     <message>
@@ -3914,8 +4028,8 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
         <translation>Цей зашифрований диск не має видимої файлової системи Linux. Використовуйте розблокування, освіжаючи пристрої та оберіть ціль після його виявлення кореня Linux.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Ця передова передня спадщина не поширюється на дію %1; помічник повідомляє про можливість як доступні.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Доступний як діагностичний / нездатний варіант - цей передовий привід Legacy не передбачає ремонтних дій; запускати інтерактивний ремонт з сучасного GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -3943,7 +4057,7 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
     </message>
     <message>
         <source>Unavailable</source>
-        <translation>Відкрито</translation>
+        <translation>Недоступно</translation>
     </message>
     <message>
         <source>Unavailable: %1</source>
@@ -3999,7 +4113,7 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
     </message>
     <message>
         <source>Unlock status</source>
-        <translation>Статус на сервери</translation>
+        <translation>Статус розблокування</translation>
     </message>
     <message>
         <source>Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.</source>
@@ -4038,6 +4152,18 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>WARNING: збережений файл налаштувань інтерфейсу %1 не можна прочитати; його параметри, як їх за замовчуванням, не як збережені значення.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>WARNING: збережений файл налаштувань інтерфейсу %1 не можна прочитати або видалити; його параметри читаються як значення за замовчуванням. Видаліть його (або зробіть ~/.qt доступним для запису), щоб налаштування знову можна було зберігати.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Видалено %1 застарілих нечитабельних файлів налаштувань: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Не вдалося видалити застарілі нечитабельні файли налаштувань %1; значення за замовчуванням діють, доки їх не буде видалено.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>При вимкненні диски з зашифрованим пристроєм приховані до розблокування обсягу.</translation>
     </message>
@@ -4062,7 +4188,7 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>Обгортання довгих колод ліній</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
         <translation>Напишіть дії, які просять підтвердити, а потім запустіть власні просвіти помічника; GUI ніколи не ослабляє їх. Ремонт, який не зарекомендував себе недійсним, не несе відповідальності за діагностику та відключає дії, що ведуться до діагностування.</translation>
     </message>
     <message>
@@ -4098,8 +4224,8 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>авторизація адміністратора</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>елеватор вимагає інтерактивного sudo пароля; запустіть дим як корінь або після `sudo -S -v` з --elevate 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>елеватор вимагає інтерактивного sudo пароля; запустіть дим як корінь або після `sudo -S -v` з --elevate &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4175,10 +4301,10 @@ The command was not started.</source>
     </message>
     <message>
         <source>unavailable - %1</source>
-        <translation type="unfinished" />
+        <translation>недоступний - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>0 товар(ов) - 0.00 р.</translation>
     </message>
     <message>
@@ -4189,5 +4315,409 @@ The command was not started.</source>
         <source>your account</source>
         <translation>Ваш рахунок</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Репозиторій останніх kernel: %1 (новий, ніж встановлена нова версія; %2).</translation></message><message><source>Try Again</source><translation>Зареєструватися</translation></message><message><source>Enter the note text</source><translation>Введіть текст замітки</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Ця замітка буде додано до вибраного журналу сеансу %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>НЕ додано до попереднього журналу сеансів %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Вибраний запис журналу не є дійсним журналом сеансу; замітка не була написана.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Вибраний журнал сеансу %1 не є жорстким; замітка не додана.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Репозиторій останніх kernel: %1 (новий, ніж встановлена нова версія; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Спробувати ще раз</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Введіть текст замітки</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Ця замітка буде додано до вибраного журналу сеансу %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>НЕ додано до попереднього журналу сеансів %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Вибраний запис журналу не є дійсним журналом сеансу; замітка не була написана.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Вибраний журнал сеансу %1 не є жорстким; замітка не додана.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Немає діагностики ходового ходу; запускати діагностику чителю на протязі цього ряду.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - aborted — припинили запит</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>Етап(и) %1 повідомили про зміни перед зупинкою; ці зміни застосовано, а пов&apos;язану діагностику відновлено.</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>вже може бути застосовано його зміни до зупинки;</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>без змін</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Встановити</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Ремонт EFI / UKI шлях завантаження для UEFI систем</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Evidence-driven клавіатура, миша та сенсорна панель ремонту через інтерактивне меню помічника</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Evidence-driven мережевий ремонт через інтерактивне меню помічника; зміни живих підключень ніколи не доторкнулися інтерфейсу, що містить маршрут за замовчуванням</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Пакети не доступні в репозиторії цієї системи</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 записів завантаження прошивки завантажено лише для читання.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 перегляд записів прошивки доступний. Натисніть Load Entries, щоб переглянути записи UEFI лише для читання.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Завантаження</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Завантаження %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Завантажувальні записи відмовляються: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Результат списку записів завантаження відкинуто: обсяг змінився, поки виконувався запит.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Чоботи</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Клас</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Модель: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Прямий (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Приват</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Привід: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI записів завантаження</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Поза «69»</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Прошивка</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Записи завантаження прошивки не можуть бути завантажені. Дивись журнали для деталей.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Список прошивок не вдалося.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>меню GRUB</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Етикетка</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Етикетка: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Список записів завантаження прошивки</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Опубліковано в BootOrder: немає (прошивка)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Опубліковано в BootOrder: так</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Вхід</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Навантаження записів для завантаження прошивки %1 UEFI</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Завантажено %1 %2 запис%3 завантаження прошивки, лише для читання.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Навантажувач</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Навантажувач: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Завантаження записів завантаження %1 UEFI для читання-тільки для %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Мережа</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Не знайдено записи завантаження прошивки UEFI — це система BIOS/legacy або не має efibootmgr, тому немає необхідності завантаження прошивки для управління.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Немає обраного обсягу</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Інше</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Призначення ремонту: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Призначення ремонту: не готовий</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Ремонт-таргет</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Роль: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Запуск: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Запуск господаря: не вибрано</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Запуск</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Виберіть Обслуговування хостів на біговому хості, або завдання ремонту в системах, щоб керувати записами завантаження прошивки.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Виберіть Host Maintenance для запущеної системи або ціль відновлення на вкладці Systems, щоб керувати записами завантаження прошивки. Load Entries показує записи UEFI поточного обсягу лише для читання.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>Записи завантаження прошивки UEFI (NVRAM запущеної системи) перелічено тут лише для читання. У режимі Host Maintenance показано записи самої запущеної системи; коли обрано ціль відновлення — записи NVRAM, розділ яких вказує на системний розділ EFI цього диска. Цей перегляд ніколи не змінює прошивку; система лише з BIOS (Etch) не має записів завантаження прошивки й не показує жодного. Меню завантаження GRUB (список ядер у GRUB) є окремим і відновлюється ремонтом GRUB або узгодженням стека завантаження.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Записи завантаження прошивки UEFI в порядку BootOrder, перелічені лише для читання.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Цей запис наразі активний (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Неможливо видалити %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>ремонт цільових</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>ремонт-таргет</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>ходовий хост</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>Пробіг</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>Записи EFI</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Меню завантаження</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Перемикання між записами завантаження прошивки UEFI та меню завантаження лише для читання.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Пункт меню</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Меню завантаження лише для читання (записи ядер/ОС завантажувача у порядку файлу).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>%1 пунктів меню завантаження завантажено лише для читання.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>Перегляд меню завантаження %1 доступний. Виберіть «Меню завантаження», щоб переглянути меню завантаження лише для читання.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>Перегляд записів прошивки %1 доступний. Виберіть «Записи EFI», щоб переглянути записи UEFI лише для читання.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Виберіть Host Maintenance для запущеної системи або ціль відновлення на вкладці Systems, щоб переглянути записи завантаження прошивки. Виберіть «Записи EFI» або «Меню завантаження» вище, щоб завантажити записи поточного обсягу лише для читання.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Завантаження меню завантаження %1 лише для читання для %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Показати меню завантаження</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Оновлення меню завантаження відхилено: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Не вдалося отримати список меню завантаження.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Запасний варіант меню завантаження відхилено: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Результат списку меню завантаження відкинуто: обсяг змінився, поки виконувався запит.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Пункт меню: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Ідентифікатор запису: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Це підменю.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Завантажує конфігурацію: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Зовнішній: вказує на інший диск або розділ.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Ядро: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Запис за замовчуванням: так</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Запис за замовчуванням: ні</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>За замовчуванням</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (підменю)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Завантажено %1 пункт%2 меню завантаження, лише для читання.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>У цьому обсязі немає menu.lst GRUB legacy; спробуємо меню завантаження grub.cfg GRUB лише для читання.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>На цьому диску не знайдено конфігурацію меню завантаження. Система може не мати меню завантаження GRUB, extlinux/syslinux або GRUB legacy, або його конфігурація розташована в іншому місці диска.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Конфігурація меню завантаження існує, але не містить жодного запису.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Не вдалося завантажити меню завантаження. Докладніше в журналах.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>за замовчуванням</translation>
+    </message>
+</context>
 </TS>

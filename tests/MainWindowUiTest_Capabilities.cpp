@@ -12,7 +12,7 @@ using namespace UiTestDetail;
 
 namespace {
 
-// A complete 15-key repair-target capability preamble with matching evidence
+// A complete 17-key repair-target capability preamble with matching evidence
 // lines, plus the backend section that names the module-build system.
 QString repairCapabilitiesPreamble(const QString &dkmsState, const QString &dkmsEvidence)
 {
@@ -26,6 +26,8 @@ QString repairCapabilitiesPreamble(const QString &dkmsState, const QString &dkms
         "Repair tool dkms: %1\n"
         "Repair tool display: available\n"
         "Repair tool gpu: available\n"
+        "Repair tool input-devices: available\n"
+        "Repair tool network: available\n"
         "Repair tool initramfs: available\n"
         "Repair tool efi: available\n"
         "Repair tool grub: available\n"
@@ -41,6 +43,8 @@ QString repairCapabilitiesPreamble(const QString &dkmsState, const QString &dkms
         "Repair capability evidence dkms: %2\n"
         "Repair capability evidence display: graphical.target present\n"
         "Repair capability evidence gpu: nvidia kernel module loaded\n"
+        "Repair capability evidence input-devices: input verified\n"
+        "Repair capability evidence network: NetworkManager|network verified\n"
         "Repair capability evidence initramfs: dracut executable present\n"
         "Repair capability evidence efi: grub-install present; ESP mount candidate: /boot/efi\n"
         "Repair capability evidence grub: grub-install present\n"
@@ -134,8 +138,8 @@ void MainWindowUiTest::capabilityRepairEvidenceParsesFromCache()
                                    QStringLiteral("akmods executable present; kernel 6.12.1 build tree present")),
         backendSection(QStringLiteral("akmods")));
 
-    // The 15 repair-tool keys all parse into rows.
-    QCOMPARE(capabilities.size(), 15);
+    // The 17 repair-tool keys all parse into rows.
+    QCOMPARE(capabilities.size(), 17);
 
     const Capability *dkms = moduleBuildCapability(capabilities);
     const Capability *grub = nullptr;
@@ -156,17 +160,19 @@ void MainWindowUiTest::capabilityRepairEvidenceParsesFromCache()
     QVERIFY(grub->available);
     QVERIFY(!extlinux->available);
 
-    // The module-build row names the target backend (akmods) but, when the tool
-    // is available, has no suggested package and is not installable (nothing is
-    // missing to install). Its Feature label reflects the akmods backend.
+    // The module-build row names the target backend (akmods); an available row
+    // carries the shared static package name (the round-106 capability-packages
+    // table — the Packages column names a package for every row) and is not
+    // installable (nothing is missing to install). Its Feature label reflects
+    // the akmods backend.
     QCOMPARE(dkms->command, QStringLiteral("akmods"));
     QCOMPARE(dkms->feature, QCoreApplication::translate("CapabilityChecker", "AKMODS rebuild"));
-    QVERIFY(dkms->packageName.isEmpty());
+    QCOMPARE(dkms->packageName, QStringLiteral("dkms"));
     QVERIFY(!dkms->installable);
     QVERIFY(dkms->targetScope);
 
     // A different backend token maps to its own command and its own Feature
-    // label; an available row again carries no installable package.
+    // label; an available row again carries the static package name.
     const QList<Capability> akmsCapabilities = CapabilityChecker::capabilitiesFromRepairEvidence(
         repairCapabilitiesPreamble(QStringLiteral("available"), QStringLiteral("akms executable present")),
         backendSection(QStringLiteral("akms")));
@@ -174,7 +180,7 @@ void MainWindowUiTest::capabilityRepairEvidenceParsesFromCache()
     QVERIFY(akms);
     QCOMPARE(akms->command, QStringLiteral("akms"));
     QCOMPARE(akms->feature, QCoreApplication::translate("CapabilityChecker", "AKMS rebuild"));
-    QVERIFY(akms->packageName.isEmpty());
+    QCOMPARE(akms->packageName, QStringLiteral("dkms"));
 
     // A missing build system names the build-system package (derived from the
     // family, since no binary was detected) and is installable ONLY when the
@@ -193,23 +199,27 @@ void MainWindowUiTest::capabilityRepairEvidenceParsesFromCache()
     QCOMPARE(missingDkms->packageName, QStringLiteral("akmods"));
     QVERIFY(missingDkms->installable);
 
-    // Item #4: without the helper's target-repo availability evidence the
-    // missing build-system row fails closed - no suggested package and no
-    // Install affordance (an install would otherwise fail "couldn't find
-    // package" when the target repo lacks the package).
+    // Item #4 + round 106 (ITEM 2): without the helper's target-repo
+    // availability evidence the missing build-system row still names the
+    // build-system package in the Packages column (the package that WOULD
+    // enable the build system) but fails closed with no Install affordance
+    // (an install would otherwise fail "couldn't find package" when the
+    // target repo lacks the package); the side-channel is absent, so no
+    // not-available caveat lands in the note.
     const QList<Capability> noRepoEvidence = CapabilityChecker::capabilitiesFromRepairEvidence(
         repairCapabilitiesPreamble(QStringLiteral("unavailable|reason:missing-akmods"),
                                    QStringLiteral("akmods not detected")),
         backendSection(QStringLiteral("none")));
     const Capability *noRepoDkms = moduleBuildCapability(noRepoEvidence);
     QVERIFY(noRepoDkms);
-    QVERIFY(noRepoDkms->packageName.isEmpty());
+    QCOMPARE(noRepoDkms->packageName, QStringLiteral("akmods"));
     QVERIFY(!noRepoDkms->installable);
 
     // A *-no-build-tree reason means the build system is present but the kernel
     // headers build tree is missing: no installable package is offered (the
     // headers package is surfaced as guidance instead, never a one-click
-    // "Install akmods" for the already-installed build system).
+    // "Install akmods" for the already-installed build system); the Packages
+    // column carries the shared static name.
     const QList<Capability> noBuildTree = CapabilityChecker::capabilitiesFromRepairEvidence(
         repairCapabilitiesPreamble(QStringLiteral("unavailable|reason:akmods-no-build-tree|param:6.20.1-300.fc44.x86_64"),
                                    QStringLiteral("akmods executable present; kernel 6.20.1 build tree missing")),
@@ -218,12 +228,12 @@ void MainWindowUiTest::capabilityRepairEvidenceParsesFromCache()
     QVERIFY(noBuildTreeDkms);
     QCOMPARE(noBuildTreeDkms->command, QStringLiteral("akmods"));
     QCOMPARE(noBuildTreeDkms->feature, QCoreApplication::translate("CapabilityChecker", "AKMODS rebuild"));
-    QVERIFY(noBuildTreeDkms->packageName.isEmpty());
+    QCOMPARE(noBuildTreeDkms->packageName, QStringLiteral("dkms"));
     QVERIFY(!noBuildTreeDkms->installable);
 }
 
 // (b) The running-host scope derives from the SAME `Repair tool <key>` evidence
-// as the repair target: both scopes render the same 15 repair-tool rows,
+// as the repair target: both scopes render the same 17 repair-tool rows,
 // differing only in the scope label ("Host") and targetScope=false.
 void MainWindowUiTest::capabilityHostEvidenceParsesFromCache()
 {
@@ -236,9 +246,9 @@ void MainWindowUiTest::capabilityHostEvidenceParsesFromCache()
     const QList<Capability> host = CapabilityChecker::capabilitiesFromRepairEvidence(
         preamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"), /*targetScope=*/false);
 
-    // Both scopes render the same 15 repair-tool rows.
-    QCOMPARE(target.size(), 15);
-    QCOMPARE(host.size(), 15);
+    // Both scopes render the same 17 repair-tool rows.
+    QCOMPARE(target.size(), 17);
+    QCOMPARE(host.size(), 17);
 
     for (int row = 0; row < target.size(); ++row) {
         const Capability &t = target.at(row);
@@ -267,14 +277,18 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
 {
     const QString backend = backendSection(QStringLiteral("dkms"));
 
-    // Missing tooling: both markers name their package and are installable.
+    // Missing tooling: both markers name their package and are installable
+    // only with the helper's proven install side-channel (round 141 — the
+    // fail-closed dkms pattern: a reason alone never offers an Install).
     const QString missingPreamble = repairCapabilitiesPreamble(
         QStringLiteral("available"), QStringLiteral("dkms executable present"))
         + QStringLiteral(
             "Storage lvm inspection: unavailable|reason:missing-lvm2\n"
             "Storage lvm inspection evidence: lvs\n"
             "Storage software raid: unavailable|reason:missing-mdadm\n"
-            "Storage software raid evidence: mdadm\n");
+            "Storage software raid evidence: mdadm\n"
+            "Repair capability evidence lvm-installable: lvm2|available\n"
+            "Repair capability evidence mdadm-installable: mdadm|available\n");
     const QList<Capability> missing = CapabilityChecker::capabilitiesFromRepairEvidence(
         missingPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
         /*targetScope=*/false);
@@ -290,7 +304,7 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
     }
     QVERIFY(lvm);
     QVERIFY(raid);
-    QCOMPARE(missing.size(), 17); // 15 repair tools + lvm + software raid
+    QCOMPARE(missing.size(), 19); // 17 repair tools + lvm + software raid
     QVERIFY(!lvm->available);
     QCOMPARE(lvm->command, QStringLiteral("lvs"));
     QCOMPARE(lvm->packageName, QStringLiteral("lvm2"));
@@ -318,7 +332,7 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
     }
     QVERIFY(targetLvm);
     QVERIFY(targetRaid);
-    QCOMPARE(missingTarget.size(), 17);
+    QCOMPARE(missingTarget.size(), 19);
     QVERIFY(!targetLvm->available);
     QCOMPARE(targetLvm->command, QStringLiteral("lvs"));
     QCOMPARE(targetLvm->packageName, QStringLiteral("lvm2"));
@@ -339,6 +353,31 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
             "Storage lvm inspection evidence: lvs present\n"
             "Storage software raid: available\n"
             "Storage software raid evidence: mdadm present\n");
+
+    // Round 141 (ITEM O1/O2): a missing row WITHOUT the helper's proven
+    // side-channel is NOT installable (the reason alone fails closed), and a
+    // proven |unavailable side-channel names the honest caveat in the Notes.
+    const QString unprovenPreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Storage lvm inspection: unavailable|reason:missing-lvm2\n"
+            "Storage lvm inspection evidence: lvs\n"
+            "Repair capability evidence lvm-installable: lvm2|unavailable\n");
+    const QList<Capability> unproven = CapabilityChecker::capabilitiesFromRepairEvidence(
+        unprovenPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
+        /*targetScope=*/false);
+    const Capability *unprovenLvm = nullptr;
+    for (const Capability &capability : unproven) {
+        if (capability.feature == QCoreApplication::translate("CapabilityChecker", "LVM inspection")) {
+            unprovenLvm = &capability;
+        }
+    }
+    QVERIFY(unprovenLvm);
+    QVERIFY(!unprovenLvm->installable);
+    QVERIFY(unprovenLvm->note.contains(
+        QCoreApplication::translate("CapabilityChecker",
+            "Packages not available in this system's repositories")));
+
     const QList<Capability> available = CapabilityChecker::capabilitiesFromRepairEvidence(
         availablePreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
         /*targetScope=*/false);
@@ -355,11 +394,11 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
     QVERIFY(availableRaid);
     QVERIFY(availableLvm->available);
     QCOMPARE(availableLvm->command, QStringLiteral("lvs present"));
-    QVERIFY(availableLvm->packageName.isEmpty());
+    QCOMPARE(availableLvm->packageName, QStringLiteral("lvm2"));
     QVERIFY(!availableLvm->installable);
     QVERIFY(availableRaid->available);
     QCOMPARE(availableRaid->command, QStringLiteral("mdadm present"));
-    QVERIFY(availableRaid->packageName.isEmpty());
+    QCOMPARE(availableRaid->packageName, QStringLiteral("mdadm"));
     QVERIFY(!availableRaid->installable);
 
     // The same available preamble in repair-target scope surfaces the two
@@ -386,12 +425,12 @@ void MainWindowUiTest::capabilityStorageStackRowsParseFromCache()
     QVERIFY(availableTargetRaid->targetScope);
 
     // A preamble without any storage markers (e.g. an older cache) keeps
-    // exactly the 15 tool rows in both scopes.
+    // exactly the 17 tool rows in both scopes.
     const QList<Capability> target = CapabilityChecker::capabilitiesFromRepairEvidence(
         repairCapabilitiesPreamble(QStringLiteral("available"),
                                    QStringLiteral("dkms executable present")),
         backend);
-    QCOMPARE(target.size(), 15);
+    QCOMPARE(target.size(), 17);
 }
 
 // (c) The Boot capabilities table populates from the cached evidence even when
@@ -433,8 +472,8 @@ void MainWindowUiTest::capabilityTablePopulatesFromCacheWithoutProbe()
 
     const int dkmsRow = rowForCommand(window, QStringLiteral("akmods"));
     QVERIFY2(dkmsRow >= 0, "the module-build row must be present in the target table");
-    QCOMPARE(cellText(window, dkmsRow, 4), QString()); // available -> no suggested package
-    QCOMPARE(cellText(window, dkmsRow, 3), QStringLiteral("Available"));
+    QCOMPARE(cellText(window, dkmsRow, 4), QStringLiteral("dkms")); // available -> the static package name
+    QCOMPARE(cellText(window, dkmsRow, 3), QStringLiteral("Installed"));
 
     // Host scope: the same cached akmods row is rendered from the cache (never
     // the poisoned "arch" host distro) with the Host scope label.
@@ -443,7 +482,7 @@ void MainWindowUiTest::capabilityTablePopulatesFromCacheWithoutProbe()
 
     const int hostDkmsRow = rowForCommand(window, QStringLiteral("akmods"));
     QVERIFY2(hostDkmsRow >= 0, "the module-build row must be present in the host table");
-    QCOMPARE(cellText(window, hostDkmsRow, 3), QStringLiteral("Available"));
+    QCOMPARE(cellText(window, hostDkmsRow, 3), QStringLiteral("Installed"));
     QCOMPARE(cellText(window, hostDkmsRow, 2), QCoreApplication::translate("CapabilityChecker", "Host"));
 
     if (previous.isNull()) {
@@ -628,10 +667,13 @@ void MainWindowUiTest::repairDetailPaneShowsMissingToolGuidance()
              "the Run action must stay disabled while the akms build tree is missing");
 }
 
-// (h) Non-available capability evidence must surface as "Missing" rows in both
+// (h) Non-available capability evidence must surface as status rows in both
 // scopes rather than being dropped: an `unavailable|reason:missing-update-extlinux`
 // repair-tool line stays in the repair-target table and renders identically in
 // the host scope (same single-truth evidence).
+// Round 149 (ITEM 3): an explicit refusal renders "Unavailable" (the fourth
+// status light — a gate with the honest reason, nothing is missing to install),
+// never "Missing".
 void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
 {
     MainWindow window;
@@ -656,16 +698,24 @@ void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
     const QString extlinuxFeature = QCoreApplication::translate("CapabilityChecker", "extlinux configuration");
     const int extlinuxRow = rowForFeature(window, extlinuxFeature);
     QVERIFY2(extlinuxRow >= 0, "the unavailable extlinux row must be present in the target table");
-    QCOMPARE(cellText(window, extlinuxRow, 3), QStringLiteral("Missing"));
-    QCOMPARE(cellText(window, extlinuxRow, 5), QStringLiteral("reason:missing-update-extlinux"));
+    QCOMPARE(cellText(window, extlinuxRow, 3), QStringLiteral("Unavailable"));
+    // Round 105 (ITEM 3): the Notes cell carries the shared static note with
+    // the machine-readable reason folded in.
+    QCOMPARE(cellText(window, extlinuxRow, 5),
+             QCoreApplication::translate("CapabilityChecker",
+                 "Alternative bootloader; on this system extlinux is not part of the default boot path")
+                 + QStringLiteral(" (reason:missing-update-extlinux)"));
 
     window.m_capabilityScopeSelector->setCurrentIndex(1); // Host
     window.refreshCapabilities();
 
     const int hostExtlinuxRow = rowForFeature(window, extlinuxFeature);
     QVERIFY2(hostExtlinuxRow >= 0, "the unavailable extlinux row must be present in the host table");
-    QCOMPARE(cellText(window, hostExtlinuxRow, 3), QStringLiteral("Missing"));
-    QCOMPARE(cellText(window, hostExtlinuxRow, 5), QStringLiteral("reason:missing-update-extlinux"));
+    QCOMPARE(cellText(window, hostExtlinuxRow, 3), QStringLiteral("Unavailable"));
+    QCOMPARE(cellText(window, hostExtlinuxRow, 5),
+             QCoreApplication::translate("CapabilityChecker",
+                 "Alternative bootloader; on this system extlinux is not part of the default boot path")
+                 + QStringLiteral(" (reason:missing-update-extlinux)"));
     QCOMPARE(cellText(window, hostExtlinuxRow, 2), QCoreApplication::translate("CapabilityChecker", "Host"));
 }
 
@@ -1027,40 +1077,51 @@ void MainWindowUiTest::capabilitySnapshotRollbackRowsParseFromCache()
             "Snapshot rollback evidence: btrfs root /dev/sda2; top-level @.snapshots\n");
     const QList<Capability> available = CapabilityChecker::capabilitiesFromRepairEvidence(
         availablePreamble, backend);
-    QCOMPARE(available.size(), 16); // 15 repair tools + snapshot rollback
+    QCOMPARE(available.size(), 18); // 17 repair tools + snapshot rollback
     const Capability *availableSnap = snapshotCapabilityOf(available);
     QVERIFY(availableSnap);
     QVERIFY(availableSnap->available);
-    QVERIFY(availableSnap->packageName.isEmpty());
+    QCOMPARE(availableSnap->packageName, QStringLiteral("btrfs-progs"));
     QVERIFY(!availableSnap->installable);
     QVERIFY(availableSnap->targetScope);
     QCOMPARE(availableSnap->scope, QCoreApplication::translate("CapabilityChecker", "Repair target"));
     QCOMPARE(availableSnap->command, QStringLiteral("btrfs root /dev/sda2; top-level @.snapshots"));
 
-    // Repair-target scope, missing btrfs-progs: unavailable, installable
-    // btrfs-progs.
+    // Repair-target scope, missing btrfs-progs: unavailable, installable with
+    // the helper's proven FULL-ENABLE side-channel (round 143 — one guarded
+    // verb installs the missing packages + the configuration + the first
+    // snapshot; the Packages cell names the COMPLETE derived package set, and
+    // the reason alone never offers an Install).
     const QString missingTargetPreamble = repairCapabilitiesPreamble(
         QStringLiteral("available"), QStringLiteral("dkms executable present"))
         + QStringLiteral(
             "Snapshot rollback: unavailable|reason:missing-btrfs-progs\n"
-            "Snapshot rollback evidence: btrfs\n");
+            "Snapshot rollback evidence: btrfs\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
     const QList<Capability> missingTarget = CapabilityChecker::capabilitiesFromRepairEvidence(
         missingTargetPreamble, backend);
     const Capability *missingTargetSnap = snapshotCapabilityOf(missingTarget);
     QVERIFY(missingTargetSnap);
     QVERIFY(!missingTargetSnap->available);
     QCOMPARE(missingTargetSnap->command, QStringLiteral("btrfs"));
-    QCOMPARE(missingTargetSnap->packageName, QStringLiteral("btrfs-progs"));
+    QCOMPARE(missingTargetSnap->packageName, QStringLiteral("snapper btrfs-progs"));
     QVERIFY(missingTargetSnap->installable);
+    QVERIFY(missingTargetSnap->snapshotFullEnable);
+    QVERIFY(!missingTargetSnap->enableSnapshotConfig);
     QVERIFY(missingTargetSnap->targetScope);
-    QCOMPARE(missingTargetSnap->note, QStringLiteral("reason:missing-btrfs-progs"));
+    QCOMPARE(missingTargetSnap->note,
+             QCoreApplication::translate("CapabilityChecker",
+                 "Optional Btrfs snapshot rollback support")
+                 + QStringLiteral(" (reason:missing-btrfs-progs)"));
 
-    // Running-host scope, missing snapper: unavailable, installable snapper.
+    // Running-host scope, missing snapper: unavailable, installable with the
+    // proven FULL-ENABLE side-channel (the complete derived package set).
     const QString missingHostPreamble = repairCapabilitiesPreamble(
         QStringLiteral("available"), QStringLiteral("dkms executable present"))
         + QStringLiteral(
             "Host snapshot rollback: unavailable|reason:missing-snapper\n"
-            "Host snapshot rollback evidence: snapper\n");
+            "Host snapshot rollback evidence: snapper\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
     const QList<Capability> missingHost = CapabilityChecker::capabilitiesFromRepairEvidence(
         missingHostPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
         /*targetScope=*/false);
@@ -1068,11 +1129,38 @@ void MainWindowUiTest::capabilitySnapshotRollbackRowsParseFromCache()
     QVERIFY(missingHostSnap);
     QVERIFY(!missingHostSnap->available);
     QCOMPARE(missingHostSnap->command, QStringLiteral("snapper"));
-    QCOMPARE(missingHostSnap->packageName, QStringLiteral("snapper"));
+    QCOMPARE(missingHostSnap->packageName, QStringLiteral("snapper btrfs-progs"));
     QVERIFY(missingHostSnap->installable);
+    QVERIFY(missingHostSnap->snapshotFullEnable);
+    QVERIFY(!missingHostSnap->enableSnapshotConfig);
     QVERIFY(!missingHostSnap->targetScope);
     QCOMPARE(missingHostSnap->scope, QCoreApplication::translate("CapabilityChecker", "Host"));
-    QCOMPARE(missingHostSnap->note, QStringLiteral("reason:missing-snapper"));
+    QCOMPARE(missingHostSnap->note,
+             QCoreApplication::translate("CapabilityChecker",
+                 "Optional Btrfs snapshot rollback support")
+                 + QStringLiteral(" (reason:missing-snapper)"));
+
+    // Round 141 (ITEM O1/O2): a running-host row whose reason is
+    // missing-btrfs-progs names the full derived set (never snapper alone —
+    // the pre-round-141 mapping offered an Install of the wrong package) and
+    // is installable only with the proven full-enable channel.
+    const QString missingHostBtrfsPreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Host snapshot rollback: unavailable|reason:missing-btrfs-progs\n"
+            "Host snapshot rollback evidence: snapper\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
+    const QList<Capability> missingHostBtrfs = CapabilityChecker::capabilitiesFromRepairEvidence(
+        missingHostBtrfsPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
+        /*targetScope=*/false);
+    const Capability *missingHostBtrfsSnap = snapshotCapabilityOf(missingHostBtrfs);
+    QVERIFY(missingHostBtrfsSnap);
+    QVERIFY(!missingHostBtrfsSnap->available);
+    QCOMPARE(missingHostBtrfsSnap->packageName, QStringLiteral("snapper btrfs-progs"));
+    QVERIFY(missingHostBtrfsSnap->installable);
+    QVERIFY(missingHostBtrfsSnap->snapshotFullEnable);
+    QVERIFY(!missingHostBtrfsSnap->targetScope);
+
 
     // Running-host scope, available: the row is present and not installable.
     const QString availableHostPreamble = repairCapabilitiesPreamble(
@@ -1086,16 +1174,96 @@ void MainWindowUiTest::capabilitySnapshotRollbackRowsParseFromCache()
     const Capability *availableHostSnap = snapshotCapabilityOf(availableHost);
     QVERIFY(availableHostSnap);
     QVERIFY(availableHostSnap->available);
-    QVERIFY(availableHostSnap->packageName.isEmpty());
+    QCOMPARE(availableHostSnap->packageName, QStringLiteral("snapper"));
     QVERIFY(!availableHostSnap->installable);
     QVERIFY(!availableHostSnap->targetScope);
 
-    // No snapshot marker (an older cache) keeps exactly the 15 tool rows.
+    // Round 142/143 (the SNAPSHOT ENABLEMENT): a running-host row whose
+    // reason is no-snapper-root-config (the packages present, the config
+    // missing) surfaces the Enable action — gated on the helper's proven
+    // `snapshot-config-enableable` side-channel, never on the reason alone.
+    // Round 143 (ITEM T2): the Packages cell names the COMPLETE derived
+    // package set (every package the enablement needs).
+    const QString hostNoConfigPreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Host snapshot rollback: unavailable|reason:no-snapper-root-config\n"
+            "Host snapshot rollback evidence: snapper\n"
+            "Repair capability evidence snapshot-config-enableable: available\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
+    const QList<Capability> hostNoConfig = CapabilityChecker::capabilitiesFromRepairEvidence(
+        hostNoConfigPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
+        /*targetScope=*/false);
+    const Capability *hostNoConfigSnap = snapshotCapabilityOf(hostNoConfig);
+    QVERIFY(hostNoConfigSnap);
+    QVERIFY(!hostNoConfigSnap->available);
+    QVERIFY(!hostNoConfigSnap->installable);
+    QVERIFY(hostNoConfigSnap->enableSnapshotConfig);
+    QVERIFY(!hostNoConfigSnap->snapshotFullEnable);
+    QCOMPARE(hostNoConfigSnap->packageName, QStringLiteral("snapper btrfs-progs"));
+
+    // The reason alone (no side-channel) never offers the Enable action.
+    const QString hostNoConfigNoChannelPreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Host snapshot rollback: unavailable|reason:no-snapper-root-config\n"
+            "Host snapshot rollback evidence: snapper\n");
+    const QList<Capability> hostNoConfigNoChannel = CapabilityChecker::capabilitiesFromRepairEvidence(
+        hostNoConfigNoChannelPreamble, backend, QCoreApplication::translate("CapabilityChecker", "Host"),
+        /*targetScope=*/false);
+    const Capability *hostNoConfigNoChannelSnap = snapshotCapabilityOf(hostNoConfigNoChannel);
+    QVERIFY(hostNoConfigNoChannelSnap);
+    QVERIFY(!hostNoConfigNoChannelSnap->enableSnapshotConfig);
+
+    // Round 142/143: a repair-target row whose reason is no-snapshot-store and
+    // whose scope's own snapper + btrfs are proven present surfaces the
+    // Enable action (the complete derived package set names the Packages
+    // cell).
+    const QString targetNoStorePreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Snapshot rollback: unavailable|reason:no-snapshot-store\n"
+            "Snapshot rollback evidence: btrfs\n"
+            "Repair capability evidence snapshot-config-enableable: available\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
+    const QList<Capability> targetNoStore = CapabilityChecker::capabilitiesFromRepairEvidence(
+        targetNoStorePreamble, backend);
+    const Capability *targetNoStoreSnap = snapshotCapabilityOf(targetNoStore);
+    QVERIFY(targetNoStoreSnap);
+    QVERIFY(!targetNoStoreSnap->available);
+    QVERIFY(!targetNoStoreSnap->installable);
+    QVERIFY(targetNoStoreSnap->enableSnapshotConfig);
+    QVERIFY(!targetNoStoreSnap->snapshotFullEnable);
+    QVERIFY(targetNoStoreSnap->targetScope);
+    QCOMPARE(targetNoStoreSnap->packageName, QStringLiteral("snapper btrfs-progs"));
+
+    // Round 143: the same reason with the target's snapper MISSING surfaces
+    // the full-enable Install instead of the Enable label (the
+    // snapshot-enable-packages channel without snapshot-config-enableable —
+    // one guarded verb installs the missing package and completes the
+    // enablement).
+    const QString targetNoStoreNoSnapperPreamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"))
+        + QStringLiteral(
+            "Snapshot rollback: unavailable|reason:no-snapshot-store\n"
+            "Snapshot rollback evidence: btrfs\n"
+            "Repair capability evidence snapshot-enable-packages: snapper btrfs-progs|available\n");
+    const QList<Capability> targetNoStoreNoSnapper = CapabilityChecker::capabilitiesFromRepairEvidence(
+        targetNoStoreNoSnapperPreamble, backend);
+    const Capability *targetNoStoreNoSnapperSnap = snapshotCapabilityOf(targetNoStoreNoSnapper);
+    QVERIFY(targetNoStoreNoSnapperSnap);
+    QVERIFY(!targetNoStoreNoSnapperSnap->available);
+    QCOMPARE(targetNoStoreNoSnapperSnap->packageName, QStringLiteral("snapper btrfs-progs"));
+    QVERIFY(targetNoStoreNoSnapperSnap->installable);
+    QVERIFY(targetNoStoreNoSnapperSnap->snapshotFullEnable);
+    QVERIFY(!targetNoStoreNoSnapperSnap->enableSnapshotConfig);
+
+    // No snapshot marker (an older cache) keeps exactly the 17 tool rows.
     const QList<Capability> plain = CapabilityChecker::capabilitiesFromRepairEvidence(
         repairCapabilitiesPreamble(QStringLiteral("available"),
                                    QStringLiteral("dkms executable present")),
         backend);
-    QCOMPARE(plain.size(), 15);
+    QCOMPARE(plain.size(), 17);
     QVERIFY(!snapshotCapabilityOf(plain));
 }
 
@@ -1227,14 +1395,18 @@ void MainWindowUiTest::capabilityTableSortKeepsInstallWidgetsOnTheirRows()
     prepareRepairScope(window);
 
     // Two installable missing rows (lvm + mdadm) so the Action column carries
-    // two Install widgets with distinct payloads.
+    // two Install widgets with distinct payloads (round 141: installable
+    // requires the helper's proven side-channels, so the fixture carries
+    // them).
     QString preamble = repairCapabilitiesPreamble(
         QStringLiteral("available"), QStringLiteral("dkms executable present"));
     preamble += QStringLiteral(
         "Storage lvm inspection: unavailable|reason:missing-lvm2\n"
         "Storage lvm inspection evidence: lvs is not installed\n"
         "Storage software raid: unavailable|reason:missing-mdadm\n"
-        "Storage software raid evidence: mdadm is not installed\n");
+        "Storage software raid evidence: mdadm is not installed\n"
+        "Repair capability evidence lvm-installable: lvm2|available\n"
+        "Repair capability evidence mdadm-installable: mdadm|available\n");
     window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"), preamble);
     window.m_targetDiagnosticCache.insert(QStringLiteral("backend"),
                                           backendSection(QStringLiteral("dkms")));
@@ -1263,6 +1435,10 @@ void MainWindowUiTest::capabilityTableSortKeepsInstallWidgetsOnTheirRows()
     QVERIFY(window.m_capabilityTable->cellWidget(raidBefore, 6) != nullptr);
     QCOMPARE(window.m_capabilityTable->item(lvmBefore, 4)->text(), QStringLiteral("lvm2"));
     QCOMPARE(window.m_capabilityTable->item(raidBefore, 4)->text(), QStringLiteral("mdadm"));
+    // Round 105 (ITEM 2): a missing-but-installable row renders "Available"
+    // (available to install) — the third vocabulary state.
+    QCOMPARE(window.m_capabilityTable->item(lvmBefore, 3)->text(), QStringLiteral("Available"));
+    QCOMPARE(window.m_capabilityTable->item(raidBefore, 3)->text(), QStringLiteral("Available"));
 
     // Sort by the Feature column (a header click sets the indicator; the table
     // applies the sort and the handler re-attaches the cell widgets after it).

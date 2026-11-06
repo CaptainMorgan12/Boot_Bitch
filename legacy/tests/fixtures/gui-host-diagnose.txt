@@ -13,6 +13,8 @@ Repair tool upgrade: available
 Repair tool dkms: unavailable|DKMS is not installed in the target
 Repair tool display: available
 Repair tool gpu: unavailable|reason:virtual-gpu-no-discrete-driver
+Repair tool input-devices: unavailable|reason:no-input-evidence
+Repair tool network: unavailable|reason:network-unavailable
 Repair tool initramfs: available
 Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available
 Repair tool grub: available
@@ -29,6 +31,8 @@ Repair capability evidence upgrade: /usr/bin/dpkg and /usr/bin/apt-get present
 Repair capability evidence dkms: dkms executable missing
 Repair capability evidence display: legacy SysV: sysvinit display manager kdm (/usr/bin/kdm, init script /etc/init.d/kdm)
 Repair capability evidence gpu: GPU driver stack: expected=none; mismatch=none; boot=kernel; dkms=none
+Repair capability evidence input-devices: no input evidence
+Repair capability evidence network: none|network unavailable (no-adapter)
 Repair capability evidence initramfs: initramfs backend: initramfs-tools; update-initramfs and mkinitramfs present
 Repair capability evidence efi: grub-install present; ESP mount candidate: unresolved
 Repair capability evidence grub: update-grub present

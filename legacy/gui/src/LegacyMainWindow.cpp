@@ -33,6 +33,7 @@
 #include <qpixmap.h>
 #include <qpopupmenu.h>
 #include <qpushbutton.h>
+#include <qregexp.h>
 #include <qscrollbar.h>
 #include <qscrollview.h>
 #include <qsettings.h>
@@ -43,6 +44,19 @@
 #include <qtextedit.h>
 #include <qtextstream.h>
 #include <qtimer.h>
+#include <qwidgetlist.h>
+#include <string.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+// The raw X11 headers define the KeyPress/KeyRelease macros, which collide
+// with QEvent::KeyPress/KeyRelease (the round-152.7 compile trap — the
+// standard Qt practice is to undef them after the X includes).
+#ifdef KeyPress
+#undef KeyPress
+#endif
+#ifdef KeyRelease
+#undef KeyRelease
+#endif
 #include <qtoolbutton.h>
 #include <qtooltip.h>
 #include <qsignalmapper.h>
@@ -60,6 +74,7 @@
 #include <unistd.h>
 
 #include <string>
+#include <fstream>
 
 #ifndef LEGACY_VERSION
 #define LEGACY_VERSION "unknown"
@@ -133,6 +148,208 @@ private:
 namespace legacy {
 
 // The modal repair-result dialog. Its Close button stays disabled and Escape /
+// Round 152.7 (the third dispatch — the MAIN-WINDOW mechanism): the main
+// application window's WM_NORMAL_HINTS carry `program specified minimum size:
+// 820 by 600` — the PMinSize hint — and the KDE3 WM clamps its drag natively,
+// while the POPUPS' hints carry only PSize/PMaxSize (Qt 3.3.7 emits the
+// minimum for the main window but drops it for the dialogs — the round-152.6
+// xprop delta).  The fix replicates the MAIN window's mechanism on every
+// popup: an application-level Show-event filter writes the PMinSize hint
+// DIRECTLY with Xlib (XSetWMNormalHints on the top-level winId) so the WM
+// clamps every popup's drag natively at its floor — no post-drag race at
+// all.  The round-152.5 immediate clamp + the round-152.6 settle re-assert
+// stay as the backstop layers.
+class LegacyFlooredDialog;
+
+class PopupFloorHintFilter : public QObject
+{
+public:
+    explicit PopupFloorHintFilter(QWidget *mainWindow)
+        : m_mainWindow(mainWindow)
+    {
+    }
+
+    // Round 152.8 (the coordinator-approved fix): the deferred LAST-WRITER
+    // re-assert.  Qt3's OWN show-time hint emission (PSize/PMaxSize, never
+    // the minimum) runs AFTER this filter's Show interception and overwrites
+    // the PMinSize write — so every hinted popup is re-written on the next
+    // event-loop turn (the QTimer::singleShot(0) equivalent, armed through
+    // the owner window's slot — this class has no metaobject) and the
+    // PMinSize becomes the LAST writer, which the kwin honors.
+    void reassertPending()
+    {
+        while (!m_pending.isEmpty()) {
+            // QPtrList::takeFirst() is protected in Qt 3.3.7 — first() +
+            // removeFirst() is the public equivalent.
+            QWidget *widget = m_pending.first();
+            m_pending.removeFirst();
+            if (widget && widget->isVisible() && widget->isTopLevel()) {
+                applyFloorHint(widget);
+            }
+        }
+    }
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event)
+    {
+        if (!object || !object->isWidgetType()) {
+            return false;
+        }
+        // The Qt3 qobject_cast macro is unavailable in this TU; the event
+        // receiver IS the widget itself.
+        QWidget *widget = static_cast<QWidget *>(object);
+        if (!widget->isTopLevel() || widget == m_mainWindow) {
+            return false;
+        }
+        if (event->type() == QEvent::Show) {
+            applyFloorHint(widget);
+            m_pending.append(widget);
+            QTimer::singleShot(0, m_mainWindow,
+                               SLOT(reassertPopupFloorHints()));
+        } else if (event->type() == QEvent::Resize
+                   && !m_pending.contains(widget)) {
+            // Round 152.9 (the live xprop delta): Qt 3.3.7 RE-EMITS its own
+            // hints (PSize/PMaxSize, never the minimum) on EVERY resize, so
+            // during an interactive drag each ConfigureNotify rewrote the
+            // hints and the one-shot re-assert was overwritten mid-drag —
+            // the kwin then clamped against no minimum.  The deferred
+            // last-writer therefore re-arms on every resize event.
+            m_pending.append(widget);
+            QTimer::singleShot(0, m_mainWindow,
+                               SLOT(reassertPopupFloorHints()));
+        }
+        return false;
+    }
+
+private:
+    // Defined out-of-line AFTER the LegacyFlooredDialog class (the floored
+    // accessors need the complete type; the filter class precedes it).
+    void applyFloorHint(QWidget *widget);
+
+    QWidget *m_mainWindow;
+    QWidgetList m_pending;
+};
+
+// Qt 3.3.7 does NOT clamp a programmatic resize() against setMinimumSize (the
+// minimum is a WM-hint concept only), so on the rig's Xvfb (no WM) a
+// resize(1,1) yields exactly 1x1 — the user's shrinkable-to-a-sliver popups.
+// The floor is therefore enforced TWICE: setMinimumSize keeps the WM hint for
+// the KDE drag, and the resizeEvent clamp below enforces it on every
+// programmatic path (a same-size re-assert never re-enters, so it cannot
+// loop).  Keep it simple: setFloor(w, h) once after construction.
+class LegacyFlooredDialog : public QDialog
+{
+public:
+    LegacyFlooredDialog(QWidget *parent, const char *name)
+        : QDialog(parent, name, true), m_floorWidth(0), m_floorHeight(0),
+          m_hugBody(0), m_hugChrome(0), m_verticalLocked(true)
+    {
+    }
+
+    void setFloor(int width, int height)
+    {
+        m_floorWidth = width;
+        m_floorHeight = height;
+        setMinimumSize(width, height);
+    }
+
+    // Round 153.1 (the user's Etch findings): the filter must read the REAL
+    // per-class floors (Qt3's minimumSize() reads back empty for these
+    // dialogs — the round-152.7 observation — which left the generic 60%
+    // fallback as the WM floor), and the vertical lock must be opt-in (the
+    // confirms lock the height to the content — the modern min=max clamp;
+    // the terminal keeps the free-vertical exception).
+    int floorWidth() const { return m_floorWidth; }
+    int floorHeight() const { return m_floorHeight; }
+    bool verticalLocked() const { return m_verticalLocked; }
+    void setVerticalLocked(bool locked) { m_verticalLocked = locked; }
+
+    // Round 153 (the modern popup contract on the Etch scale): the optional
+    // content hug — the height follows the re-wrapped body as the width
+    // changes (the Qt3 equivalent of the modern ContentHuggingDialogFilter;
+    // Qt3's QLabel has no heightForWidth, so the tight height is the
+    // QFontMetrics boundingRect at the current width + the chrome).
+    void setHug(QLabel *body, int chrome)
+    {
+        m_hugBody = body;
+        m_hugChrome = chrome;
+    }
+
+    void applyHug()
+    {
+        if (!m_hugBody || m_hugChrome <= 0 || !layout()) {
+            return;
+        }
+        const int margins = 2 * layout()->margin();
+        const int available = QMAX(40, width() - margins);
+        QFontMetrics metrics(m_hugBody->fontMetrics());
+        const QRect wrapped = metrics.boundingRect(
+            0, 0, available, 1000000,
+            Qt::WordBreak | Qt::AlignLeft | Qt::AlignTop, m_hugBody->text());
+        const int tight = QMAX(metrics.lineSpacing(), wrapped.height())
+            + m_hugChrome;
+        const int target = QMAX(m_floorHeight, tight);
+        if (height() != target) {
+            resize(width(), target);
+        }
+    }
+
+    // Round 152.6 (the REAL-desktop root cause): Qt 3.3.7 does NOT propagate
+    // setMinimumSize into the WM's PMinSize hints (rig-measured: the hints
+    // carry only the PSize line), so the KDE3 drag has no lower bound — and
+    // during an INTERACTIVE drag the WM ignores the client's mid-drag resize
+    // requests, so the immediate clamp below is lost while the drag runs and
+    // nothing re-asserts after it ends (the modern settle-timer class).  The
+    // re-assert therefore runs BOTH immediately (the programmatic path) and
+    // 180 ms after the last resizeEvent (the drag-settle path) through the
+    // owner window's existing slot.
+    void reassertFloor()
+    {
+        if (m_floorWidth <= 0 || m_floorHeight <= 0) {
+            return;
+        }
+        if (width() < m_floorWidth || height() < m_floorHeight) {
+            resize(m_floorWidth, m_floorHeight);
+        }
+        // Round 153: the drag-end re-assert also re-hugs (the height follows
+        // the re-wrapped content at the settled width).
+        applyHug();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event)
+    {
+        QDialog::resizeEvent(event);
+        if (m_floorWidth <= 0 || m_floorHeight <= 0) {
+            return;
+        }
+        if (width() < m_floorWidth || height() < m_floorHeight) {
+            resize(QMAX(width(), m_floorWidth), QMAX(height(), m_floorHeight));
+        }
+        // Round 153: the width change re-wraps the body — the height follows
+        // the content immediately (the hug), the settle re-assert below
+        // covers the drag-end.
+        applyHug();
+        // Arm the drag-settle re-assert on the owner window's slot (the
+        // dialogs are children of LegacyMainWindow, which owns the
+        // reassertPopupFloors slot — no new metaobject class needed).
+        if (parentWidget()) {
+            QTimer::singleShot(180, parentWidget(), SLOT(reassertPopupFloors()));
+        }
+    }
+
+private:
+    int m_floorWidth;
+    int m_floorHeight;
+    // Round 153 (the content hug): the wrapping body + the fixed chrome
+    // (margins + spacing + the button row + the fixed rows).
+    QLabel *m_hugBody;
+    int m_hugChrome;
+    // Round 153.1 (the vertical lock): the confirms lock the height to the
+    // content (the modern min=max clamp via the WM hints).
+    bool m_verticalLocked;
+};
+
 // the window-close are refused until the owner calls setCloseAllowed(true), so
 // the dialog cannot be silently dismissed while its helper request is still
 // running and strand the busy indicator or the completion feedback (modern
@@ -140,11 +357,11 @@ namespace legacy {
 // until the request completes). Qt 3.3.7's QDialog::accept()/reject() are
 // non-virtual slots, so the two widget-level dismissal paths (the Escape key
 // and the window-close) are gated here in keyPressEvent()/closeEvent() instead.
-class RepairResultDialog : public QDialog
+class RepairResultDialog : public LegacyFlooredDialog
 {
 public:
     RepairResultDialog(QWidget *parent, const char *name)
-        : QDialog(parent, name, true), m_closeAllowed(false)
+        : LegacyFlooredDialog(parent, name), m_closeAllowed(false)
     {
     }
 
@@ -177,6 +394,71 @@ protected:
 private:
     bool m_closeAllowed;
 };
+
+// Round 153.1 (the out-of-line definition — the complete LegacyFlooredDialog
+// type is available here): the per-class floors come from the dialog's OWN
+// accessors (Qt3's minimumSize() reads back empty for these dialogs — the
+// round-152.7 observation — which had left the generic 60% fallback as the
+// WM floor and let the user shrink past the button row).  The generic 60%
+// fallback stays for the non-floored popups (the native boxes).  The
+// VERTICAL LOCK (the modern min=max clamp translated to Xlib) pins the
+// height to the hugged content for the locked dialogs — the user can only
+// drag the WIDTH and the height follows the re-wrap (the 153 hug recompute
+// re-syncs this max on every resize).
+void PopupFloorHintFilter::applyFloorHint(QWidget *widget)
+{
+    int minW = 0;
+    int minH = 0;
+    bool locked = false;
+    LegacyFlooredDialog *floored = 0;
+    const QString popupName = widget->name();
+    if (popupName == QString::fromLatin1("legacy-hidden-input")
+        || popupName == QString::fromLatin1("legacy-confirm")
+        || popupName == QString::fromLatin1("legacy-usage-help")
+        || popupName == QString::fromLatin1("legacy-repair-result")
+        || popupName == QString::fromLatin1("smoke-floor-terminal")
+        || popupName == QString::fromLatin1("legacy-info")
+        || popupName == QString::fromLatin1("legacy-config-editor")
+        || popupName == QString::fromLatin1("legacy-add-note")
+        || popupName == QString::fromLatin1("legacy-file-copy-destination")
+        || popupName == QString::fromLatin1("legacy-file-copy-browse")
+        || popupName == QString::fromLatin1("legacy-unlock-passphrase")) {
+        floored = static_cast<LegacyFlooredDialog *>(widget);
+    }
+    if (floored) {
+        minW = floored->floorWidth();
+        minH = floored->floorHeight();
+        locked = floored->verticalLocked();
+    }
+    if (minW <= 0) {
+        minW = QMAX(1, widget->width() * 60 / 100);
+    }
+    if (minH <= 0) {
+        minH = QMAX(1, widget->height() * 60 / 100);
+    }
+    XSizeHints hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.flags = PMinSize;
+    hints.min_width = minW;
+    hints.min_height = minH;
+    if (locked) {
+        hints.flags |= PMaxSize;
+        hints.max_width = 32767;
+        hints.max_height = widget->height();
+    }
+    XSetWMNormalHints(QPaintDevice::x11AppDisplay(), widget->winId(), &hints);
+    // The instrumented evidence (round-152.7): every applied hint lands
+    // in /tmp/r1527-floor-hints.log for the rig verification.
+    FILE *evidence = fopen("/tmp/r1527-floor-hints.log", "a");
+    if (evidence) {
+        fprintf(evidence, "hint %s open=%dx%d min=%dx%d locked=%d\n",
+                widget->name() ? (const char *)widget->name() : "?",
+                widget->width(), widget->height(), minW, minH, locked ? 1 : 0);
+        fclose(evidence);
+    }
+}
+
+
 
 // Round 31 (Debian Legacy #9): the in-field greyed placeholder — the Qt 3.3.7
 // stand-in for the modern setPlaceholderText().  QLineEdit and QTextEdit have
@@ -507,6 +789,10 @@ const int kDeleteLogConfirmTextWidth = 320;
 // text — see showHelpPopup()); shorter texts share the frame, longer ones
 // scroll inside it.
 const int kHelpPopupWidth = 480;
+// Round 108 (0.2.30 #10, modern parity): the progressive diagnostic assembly
+// buffer bounds (see feedProgressiveDiagnosticLine()).
+const int kProgressiveMaxLines = 8192;
+const int kProgressiveDropChunk = 2048;
 
 // Round 54 (E4a): the modern session-log retention report.  The legacy GUI
 // does not prune its session logs (modern-only behavior), but the string is
@@ -531,6 +817,10 @@ const int kHeaderIconSize = 32;
 // modern host card uses (30 px artwork in a 34 px box); the legacy card shows
 // the extracted 32x32 atlas PNG 1:1.
 const int kShieldBadgeSize = 32;
+// Round 103: the tab info-button circle-i badge renders at the modern
+// contextHelpButton's 18 px box; the button shows the extracted 18x18 atlas
+// PNG 1:1 (legacyInfoPixmap), falling back to the plain "i" text.
+const int kInfoIconSize = 18;
 
 // The global busy indicator (modern parity) sits in a reserved row below the
 // guarded-repair badge and animates by cycling 0..3 trailing dots with a
@@ -688,12 +978,25 @@ const ToolSpec toolSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair GPU driver"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. "
-      "Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). "
-      "A separate one-boot nomodeset fallback reaches a console on a broken driver."),
+      "Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver."),
       "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false,
       0,
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Choose a GPU driver repair action from the evidence.") },
+    { "input-devices", "input-devices",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Input device repair"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair input devices"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules."),
+      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false, 0,
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Choose an input device repair action from the evidence.") },
+    { "network", "network",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity repair"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair network"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. "
+      "Live connectivity changes never touch the interface holding the default route."),
+      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false, 0,
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Choose a network repair action from the evidence.") },
     { "efi", "",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "EFI / UKI bootloader"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair EFI / UKI"),
@@ -758,7 +1061,14 @@ const RepairStageTitle repairStageTitles[] = {
     { "extlinux", QT_TRANSLATE_NOOP("LegacyMainWindow", "extlinux configuration") },
     { "bootstack", QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot stack reconciliation") },
     { "host-default", QT_TRANSLATE_NOOP("LegacyMainWindow", "Make Default") },
-    { "install-host-package", QT_TRANSLATE_NOOP("LegacyMainWindow", "Install missing support package") }
+    { "install-host-package", QT_TRANSLATE_NOOP("LegacyMainWindow", "Install missing support package") },
+    // Round 102 (slice 3/4): the interactive repair tools get their friendly
+    // titles in the summary block too (the gpu/kernels rows previously
+    // rendered their raw keys there).
+    { "gpu", QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair") },
+    { "kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair") },
+    { "input-devices", QT_TRANSLATE_NOOP("LegacyMainWindow", "Input device repair") },
+    { "network", QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity repair") }
 };
 const int repairStageTitleCount = sizeof(repairStageTitles) / sizeof(repairStageTitles[0]);
 
@@ -984,6 +1294,28 @@ const DiagnosticSpec diagnosticSpecs[] = {
       "journal driver errors."),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "read-only GPU driver stack review") },
+    // Round 97: the input and network diagnostic entries sit directly BELOW
+    // the graphics driver stack diagnostic — matching the modern round-97
+    // reorder (UI presentation only, mirroring the repair-tool grouping).
+    { "input",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Input devices / keyboard"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Reviews the input device stack: detected keyboard/mouse/touchpad "
+      "devices and classes, the loaded, builtin, available and blacklisted "
+      "HID/keyboard kernel modules, bus-controller state, the keyboard "
+      "layout, the initramfs inclusion and the built-image keyboard-module "
+      "proof for the LUKS unlock prompt, plus recent boot evidence."),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "read-only input device and initramfs keyboard inspection") },
+    { "network",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Reviews the network stack: the detected config backend, adapters and "
+      "their bound drivers/modules, blacklist and firmware state, and the "
+      "running host's route, DNS and bounded reachability evidence, without "
+      "changing anything."),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "read-only network adapter and connectivity inspection") },
     { "errors",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot errors"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -1266,6 +1598,25 @@ bool legacyPackageProvidesCommand(const QString &package, const QString &command
 // against the TARGET's own apt sources is enforced by the helper's guarded
 // install-target-package verb (simulation-first, fail-closed) — never a host
 // apt-cache probe (hostPackageInstallable below stays host-only).
+// The machine-readable `reason:<key>` token of an unavailable capability
+// state (empty for `available`, English prose, or a state without a reason
+// key) — the shared derivation the install-suggestion helpers use.
+static QString legacyCapabilityReasonKey(const std::string &state)
+{
+    const QString s = QString::fromLatin1(state.c_str());
+    if (!s.startsWith(QString::fromLatin1("unavailable|"))) {
+        return QString::null;
+    }
+    const QString detail = s.mid(QString::fromLatin1("unavailable|").length())
+                               .stripWhiteSpace();
+    if (!detail.startsWith(QString::fromLatin1("reason:"))) {
+        return QString::null;
+    }
+    const QString reasonKey = detail.mid(QString::fromLatin1("reason:").length());
+    const int pipe = reasonKey.find(QString::fromLatin1("|"));
+    return pipe >= 0 ? reasonKey.left(pipe) : reasonKey;
+}
+
 QString legacyTargetInstallablePackage(const QString &key, const std::string &state)
 {
     if (key != QString::fromLatin1("dkms")) {
@@ -1296,16 +1647,105 @@ QString legacyTargetInstallablePackage(const QString &key, const std::string &st
     return QString::null;
 }
 
-// Round 48 (user request): the display row's target-scope installable package,
-// mirroring the modern CapabilityChecker display branch. The reason must be a
-// missing-display-manager reason AND the helper's proven side-channel
-// (`Repair capability evidence display-installable: <pkg>|available`) must
-// name the package — the suggestion is derived from the DETECTED family/
-// backends, never a hardcoded per-distro list. Fail closed otherwise.
-QString legacyTargetDisplayInstallablePackage(const QString &key,
-                                              const std::string &state,
-                                              const std::string &displaySideChannel)
+// ===== The shared capability -> package table (round 106) ==================
+// Loads data/capability-packages.tsv (the same canonical data file the modern
+// GUI embeds); staged into the Etch package at
+// /usr/share/boot-repair-legacy/capability-packages.tsv by
+// scripts/package-legacy.sh.  Rows: <key> TAB <family> TAB <packages>; the
+// legacy GUI resolves the Debian-family row (Etch is a Debian system) with
+// the "*" row as the fallback.  Package names are raw (never translated).
+static QMap<QString, QString> *capabilityPackagesTable()
 {
+    static QMap<QString, QString> table;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        const QString appDir = qApp->applicationDirPath();
+        QStringList candidates;
+        candidates << appDir
+            + QString::fromLatin1("/../share/boot-repair-legacy/capability-packages.tsv");
+        candidates << appDir + QString::fromLatin1("/capability-packages.tsv");
+        for (QStringList::ConstIterator it = candidates.begin();
+             it != candidates.end(); ++it) {
+            std::ifstream in((*it).local8Bit().data(), std::ios::binary);
+            if (!in) {
+                continue;
+            }
+            std::string line;
+            while (std::getline(in, line)) {
+                QString qline = QString::fromLatin1(line.c_str()).stripWhiteSpace();
+                if (qline.isEmpty()
+                    || qline.startsWith(QString::fromLatin1("#"))) {
+                    continue;
+                }
+                const QStringList columns =
+                    QStringList::split(QString::fromLatin1("\t"), qline);
+                if (columns.count() < 3 || columns[0].isEmpty()) {
+                    continue;
+                }
+                table.insert(columns[0].stripWhiteSpace()
+                                 + QString::fromLatin1("|")
+                                 + columns[1].stripWhiteSpace(),
+                             columns[2].stripWhiteSpace());
+            }
+            break;
+        }
+    }
+    return &table;
+}
+
+// The static Debian-family package set for one capability key (empty when the
+// table has no row for it): the exact "debian" row wins, "*" is the fallback.
+static QString legacyCapabilityStaticPackages(const QString &key)
+{
+    const QMap<QString, QString> *table = capabilityPackagesTable();
+    QMap<QString, QString>::ConstIterator it = table->find(
+        key + QString::fromLatin1("|debian"));
+    if (it != table->end()) {
+        return it.data();
+    }
+    it = table->find(key + QString::fromLatin1("|*"));
+    if (it != table->end()) {
+        return it.data();
+    }
+    return QString::null;
+}
+
+// Round 106 (ITEM 2): the generic proven side-channel parse — the package
+// name plus the availability suffix of a `<pkg>|available|unavailable`
+// evidence line (empty name or no separator -> no suggestion).  The Packages
+// column names the package regardless of the suffix; the Install gate uses
+// the |available proof.
+static QString legacySideChannelPackage(const std::string &sideChannel,
+                                        bool *provedAvailable)
+{
+    *provedAvailable = false;
+    const QString side =
+        QString::fromLatin1(sideChannel.c_str()).stripWhiteSpace();
+    const int separator = side.find(QString::fromLatin1("|"));
+    if (separator <= 0) {
+        return QString::null;
+    }
+    const QString name = side.left(separator).stripWhiteSpace();
+    if (name.isEmpty()) {
+        return QString::null;
+    }
+    *provedAvailable = side.mid(separator + 1).stripWhiteSpace()
+        == QString::fromLatin1("available");
+    return name;
+}
+
+// Round 106 (ITEM 2): the display row's suggested package name, read from the
+// helper's proven side-channel regardless of the availability suffix (the
+// Packages column names the package that WOULD enable the display manager
+// even when the helper proved it unavailable in the scope's repositories;
+// *provedAvailable reports the |available proof for the Install gate).
+QString legacyTargetDisplaySuggestedPackage(const QString &key,
+                                            const std::string &state,
+                                            const std::string &displaySideChannel,
+                                            bool *provedAvailable)
+{
+    *provedAvailable = false;
     if (key != QString::fromLatin1("display")) {
         return QString::null;
     }
@@ -1328,14 +1768,33 @@ QString legacyTargetDisplayInstallablePackage(const QString &key,
     }
     const QString sideChannel =
         QString::fromLatin1(displaySideChannel.c_str()).stripWhiteSpace();
-    const QString suffix = QString::fromLatin1("|available");
-    if (sideChannel.length() <= suffix.length()
-        || !sideChannel.endsWith(suffix)) {
+    const int separator = sideChannel.find(QString::fromLatin1("|"));
+    if (separator <= 0) {
         return QString::null;
     }
-    const QString package =
-        sideChannel.left(sideChannel.length() - suffix.length()).stripWhiteSpace();
-    return package.isEmpty() ? QString::null : package;
+    const QString name = sideChannel.left(separator).stripWhiteSpace();
+    if (name.isEmpty()) {
+        return QString::null;
+    }
+    *provedAvailable = sideChannel.mid(separator + 1).stripWhiteSpace()
+        == QString::fromLatin1("available");
+    return name;
+}
+
+// Round 48 (user request): the display row's target-scope installable package,
+// mirroring the modern CapabilityChecker display branch. The reason must be a
+// missing-display-manager reason AND the helper's proven side-channel
+// (`Repair capability evidence display-installable: <pkg>|available`) must
+// name the package — the suggestion is derived from the DETECTED family/
+// backends, never a hardcoded per-distro list. Fail closed otherwise.
+QString legacyTargetDisplayInstallablePackage(const QString &key,
+                                              const std::string &state,
+                                              const std::string &displaySideChannel)
+{
+    bool provedAvailable = false;
+    const QString name = legacyTargetDisplaySuggestedPackage(
+        key, state, displaySideChannel, &provedAvailable);
+    return provedAvailable ? name : QString::null;
 }
 
 // One read-only host-capability probe row. The consolidated table mirrors the
@@ -1359,7 +1818,7 @@ const CapabilitySpec capabilitySpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "File system repair"), "fsck",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "e2fsprogs",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Complete package configuration"), "dpkg",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dpkg",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration in the selected repair system") },
@@ -1374,28 +1833,28 @@ const CapabilitySpec capabilitySpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulates the APT transaction, then applies a safe upgrade") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS rebuild"), "dkms",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dkms",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the system uses a module build system") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Graphical login / display manager"), "update-rc.d",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "sysv-rc",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the configured display manager and its startup link without starting the GUI") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair"), "lspci",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "pciutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only capability on this frontend; the GPU-driver repair runs through the helper") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair through the helper's interactive menu") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "update-initramfs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "initramfs-tools",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds the initramfs images for the installed kernels") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration"), "update-grub",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "grub",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, every entry preserved)") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "extlinux configuration"), "extlinux",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "syslinux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; on this system extlinux is not part of the default boot path") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot stack reconciliation"), "chroot",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "coreutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair"), "modprobe",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "module-init-tools",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "LVM inspection"), "lvs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "lvm2",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Optional LVM storage-stack support") },
@@ -1412,6 +1871,66 @@ const CapabilitySpec capabilitySpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "The ported helper falls back to a guarded plain chroot when unshare is absent") }
 };
 const int capabilitySpecCount = sizeof(capabilitySpecs) / sizeof(capabilitySpecs[0]);
+
+// Round 105 (ITEM 3): the per-tool-key capability note the Repair-target scope
+// (and the host scope's input/network evidence rows) render — the SAME shared
+// strings the modern CapabilityChecker::capabilityNoteForTool carries (the
+// ui-parity-qt3 capability-notes block locks the two sources).  The host
+// scope's static probe rows carry the identical wording through
+// capabilitySpecs above; an unavailable tool's machine-readable reason is
+// folded in at the render sites, exactly like the modern Notes column.
+struct CapabilityNoteSpec {
+    const char *key;
+    const char *note;
+};
+const CapabilityNoteSpec capabilityNoteSpecs[] = {
+    { "validate",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair") },
+    { "filesystem",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors") },
+    { "dpkg",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration in the selected repair system") },
+    { "fixbroken",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies after the simulation-first safety preflight") },
+    { "aptupdate",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrading installed packages") },
+    { "upgrade",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulates the APT transaction, then applies a safe upgrade") },
+    { "kernels",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it") },
+    { "dkms",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the system uses a module build system") },
+    { "initramfs",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds the initramfs images for the installed kernels") },
+    { "display",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the configured display manager and its startup link without starting the GUI") },
+    { "gpu",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair through the helper's interactive menu") },
+    { "input-devices",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven keyboard, mouse and touchpad repair through the helper's interactive menu") },
+    { "network",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven network repair through the helper's interactive menu; live connectivity changes never touch the interface holding the default route") },
+    { "efi",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs the EFI / UKI boot path for UEFI systems") },
+    { "grub",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, every entry preserved)") },
+    { "extlinux",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; on this system extlinux is not part of the default boot path") },
+    { "bootstack",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration") }
+};
+const int capabilityNoteSpecCount = sizeof(capabilityNoteSpecs) / sizeof(capabilityNoteSpecs[0]);
+
+QString capabilityNoteForToolKey(const QString &key)
+{
+    for (int i = 0; i < capabilityNoteSpecCount; ++i) {
+        if (key == QString::fromLatin1(capabilityNoteSpecs[i].key)) {
+            return qApp->translate("LegacyMainWindow",
+                                           capabilityNoteSpecs[i].note);
+        }
+    }
+    return QString::null;
+}
 
 // The 7th (Action) column shows the per-row install affordance as TEXT (Qt3
 // QTable cannot host a per-row cell widget, so there is no clickable per-row
@@ -1482,7 +2001,7 @@ static const char *const kDialogButtonLabels[] = {
 QString promptHiddenPassword(QWidget *parent, const QString &title,
                              const QString &text, bool *ok)
 {
-    QDialog dialog(parent, "legacy-hidden-input", true);
+    LegacyFlooredDialog dialog(parent, "legacy-hidden-input");
     dialog.setCaption(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *label = new QLabel(text, &dialog);
@@ -1511,7 +2030,21 @@ QString promptHiddenPassword(QWidget *parent, const QString &title,
     QObject::connect(cancel, SIGNAL(clicked()), &dialog, SLOT(reject()));
     QObject::connect(accept, SIGNAL(clicked()), &dialog, SLOT(accept()));
     QObject::connect(edit, SIGNAL(returnPressed()), &dialog, SLOT(accept()));
-    dialog.setMinimumWidth(360);
+    // Round 153 (the modern popup contract, Etch scale): the floor is the
+    // CONTENT minimum (the button row fully visible + the margins), floored
+    // at the translated modern drag floor (470 x 360/560, the round-153
+    // translation formula); the hug keeps the height on the re-wrapped body
+    // so the button row always hugs the bottom edge.
+    // The floor must never drop below the historical 360 opening clamp (the
+    // min drives the opening when the hint is smaller — the round-153 drill
+    // caught the 302 content floor widening the opening to the 480 cap).
+    const int translatedFloor = 470 * 360 / 560;
+    const int contentFloor = QMAX(360, QMAX(buttons->sizeHint().width()
+                                  + 2 * layout->margin(), translatedFloor));
+    dialog.setFloor(contentFloor, 120);
+    const int hiddenChrome = 2 * layout->margin() + 2 * layout->spacing()
+        + edit->sizeHint().height() + buttons->sizeHint().height();
+    dialog.setHug(label, hiddenChrome);
     dialog.setMaximumWidth(kHiddenInputMaximumWidth + 40);
 
     if (dialog.exec() != QDialog::Accepted) {
@@ -1558,7 +2091,7 @@ bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
                     int maxTextWidth = kHiddenInputMaximumWidth,
                     bool noIsDefault = false)
 {
-    QDialog dialog(parent, "legacy-confirm", true);
+    LegacyFlooredDialog dialog(parent, "legacy-confirm");
     dialog.setCaption(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *label = new QLabel(text, &dialog);
@@ -1606,7 +2139,18 @@ bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
     buttons->addWidget(noButton);
     QObject::connect(noButton, SIGNAL(clicked()), &dialog, SLOT(reject()));
     QObject::connect(yesButton, SIGNAL(clicked()), &dialog, SLOT(accept()));
-    dialog.setMinimumWidth(360);
+    // Round 153 (the modern popup contract, Etch scale): the floor is the
+    // CONTENT minimum — the button row fully visible at the bottom — floored
+    // at the translated modern drag floor (470 x 360/560, the round-153
+    // translation formula); the hug keeps the height on the re-wrapped body
+    // with no dead gap below the buttons and the title top-pegged.
+    // The floor must never drop below the historical 360 opening clamp (the
+    // min drives the opening when the hint is smaller — the round-153 drill
+    // caught the 302 content floor widening the opening to the 480 cap).
+    const int translatedFloor = 470 * 360 / 560;
+    const int contentFloor = QMAX(360, QMAX(buttons->sizeHint().width()
+                                  + 2 * layout->margin(), translatedFloor));
+    dialog.setFloor(contentFloor, 120);
     if (maxTextWidth != kHiddenInputMaximumWidth) {
         // The explicitly-sized call: size the dialog to the requested width
         // (the round-32 note above). The body height is the text wrapped at
@@ -1620,8 +2164,19 @@ bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
         const int chromeHeight = 2 * layout->margin() + layout->spacing()
             + buttons->sizeHint().height();
         dialog.setFixedSize(maxTextWidth + 40, bodyHeight + chromeHeight);
+        // Round 153 (the modern popup contract, Etch scale): the
+        // explicitly-pinned dialogs (the delete-log confirm, the round-34
+        // fixed-column shape) are the NAMED fixed-size dialogs — their
+        // fixed size IS the correct behavior, so the floor is the FULL fixed
+        // size (the drag clamps at it; the buttons can never clip).
+        dialog.setFloor(maxTextWidth + 40, bodyHeight + chromeHeight);
     } else {
         dialog.setMaximumWidth(kHiddenInputMaximumWidth + 40);
+        // Round 153: the default-width confirm hugs the re-wrapped body (the
+        // explicit-width branch keeps its fixed size by design — named).
+        const int confirmChrome = 2 * layout->margin() + layout->spacing()
+            + buttons->sizeHint().height();
+        dialog.setHug(label, confirmChrome);
     }
     return dialog.exec() == QDialog::Accepted;
 }
@@ -2023,6 +2578,47 @@ bool repairTranscriptHasChangedStatus(const ParsedTranscript &parsed)
     return false;
 }
 
+// Ported from MainWindow::repairChangeStatusIsUnchanged plus the round-98
+// abort classification: a status is an ABORT status when it is a proven
+// unchanged with a `<tool>-aborted` reason (the interactive menu's Abort
+// option: `unchanged|reason:input-aborted` and friends, helper exit 0).  The
+// session is aborted, so the result must render with the aborted framing and
+// a truthful tail — never a ✓ success, never a bare no-op.
+bool repairChangeStatusIsAbort(const std::string &status)
+{
+    return startsWithToken(status, "unchanged|reason:")
+        && status.size() >= std::strlen("-aborted")
+        && status.compare(status.size() - std::strlen("-aborted"),
+                          std::strlen("-aborted"), "-aborted") == 0;
+}
+
+// Ported from MainWindow::repairTranscriptHasAbortStatus: any change status
+// in the transcript carries the `<tool>-aborted` reason.
+bool repairTranscriptHasAbortStatus(const ParsedTranscript &parsed)
+{
+    for (std::size_t i = 0; i < parsed.changeStatuses.size(); ++i) {
+        if (repairChangeStatusIsAbort(parsed.changeStatuses[i].second)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Ported from MainWindow::repairTranscriptChangedStageCount: the distinct
+// changed-stage count of the transcript (the count the menu-abort summary
+// tail names).
+int repairTranscriptChangedStageCount(const ParsedTranscript &parsed)
+{
+    int changed = 0;
+    for (std::size_t i = 0; i < parsed.changeStatuses.size(); ++i) {
+        const std::string &state = parsed.changeStatuses[i].second;
+        if (state == "changed" || startsWithToken(state, "changed|")) {
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 // The last change-status state for one key ("" when absent).
 std::string changeStatusOf(const ParsedTranscript &parsed, const std::string &key)
 {
@@ -2302,15 +2898,21 @@ void LegacyMainWindow::accumulateRepairPlanInvalidation(const ParsedTranscript &
 
 // Ported from MainWindow::repairToolSerializesBaselineSection: the sections
 // with a helper-side `--evidence` consumer. The legacy helper's
-// store_evidence_baseline accepts exactly kernel, gpu, display, uki, grub,
-// boot-evidence and report; the individual repair path serializes the gpu
-// baseline as `--evidence gpu` (the helper routes it to GPU_BASELINE_B64, the
-// same store the modern runGpuRepairSession feeds via --gpu-baseline) and
-// report has no consumer, so only this set is serialized, exactly like modern.
+// store_evidence_baseline accepts exactly kernel, gpu, input, network,
+// display, uki, grub, boot-evidence and report; the individual repair path
+// serializes the gpu baseline as `--evidence gpu` (the helper routes it to
+// GPU_BASELINE_B64, the same store the modern runGpuRepairSession feeds via
+// --gpu-baseline), the input/network sessions as `--evidence input` /
+// `--evidence network` (INPUT_BASELINE_B64 / NETWORK_BASELINE_B64, the same
+// stores the modern runInputDevicesRepairSession/runNetworkRepairSession
+// feed via --input-baseline/--network-baseline), and report has no consumer,
+// so only this set is serialized, exactly like modern.
 bool repairToolSerializesBaselineSection(const QString &section)
 {
     return section == QString::fromLatin1("kernel")
         || section == QString::fromLatin1("gpu")
+        || section == QString::fromLatin1("input")
+        || section == QString::fromLatin1("network")
         || section == QString::fromLatin1("display")
         || section == QString::fromLatin1("uki")
         || section == QString::fromLatin1("grub")
@@ -2603,6 +3205,46 @@ QPixmap legacyShieldPixmap()
     return QPixmap();
 }
 
+// Round 103: loads the packaged tab info-button circle-i badge — the
+// MONOCHROME semantic asset extracted from the shared modern icon atlas
+// (resources/icons/atlas/info.svg, the #333 circle with the lowercase-i stem
+// and dot, rendered to the shipped PNG by
+// legacy/gui/data/make-info-icon.py; the same asset the modern
+// contextHelpButton renders through themedIcon("help-contextual")) — with the
+// same graceful fallback chain as legacyShieldPixmap().  A null pixmap lets
+// the info button keep the plain "i" text.
+QPixmap legacyInfoPixmap()
+{
+    QStringList candidates;
+    candidates.append(QString::fromLatin1(
+        "/usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"));
+    if (qApp) {
+        const QString appDir = qApp->applicationDirPath();
+        candidates.append(appDir
+            + QString::fromLatin1("/../share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"));
+        candidates.append(appDir
+            + QString::fromLatin1("/data/boot-repair-legacy-info-18x18.png"));
+    }
+    for (QStringList::ConstIterator it = candidates.begin(); it != candidates.end(); ++it) {
+        if (!QFile::exists(*it)) {
+            continue;
+        }
+        QImage image(*it);
+        if (image.isNull()) {
+            continue;
+        }
+        if (image.width() != kInfoIconSize || image.height() != kInfoIconSize) {
+            image = image.smoothScale(kInfoIconSize, kInfoIconSize,
+                                      QImage::ScaleMin);
+        }
+        QPixmap pixmap(image);
+        if (!pixmap.isNull()) {
+            return pixmap;
+        }
+    }
+    return QPixmap();
+}
+
 // True when a failed command transcript actually shows a sudo session problem
 // (expired timestamp, no tty for a prompt, rejected password). A mere
 // "sudo:" substring in unrelated target log output must not drop the cached
@@ -2827,6 +3469,34 @@ QStringList unreadableSettingsFiles()
     return files;
 }
 
+// Round 124 (0.2.30 #10): the stale-settings class.  A root-run GUI session
+// (sudo preserves HOME) writes ~/.qt/<group>rc as ROOT with mode 0600 — the
+// desktop user can then neither read nor write the file, so every key in it
+// reads as ABSENT (the in-code defaults) and every save silently fails.  The
+// two plan stages whose defaultChecked is false ('Upgrade installed packages
+// (adaptive APT simulation)' and 'Restore graphical login manager') therefore
+// appeared to never persist, while 'Repair file system errors (read-only check
+// first)' (default true) "persisted" by default alone — the user's exact
+// symptom pair.  The user's directive: DELETE the unreadable initial settings
+// file so the fresh start uses clean defaults and the next save creates a
+// user-owned file.  Only files under the user's own ~/.qt directory are
+// candidates; QFile::remove succeeds only when that directory is writable, so
+// an unwritable directory keeps the file and the constructor's existing
+// warning stays the report.  Called BEFORE the first QSettings group read so
+// the removal is what the load observes.
+QStringList removeUnreadableLegacySettingsFiles()
+{
+    QStringList removed;
+    const QStringList unreadable = unreadableSettingsFiles();
+    for (QStringList::ConstIterator it = unreadable.begin();
+         it != unreadable.end(); ++it) {
+        if (QFile::remove(*it)) {
+            removed.append(*it);
+        }
+    }
+    return removed;
+}
+
 void LegacyMainWindow::loadRepairDiagnosticMap()
 {
     const QString appDir = qApp->applicationDirPath();
@@ -2858,6 +3528,25 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_helpMenu(0),
       m_wrapLogsMenuValid(false),
       m_wrapLogsMenuId(-1),
+      m_bootEntriesScopeLabel(0),
+      m_bootEntriesStatusLabel(0),
+      m_bootEntriesViewCombo(0),
+      m_bootEntriesTable(0),
+      m_bootMenuTable(0),
+      m_bootEntriesDetails(0),
+      m_bootEntriesLoaded(false),
+      m_bootEntriesBootCurrent(QString::null),
+      m_bootEntriesBootOrder(QString::null),
+      m_bootMenuLoaded(false),
+      m_bootMenuUsedGrub2(false),
+      m_bootMenuConfigPath(QString::null),
+      m_bootMenuDefaultEntry(QString::null),
+      m_bootMenuRequestVerb(QString::null),
+      m_bootEntriesScopeKey(QString::null),
+      m_bootEntriesRequestKey(QString::null),
+      m_bootMenuRequestKey(QString::null),
+      m_smokeBootEntriesOk(false),
+      m_smokeBootMenuOk(false),
       m_logFilterCombo(0),
       m_configCombo(0),
       m_deviceList(0),
@@ -2875,6 +3564,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_showNonLinuxCheck(0),
       m_showRemovableCheck(0),
       m_showEncryptedCheck(0),
+      m_showSquashfsLoopsCheck(0),
       m_autoRefreshCheck(0),
       m_priorLogBanner(0),
       m_headerTitle(0),
@@ -2910,6 +3600,12 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_planHugPending(false),
       m_planHugContentHeight(0),
       m_repairPage(0),
+      m_systemsPage(0),
+      m_diagnosticsPage(0),
+      m_bootEntriesPage(0),
+      m_fileCopyPage(0),
+      m_logPage(0),
+      m_settingsPage(0),
       m_toolTitle(0),
       m_toolDescription(0),
       m_toolPlanStatus(0),
@@ -3026,6 +3722,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_repairPlanPhase(RepairPlanIdle),
       m_pendingDiagnostic(false),
       m_pendingQuiet(false),
+      m_progressiveFrameStart(-1),
       m_pendingUnlock(false),
       m_pendingConfig(false),
       m_pendingShell(false),
@@ -3037,6 +3734,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_showNonLinux(true),
       m_showRemovable(true),
       m_showEncrypted(true),
+      m_showSquashfsLoops(false),
       m_logWrapEnabled(true),
       m_autoRefreshEnabled(true),
       m_pendingConfigWrite(false),
@@ -3044,6 +3742,10 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_commitPending(false),
       m_smokeMode(false),
       m_smokeStep(0),
+      m_smokePopupFloorOk(false),
+      m_smokePopupFloorReport(QString::null),
+      m_smokePopupFloorExpect(QString::null),
+      m_popupFloorHintFilter(0),
       m_smokeDiagnoseOk(false),
       m_smokeValidateOk(false),
       m_shellScopeHost(false),
@@ -3063,6 +3765,11 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     // visible at the 1024x768 contract size; the layouts only need a modest
     // floor below it.
     setMinimumSize(820, 600);
+    // Round 152.7 (the MAIN-window mechanism on every popup): the Show-event
+    // filter writes the PMinSize hint directly for every top-level except
+    // this window (its own minimum already reaches the hints).
+    m_popupFloorHintFilter = new PopupFloorHintFilter(this);
+    qApp->installEventFilter(m_popupFloorHintFilter);
 
     // Global header, mirroring the modern Qt6 window: packaged icon, the
     // 1.65x bold "Boot Bitch" title, the subtle recovery subtitle and the
@@ -3159,15 +3866,28 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     m_tabs = new QTabWidget(central);
     mainLayout->addWidget(m_tabs, 1);
     setCentralWidget(central);
-    m_tabs->addTab(buildTargetsTab(), tr("Systems"));
-    m_tabs->addTab(buildDiagnosticsTab(), tr("Diagnostics"));
+    m_systemsPage = buildTargetsTab();
+    m_tabs->addTab(m_systemsPage, tr("Systems"));
+    m_diagnosticsPage = buildDiagnosticsTab();
+    m_tabs->addTab(m_diagnosticsPage, tr("Diagnostics"));
+    // Round 117 (0.2.30 #7): the read-only UEFI firmware boot-entries tab
+    // (modern parity — the modern tab sits between Diagnostics and Repair).
+    // Round 125 (0.2.30 #27): the tab is DYNAMIC — applyBootEntriesTabVisibility
+    // removes it until the cached diagnostics report the efi/grub/extlinux
+    // capability (modern bootEntriesTabVisible() parity).  It is added here so
+    // the page exists (the first updateActionStates() below applies the gate).
+    m_bootEntriesPage = buildBootEntriesTab();
+    m_tabs->addTab(m_bootEntriesPage, tr("EFI boot entries"));
     m_repairPage = buildActionsTab();
     m_tabs->addTab(m_repairPage, tr("Repair"));
     m_chrootTab = buildChrootShellTab();
     m_tabs->addTab(m_chrootTab, tr("Chroot Shell"));
-    m_tabs->addTab(buildFileCopyTab(), tr("File Copy"));
-    m_tabs->addTab(buildLogTab(), tr("Logs"));
-    m_tabs->addTab(buildSettingsTab(), tr("Settings"));
+    m_fileCopyPage = buildFileCopyTab();
+    m_tabs->addTab(m_fileCopyPage, tr("File Copy"));
+    m_logPage = buildLogTab();
+    m_tabs->addTab(m_logPage, tr("Logs"));
+    m_settingsPage = buildSettingsTab();
+    m_tabs->addTab(m_settingsPage, tr("Settings"));
     // Round 21 (splitter hug): a deferred plan hug (a Settings stage toggle
     // while the Repair page was hidden) re-applies once the Repair page
     // becomes current and its layouts activated for real — Qt3 does not
@@ -3209,12 +3929,17 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
         "committed (or Host Maintenance is active) and diagnostics report their "
         "capability line."));
     if (!legacySmokeSettingsIsolation()) {
+        // Round 124 (0.2.30 #10): loadLegacySettings already REMOVED every
+        // removable unreadable stale settings file; only files that could not
+        // be removed (an unwritable ~/.qt) remain in this list — warn with
+        // the accurate remedy.
         const QStringList unreadable = unreadableSettingsFiles();
         for (QStringList::ConstIterator it = unreadable.begin();
              it != unreadable.end(); ++it) {
             appendLog(tr(
-                "WARNING: the saved GUI settings file %1 cannot be read; its "
-                "options read as their defaults, not as the saved values.").arg(*it));
+                "WARNING: the saved GUI settings file %1 cannot be read or "
+                "removed; its options read as their defaults. Remove it (or "
+                "make ~/.qt writable) so saved settings can persist again.").arg(*it));
         }
         // Record where Qt 3.3.7 will read/write the Full Repair preference
         // (the per-user ~/.qt location, forced User scope via setPath), and
@@ -3399,6 +4124,15 @@ QWidget *LegacyMainWindow::makeHelpButton(QWidget *parent, const QString &title,
     button->setText(QString::fromLatin1("i"));
     button->setAutoRaise(true);
     button->setFixedSize(18, 18);
+    // Round 103: the tab info button renders the rasterized monochrome
+    // circle-i from the modern icon atlas (legacyInfoPixmap) when the
+    // packaged PNG is present; the plain "i" text above stays as the
+    // graceful fallback when it is missing.
+    const QPixmap infoPixmap = legacyInfoPixmap();
+    if (!infoPixmap.isNull()) {
+        button->setIconSet(QIconSet(infoPixmap));
+        button->setText(QString::fromLatin1(""));
+    }
     if (!m_helpSignalMapper) {
         m_helpSignalMapper = new QSignalMapper(this);
         connect(m_helpSignalMapper, SIGNAL(mapped(const QString &)),
@@ -3442,7 +4176,7 @@ void LegacyMainWindow::showHelpPopup(const QString &href)
         referenceText = text;
     }
 
-    QDialog dialog(this, "legacy-info", true);
+    LegacyFlooredDialog dialog(this, "legacy-info");
     dialog.setCaption(title.isEmpty()
                           ? tr("Information") : title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
@@ -3483,6 +4217,9 @@ void LegacyMainWindow::showHelpPopup(const QString &href)
     const int referenceHeight = 10 + referenceBodyHeight + 8
                               + close->sizeHint().height() + 10;
     dialog.setFixedSize(kHelpPopupWidth, referenceHeight);
+    // Round 153.2 (the complete audit): the info popup is a NAMED
+    // fixed-size dialog — the floor is the full fixed size (the immutable).
+    dialog.setFloor(kHelpPopupWidth, referenceHeight);
     dialog.exec();
 }
 
@@ -3556,29 +4293,29 @@ void LegacyMainWindow::buildMenus()
 
 void LegacyMainWindow::showSystemsTab()
 {
-    if (m_tabs) {
-        m_tabs->setCurrentPage(0);
+    if (m_tabs && m_systemsPage) {
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_systemsPage));
     }
 }
 
 void LegacyMainWindow::showDiagnosticsTab()
 {
-    if (m_tabs) {
-        m_tabs->setCurrentPage(1);
+    if (m_tabs && m_diagnosticsPage) {
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_diagnosticsPage));
     }
 }
 
 void LegacyMainWindow::showLogsTab()
 {
-    if (m_tabs) {
-        m_tabs->setCurrentPage(5);
+    if (m_tabs && m_logPage) {
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_logPage));
     }
 }
 
 void LegacyMainWindow::showSettingsTab()
 {
-    if (m_tabs) {
-        m_tabs->setCurrentPage(6);
+    if (m_tabs && m_settingsPage) {
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_settingsPage));
     }
 }
 
@@ -3704,7 +4441,7 @@ void LegacyMainWindow::lockAdministratorSession()
 // is width-constrained and word-wrapped (Qt3 has no QLabel::setWordWrap).
 void LegacyMainWindow::showUsageHelp()
 {
-    QDialog dialog(this, "legacy-usage-help", true);
+    LegacyFlooredDialog dialog(this, "legacy-usage-help");
     dialog.setCaption(tr("Using Boot Bitch"));
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *text = new QLabel(tr(
@@ -3732,7 +4469,10 @@ void LegacyMainWindow::showUsageHelp()
     close->setDefault(true);
     buttons->addWidget(close);
     QObject::connect(close, SIGNAL(clicked()), &dialog, SLOT(accept()));
-    dialog.setMinimumWidth(360);
+    // Round 153 (the modern popup contract, Etch scale): the floor's HEIGHT
+    // is content-derived — the Close button row (the measured bottom 267) +
+    // the margin, so the buttons never clip at the floor.
+    dialog.setFloor(360, 280);
     dialog.exec();
 }
 
@@ -4110,6 +4850,7 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
             this, SLOT(diagnosticSelectionChanged()));
     const std::vector<std::string> diagKeys = legacy::diagnosticKeys();
     m_diagKeyByTitle.clear();
+    m_diagRowByKey.clear();
     // Qt3 prepends a plain insertion when sorting is disabled, so every item is
     // chained after the previous one (the after-form constructor) to keep the
     // legacy::diagnosticKeys() order.
@@ -4121,6 +4862,11 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
         const QString title = diagnosticTitle(key);
         m_diagKeyByTitle.insert(title, key);
         lastDiagnostic = new QListViewItem(m_diagnosticList, lastDiagnostic, title);
+        // Round 124 (0.2.30 #9): the key -> row map is the ONLY identity used
+        // by the selected-key resolution and the running-row marker — the
+        // rendered title text may carry the transient marker and must never
+        // be the lookup identity (the round-118 marker bug).
+        m_diagRowByKey.insert(key, lastDiagnostic);
     }
     if (m_diagnosticList->firstChild()) {
         m_diagnosticList->setSelected(m_diagnosticList->firstChild(), true);
@@ -4208,6 +4954,848 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     splitter->setSizes(sizes);
     layout->addWidget(splitter, 1);
     return page;
+}
+
+// ---------------------------------------------------------------------------
+// Boot entries tab (round 117, 0.2.30 #7): the read-only UEFI firmware
+// boot-entries view — modern EFI boot entries firmware-section parity.  The
+// helper's existing efi-list verb (ported) is the only data source; the
+// modern edit/save semantics (reorder, rename, delete, EFI-/UKI Restore)
+// stay out of scope.  On a BIOS-only host (Etch) the helper fails closed with
+// its efibootmgr reason and the tab shows the honest failure.
+// ---------------------------------------------------------------------------
+
+// Maps the helper's role token to the human-readable "what booting this entry
+// does" label shown in the Boots column (modern bootEntryBootsLabel parity;
+// the raw role stays visible in the details pane).
+QString LegacyMainWindow::bootEntryBootsLabel(const QString &role)
+{
+    if (role.lower() == QString::fromLatin1("loader")
+        || role.lower() == QString::fromLatin1("shim")) {
+        return tr("GRUB menu");
+    }
+    if (role.lower() == QString::fromLatin1("uki")) {
+        return tr("Direct (UKI)");
+    }
+    if (role.lower() == QString::fromLatin1("wfai")) {
+        return tr("Network");
+    }
+    if (role.lower() == QString::fromLatin1("fallback")) {
+        return tr("Fallback");
+    }
+    if (role.lower() == QString::fromLatin1("fallback-device-path")) {
+        return tr("Firmware");
+    }
+    return tr("Other");
+}
+
+// The read-only details text for one parsed firmware entry (modern
+// bootEntryDetailsText parity; the role, PARTUUID and drive model are
+// deliberately kept out of the minimal table columns).
+QString LegacyMainWindow::bootEntryDetailsText(const LegacyBootEntryRow &row,
+                                               bool isCurrent)
+{
+    QStringList lines;
+    lines.append(tr("Boot %1").arg(row.id));
+    lines.append(tr("Label: %1").arg(row.label));
+    lines.append(tr("Loader: %1").arg(row.loader));
+    lines.append(tr("Class: %1").arg(row.entryClass));
+    lines.append(tr("Role: %1").arg(row.role));
+    lines.append(tr("PARTUUID: %1").arg(row.partuuid));
+    if (!row.deviceModel.isEmpty()) {
+        lines.append(tr("Drive: %1").arg(row.deviceModel));
+    }
+    lines.append(row.listed
+                     ? tr("Listed in BootOrder: yes")
+                     : tr("Listed in BootOrder: no (omitted by firmware)"));
+    if (isCurrent) {
+        lines.append(tr("This entry is currently active (BootCurrent)."));
+    }
+    return lines.join(QString::fromLatin1("\n"));
+}
+
+QWidget *LegacyMainWindow::buildBootEntriesTab()
+{
+    // Modern parity: heading row (title, help, scope label, the EFI Entries /
+    // Boot Menu view dropdown), the fail-closed status label, then the active
+    // read-only view above the read-only details pane.  No edit/save controls
+    // exist on the legacy; selecting a view loads it read-only.
+    QWidget *page = new QWidget(m_tabs);
+    QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
+
+    QHBoxLayout *headingRow = new QHBoxLayout(layout);
+    headingRow->setSpacing(6);
+    QLabel *heading = makeSectionTitle(tr("EFI boot entries"), page);
+    heading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
+    headingRow->addWidget(heading);
+    headingRow->addWidget(makeHelpButton(page, tr("EFI boot entries"), tr(
+        "The UEFI firmware boot entries (the running host's NVRAM) are listed "
+        "read-only here. In Host Maintenance you see the running host's own "
+        "entries; with a repair target committed you see the NVRAM entries "
+        "whose partition points at that drive's EFI system partition. This "
+        "view never changes the firmware; a BIOS-only host (Etch) has no "
+        "firmware boot entries and lists none. The GRUB boot menu (the list "
+        "of kernels inside GRUB) is separate and is regenerated by the GRUB "
+        "or boot-stack repair.")));
+    headingRow->addStretch();
+    m_bootEntriesScopeLabel = new QLabel(tr("No scope selected"), page);
+    m_bootEntriesScopeLabel->setTextFormat(Qt::PlainText);
+    m_bootEntriesScopeLabel->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    headingRow->addWidget(m_bootEntriesScopeLabel, 0, Qt::AlignVCenter);
+    // Round 124 (0.2.30 #23): the modern-parity view selector replaces the
+    // round-117 Load Entries button — choosing a view loads it read-only
+    // (the legacy has no edit actions, so the dropdown IS the load trigger).
+    m_bootEntriesViewCombo = new QComboBox(page);
+    m_bootEntriesViewCombo->insertItem(tr("EFI Entries"));
+    m_bootEntriesViewCombo->insertItem(tr("Boot Menu"));
+    m_bootEntriesViewCombo->setCurrentItem(0);
+    m_bootEntriesViewCombo->setEnabled(false);
+    QToolTip::add(m_bootEntriesViewCombo, tr(
+        "Switch between the UEFI firmware entries and the read-only boot menu."));
+    connect(m_bootEntriesViewCombo, SIGNAL(activated(int)),
+            this, SLOT(bootEntriesViewChanged(int)));
+    headingRow->addWidget(m_bootEntriesViewCombo, 0, Qt::AlignVCenter);
+
+    m_bootEntriesStatusLabel = new QLabel(page);
+    m_bootEntriesStatusLabel->setTextFormat(Qt::PlainText);
+    m_bootEntriesStatusLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    layout->addWidget(m_bootEntriesStatusLabel);
+
+    // Qt3 has no QTableWidget; the CapabilityTable (the proven scrollable
+    // floor pattern) fills the same six-column Boot|Label|Loader|Boots|
+    // Class|Drive contract.  The row order is the firmware BootOrder, so the
+    // table deliberately never enables sorting, and it is read-only (no
+    // edit/save semantics on the legacy).
+    m_bootEntriesTable = new CapabilityTable(0, 6, page);
+    m_bootEntriesTable->setLeftMargin(0);
+    m_bootEntriesTable->setSelectionMode(QTable::SingleRow);
+    m_bootEntriesTable->setReadOnly(true);
+    m_bootEntriesTable->setSorting(false);
+    m_bootEntriesTable->setMinimumContentHeight(120);
+    const QString bootEntriesHeaders[] = {
+        tr("Boot"), tr("Label"), tr("Loader"), tr("Boots"), tr("Class"), tr("Drive")
+    };
+    for (int column = 0; column < 6; ++column) {
+        m_bootEntriesTable->horizontalHeader()->setLabel(
+            column, bootEntriesHeaders[column]);
+    }
+    m_bootEntriesTable->setColumnWidth(0, 90);
+    m_bootEntriesTable->setColumnWidth(1, 240);
+    m_bootEntriesTable->setColumnWidth(2, 260);
+    m_bootEntriesTable->setColumnWidth(3, 90);
+    m_bootEntriesTable->setColumnWidth(4, 90);
+    m_bootEntriesTable->setColumnStretchable(5, true);
+    QToolTip::add(m_bootEntriesTable, tr(
+        "The UEFI firmware boot entries in BootOrder, listed read-only."));
+    connect(m_bootEntriesTable, SIGNAL(currentChanged(int, int)),
+            this, SLOT(bootEntriesSelectionChanged(int, int)));
+    layout->addWidget(m_bootEntriesTable, 1);
+
+    // Round 124 (0.2.30 #23): the read-only boot-menu view — the same
+    // three-column shape as the modern GrubMenuTree (Menu entry | Class |
+    // Default).  On Etch the helper's grub-legacy-list fills the Class
+    // column with the kernel path (the modern populateGrubLegacyMenuTable
+    // parity); a GRUB2 scope falls back to grub-list.  The default entry is
+    // marked with the ASCII state word (the D1/round-104 ruling — no raw
+    // Unicode glyphs on the Etch fonts).
+    m_bootMenuTable = new CapabilityTable(0, 3, page);
+    m_bootMenuTable->setLeftMargin(0);
+    m_bootMenuTable->setSelectionMode(QTable::SingleRow);
+    m_bootMenuTable->setReadOnly(true);
+    m_bootMenuTable->setSorting(false);
+    m_bootMenuTable->setMinimumContentHeight(120);
+    const QString bootMenuHeaders[] = {
+        tr("Menu entry"), tr("Class"), tr("Default")
+    };
+    for (int column = 0; column < 3; ++column) {
+        m_bootMenuTable->horizontalHeader()->setLabel(
+            column, bootMenuHeaders[column]);
+    }
+    m_bootMenuTable->setColumnWidth(0, 300);
+    m_bootMenuTable->setColumnWidth(1, 260);
+    m_bootMenuTable->setColumnStretchable(2, true);
+    QToolTip::add(m_bootMenuTable, tr(
+        "The read-only boot menu (the bootloader's kernel/OS entries in file order)."));
+    connect(m_bootMenuTable, SIGNAL(currentChanged(int, int)),
+            this, SLOT(bootMenuSelectionChanged(int, int)));
+    layout->addWidget(m_bootMenuTable, 1);
+    m_bootMenuTable->hide();
+
+    m_bootEntriesDetails = new QTextEdit(page);
+    m_bootEntriesDetails->setReadOnly(true);
+    m_bootEntriesDetails->setTextFormat(Qt::PlainText);
+    m_bootEntriesDetails->setWordWrap(QTextEdit::WidgetWidth);
+    m_bootEntriesDetails->setMinimumHeight(80);
+    m_bootEntriesDetails->setText(tr(
+        "Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope's entries read-only."));
+    layout->addWidget(m_bootEntriesDetails);
+
+    updateBootEntriesControls();
+    return page;
+}
+
+bool LegacyMainWindow::bootEntriesScopeReady(QString *reason, QString *disk,
+                                             QString *root) const
+{
+    // There is one UEFI firmware: the running host's NVRAM.  The view is
+    // usable from either scope — Host Maintenance manages the running host's
+    // entries, and a committed repair target manages that drive's entries.
+    // The helper's own runtime preflights (efibootmgr presence, read-only
+    // listing) stay the enforcement layer either way.
+    QString resolvedDisk;
+    QString resolvedRoot;
+    if (hostMaintenanceActive()) {
+        resolvedDisk = runningHostDisk();
+        resolvedRoot = runningHostRoot();
+    } else if (targetCommitted()) {
+        resolvedDisk = selectedDisk();
+        resolvedRoot = selectedRoot();
+    }
+    if (!resolvedDisk.isEmpty() && !resolvedRoot.isEmpty()) {
+        if (disk) {
+            *disk = resolvedDisk;
+        }
+        if (root) {
+            *root = resolvedRoot;
+        }
+        return true;
+    }
+    if (reason) {
+        *reason = tr("Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.");
+    }
+    return false;
+}
+
+bool LegacyMainWindow::bootEntriesTabVisible() const
+{
+    // Round 125 (0.2.30 #27): modern MainWindow::bootEntriesTabVisible()
+    // parity — the EFI boot entries tab has something to display only when the
+    // ACTIVE scope's cached capability evidence names a UEFI firmware boot
+    // path (`efi`), a GRUB boot menu (`grub`) or an extlinux boot menu
+    // (`extlinux`).  Absent or stale evidence hides the tab (fail closed) —
+    // nothing is ever guessed, and the per-view loads keep the helper's own
+    // runtime preflights as the enforcement layer.
+    if (!m_model.hasDiagnostics(toStd(identity()))
+        || m_model.diagnosticsStale()) {
+        return false;
+    }
+    const std::string id = toStd(identity());
+    return m_model.isAvailable("efi", id, 0)
+        || m_model.isAvailable("grub", id, 0)
+        || m_model.isAvailable("extlinux", id, 0);
+}
+
+void LegacyMainWindow::applyBootEntriesTabVisibility()
+{
+    if (!m_tabs || !m_bootEntriesPage) {
+        return;
+    }
+    const bool visible = bootEntriesTabVisible();
+    const int current = m_tabs->indexOf(m_bootEntriesPage);
+    if (visible && current < 0) {
+        // The fixed logical position: between Diagnostics and Repair (the
+        // modern position).  The Repair page is the stable neighbor, so the
+        // insertion index is derived from it — never a hardcoded number.
+        const int repairIndex = m_tabs->indexOf(m_repairPage);
+        m_tabs->insertTab(m_bootEntriesPage, tr("EFI boot entries"),
+                          repairIndex < 0 ? -1 : repairIndex);
+    } else if (!visible && current >= 0) {
+        // Never leave the user stranded on a tab that just became hidden
+        // (the modern updateTabVisibility() Systems fallback).  The current
+        // page is captured BEFORE the removal: Qt3 repoints the current page
+        // to a neighbor during removePage, so the comparison must run on the
+        // pre-removal state.
+        const bool wasCurrent = m_tabs->currentPage() == m_bootEntriesPage;
+        m_tabs->removePage(m_bootEntriesPage);
+        if (wasCurrent) {
+            m_tabs->setCurrentPage(m_tabs->indexOf(m_systemsPage));
+        }
+    }
+}
+
+void LegacyMainWindow::updateBootEntriesControls()
+{
+    // Round 125 (0.2.30 #27): the tab-visibility gate is re-applied with every
+    // scope/run/cache state change (updateActionStates reaches here after
+    // diagnostics complete, invalidation resets the model, and scope changes),
+    // so the tab appears exactly when the evidence exists and hides again when
+    // the cache is dropped.
+    applyBootEntriesTabVisibility();
+
+    QString reason;
+    QString disk;
+    QString root;
+    const bool ready = bootEntriesScopeReady(&reason, &disk, &root);
+    const bool idle = !m_running;
+    const bool scopeIsHost = hostMaintenanceActive();
+    // Round 124 (0.2.30 #23): the boot-menu view is selected when the
+    // dropdown is on its second item.
+    const bool menuView = m_bootEntriesViewCombo
+        && m_bootEntriesViewCombo->currentItem() == 1;
+    // The active view's table is the only one shown (the smoke drives the
+    // load functions directly, so the visibility follows the dropdown state
+    // here, not only in bootEntriesViewChanged).
+    if (m_bootEntriesTable) {
+        m_bootEntriesTable->setShown(!menuView);
+    }
+    if (m_bootMenuTable) {
+        m_bootMenuTable->setShown(menuView);
+    }
+    // Scope-key change handling (the modern park/restore cache's honest
+    // slice): leaving a scope (or entering one) clears the loaded rows so a
+    // stale scope's entries are never shown under another scope's label.
+    // Both views (firmware + boot menu) clear together.
+    QString scopeKey;
+    if (ready) {
+        scopeKey = (scopeIsHost ? QString::fromLatin1("host:")
+                                 : QString::fromLatin1("target:"))
+            + disk;
+    }
+    if (scopeKey != m_bootEntriesScopeKey) {
+        m_bootEntriesScopeKey = scopeKey;
+        m_bootEntriesLoaded = false;
+        m_bootEntriesRows.clear();
+        m_bootEntriesBootCurrent = QString::null;
+        m_bootEntriesBootOrder = QString::null;
+        if (m_bootEntriesTable) {
+            m_bootEntriesTable->setNumRows(0);
+        }
+        m_bootMenuLoaded = false;
+        m_bootMenuRows.clear();
+        m_bootMenuUsedGrub2 = false;
+        m_bootMenuConfigPath = QString::null;
+        m_bootMenuDefaultEntry = QString::null;
+        if (m_bootMenuTable) {
+            m_bootMenuTable->setNumRows(0);
+        }
+        if (m_bootEntriesDetails) {
+            m_bootEntriesDetails->setText(tr(
+                "Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope's entries read-only."));
+        }
+    }
+    if (m_bootEntriesViewCombo) {
+        m_bootEntriesViewCombo->setEnabled(ready && idle);
+    }
+    if (m_bootEntriesStatusLabel) {
+        if (ready) {
+            if (menuView) {
+                if (m_bootMenuLoaded) {
+                    m_bootEntriesStatusLabel->setText(tr(
+                        "%1 boot menu entries loaded read-only.")
+                        .arg(static_cast<int>(m_bootMenuRows.size())));
+                } else {
+                    m_bootEntriesStatusLabel->setText(tr(
+                        "%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.")
+                        .arg(scopeIsHost ? tr("Running-host")
+                                         : tr("Repair-target")));
+                }
+            } else {
+                if (m_bootEntriesLoaded) {
+                    m_bootEntriesStatusLabel->setText(tr(
+                        "%1 firmware boot entries loaded read-only.")
+                        .arg(static_cast<int>(m_bootEntriesRows.size())));
+                } else {
+                    m_bootEntriesStatusLabel->setText(tr(
+                        "%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.")
+                        .arg(scopeIsHost ? tr("Running-host")
+                                         : tr("Repair-target")));
+                }
+            }
+        } else {
+            m_bootEntriesStatusLabel->setText(reason);
+        }
+    }
+    if (m_bootEntriesScopeLabel) {
+        if (menuView && m_bootMenuLoaded && !m_bootMenuConfigPath.isEmpty()
+            && !m_bootMenuConfigPath.contains(QString::fromLatin1("(not found)"))) {
+            m_bootEntriesScopeLabel->setText(m_bootMenuConfigPath);
+        } else if (scopeIsHost) {
+            m_bootEntriesScopeLabel->setText(ready
+                ? tr("Running host: %1").arg(disk)
+                : tr("Running host: not selected"));
+        } else if (!disk.isEmpty()) {
+            m_bootEntriesScopeLabel->setText(ready
+                ? tr("Repair target: %1").arg(disk)
+                : tr("Repair target: not ready"));
+        } else {
+            m_bootEntriesScopeLabel->setText(tr("No scope selected"));
+        }
+    }
+}
+
+void LegacyMainWindow::loadBootEntries()
+{
+    if (m_running) {
+        return;
+    }
+    QString reason;
+    QString disk;
+    QString root;
+    if (!bootEntriesScopeReady(&reason, &disk, &root)) {
+        if (m_bootEntriesStatusLabel) {
+            m_bootEntriesStatusLabel->setText(reason);
+        }
+        appendLog(tr("Boot entries refresh refused: %1").arg(reason));
+        updateBootEntriesControls();
+        return;
+    }
+    const bool isHost = hostMaintenanceActive();
+    // The scope key captured at request start: a result from an outgoing
+    // scope (the user switched Host<->Target while the request ran) is
+    // discarded instead of written into the incoming scope's view (modern
+    // refreshBootEntries parity).
+    m_bootEntriesRequestKey = (isHost ? QString::fromLatin1("host:")
+                                      : QString::fromLatin1("target:"))
+        + disk;
+    appendLog(tr("Loading %1 UEFI firmware boot entries read-only for %2 (%3).")
+                  .arg(isHost ? tr("running-host") : tr("repair-target"),
+                       disk, root));
+    QStringList args;
+    args << QString::fromLatin1("efi-list") << disk << root;
+    startCommand(args, false, tr("List firmware boot entries"),
+                 false, false, false, false, QString::null, QString::null);
+}
+
+void LegacyMainWindow::bootEntriesSelectionChanged(int row, int col)
+{
+    Q_UNUSED(col);
+    if (!m_bootEntriesDetails) {
+        return;
+    }
+    if (row < 0 || row >= static_cast<int>(m_bootEntriesRows.size())) {
+        return;
+    }
+    const LegacyBootEntryRow &entry = m_bootEntriesRows[row];
+    const bool isCurrent = !m_bootEntriesBootCurrent.isEmpty()
+        && entry.id == m_bootEntriesBootCurrent;
+    m_bootEntriesDetails->setText(
+        bootEntryDetailsText(entry, isCurrent));
+}
+
+// Round 124 (0.2.30 #23): the dropdown view selector (modern parity).  Index
+// 0 = EFI Entries (the firmware efi-list view), index 1 = Boot Menu (the
+// read-only grub-legacy-list/grub-list view).  Selecting a view loads it;
+// a busy helper keeps the previous view's data and the selector disabled
+// until the command finishes (updateBootEntriesControls).
+void LegacyMainWindow::bootEntriesViewChanged(int index)
+{
+    if (m_bootEntriesTable) {
+        m_bootEntriesTable->setShown(index == 0);
+    }
+    if (m_bootMenuTable) {
+        m_bootMenuTable->setShown(index == 1);
+    }
+    if (index == 1) {
+        loadBootMenuEntries();
+    } else {
+        loadBootEntries();
+    }
+}
+
+void LegacyMainWindow::loadBootMenuEntries()
+{
+    if (m_running) {
+        return;
+    }
+    QString reason;
+    QString disk;
+    QString root;
+    if (!bootEntriesScopeReady(&reason, &disk, &root)) {
+        if (m_bootEntriesStatusLabel) {
+            m_bootEntriesStatusLabel->setText(reason);
+        }
+        appendLog(tr("Boot menu refresh refused: %1").arg(reason));
+        updateBootEntriesControls();
+        return;
+    }
+    const bool isHost = hostMaintenanceActive();
+    // The scope key captured at request start: a result from an outgoing
+    // scope (the user switched Host<->Target while the request ran) is
+    // discarded instead of written into the incoming scope's view (modern
+    // refreshGrubMenu parity).  The chain state resets with every user load.
+    m_bootMenuRequestKey = (isHost ? QString::fromLatin1("host:")
+                                    : QString::fromLatin1("target:"))
+        + disk;
+    m_bootMenuRequestVerb = QString::fromLatin1("grub-legacy-list");
+    m_bootMenuLoaded = false;
+    m_bootMenuRows.clear();
+    m_bootMenuUsedGrub2 = false;
+    m_bootMenuConfigPath = QString::null;
+    m_bootMenuDefaultEntry = QString::null;
+    if (m_bootMenuTable) {
+        m_bootMenuTable->setNumRows(0);
+    }
+    appendLog(tr("Loading %1 boot menu read-only for %2 (%3).")
+                  .arg(isHost ? tr("running-host") : tr("repair-target"),
+                       disk, root));
+    QStringList args;
+    args << QString::fromLatin1("grub-legacy-list") << disk << root;
+    startCommand(args, false, tr("List boot menu"),
+                 false, false, false, false, QString::null, QString::null);
+}
+
+void LegacyMainWindow::bootMenuSelectionChanged(int row, int col)
+{
+    Q_UNUSED(col);
+    if (!m_bootEntriesDetails) {
+        return;
+    }
+    if (row < 0 || row >= static_cast<int>(m_bootMenuRows.size())) {
+        return;
+    }
+    const LegacyBootMenuRow &entry = m_bootMenuRows[row];
+    QStringList lines;
+    lines.append(tr("Menu entry: %1").arg(entry.title));
+    if (m_bootMenuUsedGrub2) {
+        // The grub-list protocol: class/id plus the foreign/submenu markers.
+        if (!entry.kernelOrClass.isEmpty()) {
+            lines.append(tr("Class: %1").arg(entry.kernelOrClass));
+        }
+        if (!entry.id.isEmpty()) {
+            lines.append(tr("Entry ID: %1").arg(entry.id));
+        }
+        if (entry.isSubmenu) {
+            lines.append(tr("This is a submenu."));
+            if (!entry.configFile.isEmpty()) {
+                lines.append(tr("Loads configuration: %1").arg(entry.configFile));
+            }
+        }
+        if (entry.foreignEntry) {
+            lines.append(tr("Foreign: points to a different drive or partition."));
+        }
+    } else {
+        // The grub-legacy-list protocol: the kernel/initrd paths only (the
+        // kernel command line is never surfaced — it can carry secrets).
+        if (!entry.kernelOrClass.isEmpty()) {
+            lines.append(tr("Kernel: %1").arg(entry.kernelOrClass));
+        }
+        if (!entry.initrd.isEmpty()) {
+            lines.append(tr("Initrd: %1").arg(entry.initrd));
+        }
+    }
+    lines.append(entry.isDefault
+                     ? tr("Default entry: yes")
+                     : tr("Default entry: no"));
+    m_bootEntriesDetails->setText(lines.join(QString::fromLatin1("\n")));
+}
+
+void LegacyMainWindow::applyBootEntriesTranscript(const QString &transcript, bool ok)
+{
+    if (!m_bootEntriesTable) {
+        return;
+    }
+    // A stale result (the scope changed while the efi-list request ran)
+    // belongs to the outgoing scope: discard it — the scope-change handler
+    // already cleared the view for the incoming scope.
+    if (m_bootEntriesRequestKey != m_bootEntriesScopeKey) {
+        appendLog(tr(
+            "Boot entry list result discarded: the scope changed while the "
+            "request was running."));
+        updateBootEntriesControls();
+        return;
+    }
+    const bool wasHost = hostMaintenanceActive();
+    m_bootEntriesTable->setNumRows(0);
+    m_bootEntriesRows.clear();
+    m_bootEntriesBootCurrent = QString::null;
+    m_bootEntriesBootOrder = QString::null;
+    if (!ok) {
+        m_bootEntriesLoaded = false;
+        if (m_bootEntriesDetails) {
+            m_bootEntriesDetails->setText(transcript.stripWhiteSpace().isEmpty()
+                ? tr("Firmware boot entries could not be loaded. See Logs for details.")
+                : transcript.stripWhiteSpace());
+        }
+        appendLog(tr("Firmware boot entry list failed."));
+        updateBootEntriesControls();
+        return;
+    }
+    // The efi-list protocol: BootCurrent/BootOrder headers followed by one
+    // TAB-separated row per entry (labels and loaders may contain spaces, so
+    // TAB is the only field separator).  Malformed rows are skipped, never
+    // mis-identified (modern parseBootEntriesOutput parity).
+    static const QRegExp hexIdRe(QString::fromLatin1("^[0-9A-F]{4}$"));
+    const QStringList lines = QStringList::split(QChar('\n'), transcript);
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString line = *it;
+        if (line.startsWith(QString::fromLatin1("BootCurrent:"))) {
+            m_bootEntriesBootCurrent = line.mid(12).stripWhiteSpace().upper();
+            continue;
+        }
+        if (line.startsWith(QString::fromLatin1("BootOrder:"))) {
+            m_bootEntriesBootOrder = line.mid(10).stripWhiteSpace().upper();
+            continue;
+        }
+        if (!line.contains(QChar('\t'))) {
+            continue;
+        }
+        const QStringList fields = QStringList::split(QChar('\t'), line, true);
+        if (fields.count() < 8) {
+            continue;
+        }
+        QString id = fields[0].stripWhiteSpace();
+        if (id.startsWith(QString::fromLatin1("Boot"), false)) {
+            id = id.mid(4);
+        }
+        id = id.upper();
+        if (!hexIdRe.exactMatch(id)) {
+            continue;
+        }
+        LegacyBootEntryRow row;
+        row.id = id;
+        row.label = fields[1];
+        row.loader = fields[2];
+        row.entryClass = fields[3];
+        row.role = fields[4];
+        row.partuuid = fields[5];
+        row.deviceModel = fields[6];
+        row.listed = fields[7].stripWhiteSpace().lower()
+            != QString::fromLatin1("unlisted");
+        m_bootEntriesRows.push_back(row);
+    }
+    m_bootEntriesLoaded = true;
+    m_bootEntriesTable->setNumRows(static_cast<int>(m_bootEntriesRows.size()));
+    for (int rowIndex = 0; rowIndex < static_cast<int>(m_bootEntriesRows.size()); ++rowIndex) {
+        const LegacyBootEntryRow &entry = m_bootEntriesRows[rowIndex];
+        const bool isCurrent = !m_bootEntriesBootCurrent.isEmpty()
+            && entry.id == m_bootEntriesBootCurrent;
+        // ASCII markers only (the D1/round-104 ruling): Etch's Qt3 fonts
+        // cannot render the modern check/dash glyphs reliably, so the Boot
+        // column carries the plain ID plus an explicit state word.
+        QString bootText = QString::fromLatin1("Boot%1").arg(entry.id);
+        if (isCurrent) {
+            bootText += QString::fromLatin1(" (active)");
+        } else if (!entry.listed) {
+            bootText += QString::fromLatin1(" (unlisted)");
+        }
+        m_bootEntriesTable->setText(rowIndex, 0, bootText);
+        m_bootEntriesTable->setText(rowIndex, 1, entry.label);
+        m_bootEntriesTable->setText(rowIndex, 2, entry.loader);
+        m_bootEntriesTable->setText(rowIndex, 3, bootEntryBootsLabel(entry.role));
+        m_bootEntriesTable->setText(rowIndex, 4, entry.entryClass);
+        m_bootEntriesTable->setText(rowIndex, 5,
+            entry.deviceModel.isEmpty() ? QString::fromLatin1("-")
+                                        : entry.deviceModel);
+    }
+    const int count = static_cast<int>(m_bootEntriesRows.size());
+    if (m_bootEntriesDetails) {
+        QStringList headerLines;
+        if (!m_bootEntriesBootCurrent.isEmpty()) {
+            headerLines.append(QString::fromLatin1("BootCurrent: ")
+                               + m_bootEntriesBootCurrent);
+        }
+        if (!m_bootEntriesBootOrder.isEmpty()) {
+            headerLines.append(QString::fromLatin1("BootOrder: ")
+                               + m_bootEntriesBootOrder);
+        }
+        if (count == 0) {
+            headerLines.append(tr(
+                "No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage."));
+        }
+        m_bootEntriesDetails->setText(headerLines.join(QString::fromLatin1("\n")));
+    }
+    if (m_bootEntriesTable->numRows() > 0) {
+        m_bootEntriesTable->setCurrentCell(0, 0);
+        bootEntriesSelectionChanged(0, 0);
+    }
+    appendLog(tr("Loaded %1 %2 firmware boot entr%3 read-only.")
+                  .arg(count)
+                  .arg(wasHost ? tr("running-host") : tr("repair-target"))
+                  .arg(count == 1 ? QString::fromLatin1("y")
+                                  : QString::fromLatin1("ies")));
+    updateBootEntriesControls();
+}
+
+// Round 124 (0.2.30 #23): the read-only boot-menu transcript consumer.  The
+// grub-legacy-list protocol is two header lines (GRUB legacy config /
+// GRUB legacy default) followed by one TAB-separated row per title block
+// (<title>\t<kernel>\t<initrd>\t<default>); the grub-list fallback protocol
+// is (GRUB config / GRUB esp / GRUB drive / GRUB default) plus
+// <title>\t<class>\t<id>\t<foreign>\t<default>\t<depth>\t<kind>\t<configfile>
+// (modern parseGrubLegacyOutput/parseGrubMenuOutput parity — TAB is the only
+// field separator, malformed rows are skipped).  A "(not found)" config from
+// the first verb chains the grub-list fallback exactly once; a missing
+// menu.lst AND grub.cfg shows the honest not-found state (no synthesized
+// entries — the D1/round-104 ruling).
+void LegacyMainWindow::applyBootMenuTranscript(const QString &transcript, bool ok)
+{
+    if (!m_bootMenuTable) {
+        return;
+    }
+    // A stale result (the scope changed while the request ran) belongs to
+    // the outgoing scope: discard it — the scope-change handler already
+    // cleared the view for the incoming scope.
+    if (m_bootMenuRequestKey != m_bootEntriesScopeKey) {
+        appendLog(tr(
+            "Boot menu list result discarded: the scope changed while the "
+            "request was running."));
+        updateBootEntriesControls();
+        return;
+    }
+    if (!ok) {
+        m_bootMenuLoaded = false;
+        m_bootMenuRows.clear();
+        m_bootMenuTable->setNumRows(0);
+        if (m_bootEntriesDetails) {
+            m_bootEntriesDetails->setText(transcript.stripWhiteSpace().isEmpty()
+                ? tr("The boot menu could not be loaded. See Logs for details.")
+                : transcript.stripWhiteSpace());
+        }
+        appendLog(tr("Boot menu list failed."));
+        updateBootEntriesControls();
+        return;
+    }
+    // The resolved config line decides the fallback chain.
+    QString configLine = QString::null;
+    QString defaultLine = QString::null;
+    if (m_bootMenuRequestVerb == QString::fromLatin1("grub-legacy-list")) {
+        configLine = QString::fromLatin1("GRUB legacy config:");
+        defaultLine = QString::fromLatin1("GRUB legacy default:");
+    } else {
+        configLine = QString::fromLatin1("GRUB config:");
+        defaultLine = QString::fromLatin1("GRUB default:");
+    }
+    QString configPath;
+    QString defaultEntry;
+    std::vector<LegacyBootMenuRow> rows;
+    const QStringList lines = QStringList::split(QChar('\n'), transcript);
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString line = *it;
+        if (line.startsWith(configLine)) {
+            configPath = line.mid(configLine.length()).stripWhiteSpace();
+            continue;
+        }
+        if (line.startsWith(defaultLine)) {
+            defaultEntry = line.mid(defaultLine.length()).stripWhiteSpace();
+            continue;
+        }
+        if (!line.contains(QChar('\t'))) {
+            continue;
+        }
+        const QStringList fields = QStringList::split(QChar('\t'), line, true);
+        if (m_bootMenuRequestVerb == QString::fromLatin1("grub-legacy-list")) {
+            if (fields.count() != 4) {
+                continue;
+            }
+            LegacyBootMenuRow row;
+            row.title = fields[0];
+            row.kernelOrClass = fields[1];
+            row.initrd = fields[2];
+            row.isDefault = fields[3].stripWhiteSpace()
+                == QString::fromLatin1("1");
+            rows.push_back(row);
+        } else {
+            if (fields.count() < 8) {
+                continue;
+            }
+            LegacyBootMenuRow row;
+            row.title = fields[0];
+            row.kernelOrClass = fields[1];
+            row.id = fields[2];
+            row.foreignEntry = fields[3].stripWhiteSpace()
+                == QString::fromLatin1("1");
+            row.isDefault = fields[4].stripWhiteSpace()
+                == QString::fromLatin1("1");
+            row.isSubmenu = fields[6].stripWhiteSpace()
+                == QString::fromLatin1("submenu");
+            row.configFile = fields[7];
+            rows.push_back(row);
+        }
+    }
+    // The one-time fallback chain: a missing menu.lst on a GRUB2 scope
+    // retries with grub-list (modern refreshGrubMenu's grub -> extlinux ->
+    // grub-legacy ladder, legacy-sliced to the two GRUB verbs — the Etch
+    // frontend's own backend first).  The continuation is DEFERRED to the
+    // next event-loop turn: applyBootMenuTranscript runs inside
+    // helperFinished's call stack while m_running is still true, and a new
+    // helper command must never start there (the round-29 re-entrant rule).
+    const bool configNotFound = configPath.isEmpty()
+        || configPath.contains(QString::fromLatin1("(not found)"));
+    if (configNotFound
+        && m_bootMenuRequestVerb == QString::fromLatin1("grub-legacy-list")) {
+        m_bootMenuRequestVerb = QString::fromLatin1("grub-list");
+        appendLog(tr(
+            "No GRUB legacy menu.lst on this scope; trying the GRUB "
+            "grub.cfg boot menu read-only."));
+        QTimer::singleShot(0, this, SLOT(bootMenuFallbackContinue()));
+        return;
+    }
+    if (configNotFound) {
+        // The fallback ran (or the scope was no longer ready): show the
+        // honest reason instead of a bare config path.
+        QString scopeReason;
+        QString fallbackDisk;
+        QString fallbackRoot;
+        if (!bootEntriesScopeReady(&scopeReason, &fallbackDisk, &fallbackRoot)) {
+            m_bootMenuLoaded = false;
+            m_bootMenuRows.clear();
+            m_bootMenuTable->setNumRows(0);
+            if (m_bootEntriesDetails) {
+                m_bootEntriesDetails->setText(scopeReason);
+            }
+            updateBootEntriesControls();
+            return;
+        }
+    }
+    m_bootMenuUsedGrub2 =
+        m_bootMenuRequestVerb == QString::fromLatin1("grub-list");
+    m_bootMenuRows = rows;
+    m_bootMenuConfigPath = configPath;
+    m_bootMenuDefaultEntry = defaultEntry;
+    m_bootMenuLoaded = true;
+    m_bootMenuTable->setNumRows(static_cast<int>(rows.size()));
+    for (int rowIndex = 0; rowIndex < static_cast<int>(rows.size()); ++rowIndex) {
+        const LegacyBootMenuRow &entry = rows[rowIndex];
+        // ASCII markers only (the D1/round-104 ruling): the Default column
+        // carries the explicit state word, never the modern check glyph.
+        m_bootMenuTable->setText(rowIndex, 0,
+            entry.isSubmenu ? tr("%1 (submenu)").arg(entry.title) : entry.title);
+        m_bootMenuTable->setText(rowIndex, 1, entry.kernelOrClass);
+        m_bootMenuTable->setText(rowIndex, 2, entry.isDefault
+            ? tr("default") : QString::fromLatin1(""));
+    }
+    if (rows.empty()) {
+        if (m_bootEntriesDetails) {
+            m_bootEntriesDetails->setText(configNotFound
+                ? tr(
+                      "No boot menu configuration was found on this drive. The "
+                      "system may have no GRUB, extlinux/syslinux or GRUB "
+                      "legacy boot menu, or its configuration lives elsewhere.")
+                : tr(
+                      "The boot menu configuration exists but lists no "
+                      "entries."));
+        }
+    } else if (m_bootMenuTable->numRows() > 0) {
+        m_bootMenuTable->setCurrentCell(0, 0);
+        bootMenuSelectionChanged(0, 0);
+    }
+    appendLog(tr("Loaded %1 boot menu entr%2 read-only.")
+                  .arg(static_cast<int>(rows.size()))
+                  .arg(rows.size() == 1 ? QString::fromLatin1("y")
+                                        : QString::fromLatin1("ies")));
+    updateBootEntriesControls();
+}
+
+void LegacyMainWindow::bootMenuFallbackContinue()
+{
+    if (m_running) {
+        return;
+    }
+    QString reason;
+    QString disk;
+    QString root;
+    if (!bootEntriesScopeReady(&reason, &disk, &root)) {
+        if (m_bootEntriesDetails) {
+            m_bootEntriesDetails->setText(reason);
+        }
+        appendLog(tr("Boot menu fallback refused: %1").arg(reason));
+        updateBootEntriesControls();
+        return;
+    }
+    QStringList args;
+    args << QString::fromLatin1("grub-list") << disk << root;
+    startCommand(args, false, tr("List boot menu"),
+                 false, false, false, false, QString::null, QString::null);
 }
 
 QWidget *LegacyMainWindow::buildActionsTab()
@@ -5059,6 +6647,12 @@ QWidget *LegacyMainWindow::buildSettingsTab()
         tr("Show removable and USB storage"), discovery);
     m_showEncryptedCheck = new QCheckBox(
         tr("Show encrypted devices before unlocking"), discovery);
+    // Round 82 (modern parity, plan item #4): squashfs loop devices are
+    // snap-style read-only containers, never Linux install targets; default
+    // off. Dormant on Etch — the device inventory never lists loop devices —
+    // but the section stays contract-consistent with the modern GUI.
+    m_showSquashfsLoopsCheck = new QCheckBox(
+        tr("Show squashfs loop devices"), discovery);
     QToolTip::add(m_showNonLinuxCheck, tr(
         "When off, drives without a visible Linux filesystem are hidden unless "
         "they still contain an encrypted device and encrypted devices are shown."));
@@ -5067,12 +6661,16 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     QToolTip::add(m_showEncryptedCheck, tr(
         "When off, drives with an encrypted device are hidden until the volume "
         "is unlocked."));
+    QToolTip::add(m_showSquashfsLoopsCheck, tr(
+        "When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets."));
     discoveryLayout->addWidget(m_showNonLinuxCheck);
     discoveryLayout->addWidget(m_showRemovableCheck);
     discoveryLayout->addWidget(m_showEncryptedCheck);
+    discoveryLayout->addWidget(m_showSquashfsLoopsCheck);
     connect(m_showNonLinuxCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
     connect(m_showRemovableCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
     connect(m_showEncryptedCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
+    connect(m_showSquashfsLoopsCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
     // No trailing stretch: the box is pinned at its content height (below),
     // so there is no extra height to absorb - the stretch only rendered the
     // pin's extra height as padding below the lowest checkbox.
@@ -5108,17 +6706,17 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     preferencesRow->addWidget(discovery, 1);
     preferencesRow->addWidget(diagnostics, 1);
     upperLayout->addLayout(preferencesRow);
-    // Pin both preferences boxes 10px below the old 108px row height: the
-    // 108px pin was one line (20px) taller than the boxes' content, and the
-    // removed trailing stretches rendered that extra as padding below the
-    // lowest checkbox; 98px leaves half of it. Nothing above the plan box
-    // stretches or distributes on a splitter drag - the pane's growth and
-    // squeeze land entirely on the plan box, exactly like the repair tab's
-    // plan frame.
-    discovery->setMinimumHeight(98);
-    discovery->setMaximumHeight(98);
-    diagnostics->setMinimumHeight(98);
-    diagnostics->setMaximumHeight(98);
+    // Pin both preferences boxes 10px below the row height that fits their
+    // content: the discovery box gained a fourth checkbox row in round 82
+    // (squashfs loops, modern parity), so its content grew by one line
+    // (20px, 88 -> 109) and both pins moved 98 -> 118 together to keep the
+    // side-by-side row even. Nothing above the plan box stretches or
+    // distributes on a splitter drag - the pane's growth and squeeze land
+    // entirely on the plan box, exactly like the repair tab's plan frame.
+    discovery->setMinimumHeight(118);
+    discovery->setMaximumHeight(118);
+    diagnostics->setMinimumHeight(118);
+    diagnostics->setMaximumHeight(118);
 
     // Modern Settings -> Full Repair plan. The checkboxes drive the Repair
     // plan section, the tools "Full Repair" column and Run Full Repair.
@@ -5216,7 +6814,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
         "Choose which cached scope's capabilities the table shows."));
     // The legacy capability table's native data source is the read-only host
     // PATH probe, so Host is the default scope (matching the pre-parity table
-    // and the smoke test's 18-row assertion); Repair target re-reads the
+    // and the smoke test's row-count assertion); Repair target re-reads the
     // cached target diagnostics' Repair tool lines.
     m_capabilityScopeSelector->setCurrentItem(1);
     connect(m_capabilityScopeSelector, SIGNAL(activated(int)),
@@ -5230,7 +6828,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     identityGrid->addWidget(m_capAuthLabel, 2, 1);
 
     // Qt3 has no QTableWidget; the QTable fills the same 7-column
-    // Feature|Command|Scope|Status|Suggested package|Notes|Action contract.
+    // Feature|Command|Scope|Status|Packages|Notes|Action contract.
     // The Notes column (5) stretches to the frame edge; the trailing Action
     // column stays content-sized. The table is read-only and the rows are
     // populated by refreshCapabilities().
@@ -5255,7 +6853,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     // MainWindow's Boot capabilities table.
     const QString capabilityHeaders[] = {
         tr("Feature"), tr("Command"), tr("Scope"), tr("Status"),
-        tr("Suggested package"), tr("Notes"), tr("Action")
+        tr("Packages"), tr("Notes"), tr("Action")
     };
     for (int column = 0; column < 7; ++column) {
         m_capabilityTable->horizontalHeader()->setLabel(
@@ -5358,7 +6956,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     // --print-config / Help -> About).
     // Pane bounds - the repair-tab pattern (explicit min+max on the
     // splitter's direct children are the only bounds the drag honors):
-    //   upper pane: row 98 + spacing 6 + plan box [75..250] = [179..354]
+    //   upper pane: row 118 (round 82, +20 for the squashfs-loops row) + spacing 6 + plan box [75..250] = [199..374]
     //   lower pane: capabilities floor 150 + spacing 6 + safety 110 = 266
     // The lower pane's minimum keeps the mandatory safety box (110px) fully
     // inside the pane on a full-down drag: without it the pane can be
@@ -5366,26 +6964,26 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     // scrollable content's bottom edge and no scrollbar position reveals it
     // (the clipped-mandatory-items symptom). The upper pane's maximum stops
     // the drag exactly at the plan box's 250px maximum, with no empty gap.
-    upperPane->setMinimumHeight(179);
-    upperPane->setMaximumHeight(354);
+    upperPane->setMinimumHeight(199);
+    upperPane->setMaximumHeight(374);
     lowerPane->setMinimumHeight(266);
     // Guarantee the total scrollable height can always contain the
     // mandatory safety box: the splitter's own minimum is the full-down
-    // drag's worst case (upper pane max 354 + handle ~6 + lower pane floor
-    // 266 = 626, plus a little slack), so the content can never shrink
+    // drag's worst case (upper pane max 374 + handle ~6 + lower pane floor
+    // 266 = 646, plus a little slack), so the content can never shrink
     // past the point where the safety box would fall below the scrollable
     // bottom edge (the hidden-mandatory-section symptom on a full-down
     // drag - the total settings height must always include the mandatory
     // box's pixels).
-    settingsSplitter->setMinimumHeight(630);
+    settingsSplitter->setMinimumHeight(650);
     // The vertical splitter keeps a sensible default split; the user can
-    // drag the handle afterwards. The upper share dropped from 280 to 250
-    // with the row's 108->98 shrink: the plan box's default drops a further
-    // ~30px (1.5 lines, ~178->~148) - the box was 1.5-2 lines taller than
-    // its two-column list; now the last plan item ("Rebuild DKMS modules")
-    // sits at the bottom of the box with no extra line of empty space.
+    // drag the handle afterwards. The upper share grew back from 250 to 270
+    // with the round-82 row growth (118 - 98 = 20px): the plan box's default
+    // drops a further ~30px (1.5 lines, ~178->~148) - the box was 1.5-2 lines
+    // taller than its two-column list; now the last plan item ("Rebuild DKMS
+    // modules") sits at the bottom of the box with no extra line of empty space.
     QValueList<int> settingsSizes;
-    settingsSizes.append(250);
+    settingsSizes.append(270);
     settingsSizes.append(530);
     settingsSplitter->setSizes(settingsSizes);
     // Intercept the splitter's handle itself: Qt 3.3.7's own opaque drag
@@ -5648,6 +7246,16 @@ bool LegacyMainWindow::deviceRowVisible(const DeviceRow &row) const
 {
     if (!m_showNonLinuxCheck || !m_showRemovableCheck || !m_showEncryptedCheck) {
         return true;
+    }
+    // Round 82 (modern parity, plan item #4): a squashfs loop row is hidden
+    // while the filter is off. Dormant on Etch — the inventory never lists
+    // loop devices (looksLikeWholeDisk excludes them) — but the rule mirrors
+    // the modern GUI for contract consistency.
+    if (m_showSquashfsLoopsCheck && !m_showSquashfsLoopsCheck->isChecked()
+        && row.name.compare(0, 4, std::string("loop")) == 0
+        && (row.probedFstype == std::string("squashfs")
+            || row.fstype == std::string("squashfs"))) {
+        return false;
     }
     const QString diskPath = row.disk ? fromStd(row.path) : owningDiskFor(row);
     if (diskPath.isEmpty()) {
@@ -6529,8 +8137,10 @@ void LegacyMainWindow::runSelectedDiagnostic()
                                  QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const QString key = mapValue(m_diagKeyByTitle,
-                                 item->text(0).stripWhiteSpace());
+    // Round 124 (0.2.30 #9): the key resolves through the key -> row map
+    // (never the rendered title text — the round-118 running-row marker
+    // broke the title lookup and the individual run silently returned).
+    const QString key = selectedDiagnosticKey();
     if (key.isEmpty()) {
         return;
     }
@@ -6597,7 +8207,7 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
     if (key.isEmpty()) {
         return;
     }
-    QDialog dialog(this, "legacy-config-editor", true);
+    LegacyFlooredDialog dialog(this, "legacy-config-editor");
     dialog.setCaption(tr("Edit target %1").arg(path));
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *info = new QLabel(
@@ -6640,6 +8250,10 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
     QObject::connect(cancel, SIGNAL(clicked()), &dialog, SLOT(reject()));
     QObject::connect(save, SIGNAL(clicked()), &dialog, SLOT(accept()));
     dialog.resize(760, 520);
+    // Round 153.2 (the complete audit): the editor is the free-vertical
+    // class (the text edit scrolls) with a 60% content floor.
+    dialog.setFloor(456, 312);
+    dialog.setVerticalLocked(false);
 
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -6763,7 +8377,7 @@ void LegacyMainWindow::saveResults()
 QDialog *LegacyMainWindow::buildUnlockDialog(const QString &luks,
                                             QLineEdit **editOut)
 {
-    QDialog *dialog = new QDialog(this, "legacy-unlock-passphrase", true);
+    LegacyFlooredDialog *dialog = new LegacyFlooredDialog(this, "legacy-unlock-passphrase");
     dialog->setCaption(tr("Unlock LUKS repair target"));
     QVBoxLayout *layout = new QVBoxLayout(dialog, 10, 8);
 
@@ -6813,6 +8427,16 @@ QDialog *LegacyMainWindow::buildUnlockDialog(const QString &luks,
     QObject::connect(cancel, SIGNAL(clicked()), dialog, SLOT(reject()));
     QObject::connect(unlockButton, SIGNAL(clicked()), dialog, SLOT(accept()));
     QObject::connect(edit, SIGNAL(returnPressed()), dialog, SLOT(accept()));
+    // Round 153.2 (the complete audit): the content-derived floor + the hug
+    // on the wrapping note (the Unlock/Cancel row visible at the floor; the
+    // vertical locked to the content).
+    dialog->setFloor(QMAX(360, buttons->sizeHint().width()
+                          + 2 * layout->margin()), 240);
+    dialog->setHug(note, 2 * layout->margin() + 4 * layout->spacing()
+                   + targetRow->sizeHint().height()
+                   + instruction->sizeHint().height()
+                   + edit->sizeHint().height()
+                   + buttons->sizeHint().height());
     // Widen the popup substantially over the earlier 420px minimum. Qt3 sizes
     // a fresh modal dialog to its (narrow) content sizeHint and does NOT honor
     // setMinimumWidth as a lower bound on the displayed width (the smoke
@@ -7042,6 +8666,19 @@ bool LegacyMainWindow::writeSecretFile(const QByteArray &data, const char *prefi
     const unsigned char *bytes =
         reinterpret_cast<const unsigned char *>(data.data());
     std::size_t remaining = static_cast<std::size_t>(data.size());
+    // Plan #15 (round 111): the Qt 3.3.7 NUL-inclusive-size trap.  Every
+    // caller builds its buffer with QString::local8Bit(), whose QCString
+    // size() INCLUDES the terminating NUL (the round-75 class), so the
+    // file used to carry one trailing 0x00 byte.  Write the logical bytes
+    // only: strip exactly one trailing NUL.  No legitimate payload can end
+    // in a NUL - the unlock passphrase comes from a QLineEdit (NULs
+    // impossible) and the config editor refuses NUL bytes up front - so
+    // the strip can never remove user data.  The helper's keyfile
+    // consumer is unaffected (its read already drops NUL bytes) and
+    // cryptsetup --key-file receives the exact typed passphrase.
+    if (remaining > 0 && bytes[remaining - 1] == '\0') {
+        --remaining;
+    }
     while (remaining > 0) {
         const ssize_t written = ::write(fd, bytes, remaining);
         if (written <= 0) {
@@ -7378,7 +9015,7 @@ void LegacyMainWindow::addSessionNote()
     const bool targetIsPrior = m_viewingPriorLog && !m_priorLogPath.isEmpty();
     const QString priorFileName =
         targetIsPrior ? QFileInfo(m_priorLogPath).fileName() : QString::null;
-    QDialog dialog(this, "legacy-add-note", true);
+    LegacyFlooredDialog dialog(this, "legacy-add-note");
     dialog.setCaption(tr("Add Note"));
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *label = new QLabel(tr("Note:"), &dialog);
@@ -7415,6 +9052,10 @@ void LegacyMainWindow::addSessionNote()
     addNote->setDefault(true);
     buttons->addWidget(addNote);
     buttons->addWidget(cancel);
+    // Round 153.2 (the complete audit): the memo grows vertically (the
+    // round-66 design) — the free-vertical class with a content floor.
+    dialog.setFloor(384, 240);
+    dialog.setVerticalLocked(false);
     // The Add Note button owns the focus too (Enter saves); the focus is
     // re-asserted after the dialog's show-time focus pass has settled (the
     // round-27 trap — a 0-timer can fire before the posted show-focus
@@ -7680,6 +9321,11 @@ void LegacyMainWindow::loadLegacySettings()
     }
     QSettings settings;
     configureLegacySettings(settings);
+    // Round 124 (0.2.30 #10): before the first group read, remove any
+    // unreadable stale settings file (a root-run session's 0600 file masks
+    // the user's saves) so the fresh start observes clean defaults and the
+    // next save creates a user-owned file — the user's directive.
+    const QStringList removedStale = removeUnreadableLegacySettingsFiles();
     // Qt 3.3.7 stores each settings group in its own per-user file named after
     // the group, so the keys below live in ~/.qt/devicesrc, ~/.qt/logsrc,
     // ~/.qt/diagnosticsrc and ~/.qt/repairrc.  configureLegacySettings forces
@@ -7693,6 +9339,8 @@ void LegacyMainWindow::loadLegacySettings()
         QString::fromLatin1("/devices/showRemovable"), true);
     m_showEncrypted = settings.readBoolEntry(
         QString::fromLatin1("/devices/showEncrypted"), true);
+    m_showSquashfsLoops = settings.readBoolEntry(
+        QString::fromLatin1("/devices/showSquashfsLoops"), false);
     m_logWrapEnabled = settings.readBoolEntry(
         QString::fromLatin1("/logs/wrapLines"), true);
     m_autoRefreshEnabled = settings.readBoolEntry(
@@ -7761,6 +9409,23 @@ void LegacyMainWindow::loadLegacySettings()
                                 : QString::fromLatin1("false"))
             .arg(m_autoRefreshEnabled ? QString::fromLatin1("true")
                                       : QString::fromLatin1("false"));
+        // Round 124 (0.2.30 #10): name the removed stale files (or the files
+        // that could not be removed) in the same load diagnostic so the
+        // deletion is observable in the session log.
+        if (!removedStale.isEmpty()) {
+            m_settingsLoadDiagnostic += tr(
+                " Removed %1 unreadable stale settings file(s): %2.")
+                .arg(static_cast<int>(removedStale.count()))
+                .arg(removedStale.join(QString::fromLatin1(", ")));
+        } else {
+            const QStringList stillUnreadable = unreadableSettingsFiles();
+            if (!stillUnreadable.isEmpty()) {
+                m_settingsLoadDiagnostic += tr(
+                    " Could not remove the unreadable stale settings file(s) "
+                    "%1; defaults apply until they are removed.")
+                    .arg(stillUnreadable.join(QString::fromLatin1(", ")));
+            }
+        }
     }
 }
 
@@ -7793,6 +9458,8 @@ void LegacyMainWindow::saveLegacySettings()
     settings.writeEntry(QString::fromLatin1("/devices/showNonLinux"), m_showNonLinux);
     settings.writeEntry(QString::fromLatin1("/devices/showRemovable"), m_showRemovable);
     settings.writeEntry(QString::fromLatin1("/devices/showEncrypted"), m_showEncrypted);
+    settings.writeEntry(QString::fromLatin1("/devices/showSquashfsLoops"),
+                        m_showSquashfsLoops);
     settings.writeEntry(QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
     settings.writeEntry(QString::fromLatin1("/diagnostics/autoRefreshStale"),
                         m_autoRefreshEnabled);
@@ -7841,10 +9508,10 @@ void LegacyMainWindow::applyLegacySettingsDefaults()
     m_logWrapEnabled = true;
     m_autoRefreshEnabled = true;
     QCheckBox *checks[] = { m_showNonLinuxCheck, m_showRemovableCheck,
-                            m_showEncryptedCheck, m_autoRefreshCheck,
-                            m_logWrapCheck };
-    const bool values[] = { true, true, true, true, true };
-    for (int i = 0; i < 5; ++i) {
+                            m_showEncryptedCheck, m_showSquashfsLoopsCheck,
+                            m_autoRefreshCheck, m_logWrapCheck };
+    const bool values[] = { true, true, true, false, true, true };
+    for (int i = 0; i < 6; ++i) {
         if (!checks[i]) {
             continue;
         }
@@ -7887,6 +9554,8 @@ void LegacyMainWindow::deviceFilterChanged(bool checked)
         m_showRemovable = checked;
     } else if (toggled == m_showEncryptedCheck) {
         m_showEncrypted = checked;
+    } else if (toggled == m_showSquashfsLoopsCheck) {
+        m_showSquashfsLoops = checked;
     }
     saveLegacySettings();
     rebuildDeviceList();
@@ -7933,23 +9602,50 @@ void LegacyMainWindow::refreshCapabilities()
     if (!targetScope) {
         // Host scope: the 18 consolidated capabilitySpecs rows (the modern
         // feature list plus the two Etch-specific rows), probed read-only from
-        // the running host's PATH plus the standard system directories.
-        m_capabilityTable->setNumRows(capabilitySpecCount);
-        for (int row = 0; row < capabilitySpecCount; ++row) {
+        // the running host's PATH plus the standard system directories, PLUS
+        // (round 99, ITEM 1) the two helper-evidence capability rows —
+        // input-devices and network — in the MODERN position (directly AFTER
+        // the gpu row).  Those two rows are sourced from the cached
+        // running-host diagnostic capability lines (`Repair tool
+        // input-devices:` / `Repair tool network:` plus the proven
+        // install side-channels), exactly like the repair-target scope;
+        // they fail closed with the "run host diagnostics" state while no
+        // host evidence is cached.
+        // Round 105 (ITEM 1): the Scope column reads "Host" for EVERY row —
+        // the table is scoped to the running host here, so a mixed
+        // Host/Target/Host+Target scope display must never appear (the
+        // modern host table labels every row "Host" the same way).
+        const QString hostIdentity = QString::fromLatin1("host|")
+            + selectedDisk();
+        const bool hostEvidenceCached = m_model.hasDiagnostics(toStd(hostIdentity));
+        m_capabilityTable->setNumRows(capabilitySpecCount + 2);
+        int outRow = 0;
+        for (int row = 0; row < capabilitySpecCount; ++row, ++outRow) {
             const CapabilitySpec &spec = capabilitySpecs[row];
             const QString command = QString::fromLatin1(spec.command);
             const bool available = !findExecutablePath(command).isEmpty();
-            QString status;
-            if (available) {
-                status = tr("Available");
-            } else if (command == QString::fromLatin1("unshare")) {
-                // The legacy-specific row: Etch has no unshare, so the ported
-                // helper falls back to a guarded plain chroot.
-                status = tr("Missing on this frontend");
-            } else {
-                status = tr("Missing");
+            // Round 106 (ITEM 2): the display row's Packages cell follows the
+            // shared rule — the helper's proven side-channel package (when the
+            // cached host evidence carries one) wins over the static name, and
+            // the honest not-available caveat lands in the Notes.  Every other
+            // static row keeps its capabilitySpecs package value, which the
+            // parity contract locks to the shared capability-packages table's
+            // Debian-family rows (the SAME source).
+            QString package = QString::fromLatin1(spec.package);
+            bool repoUnavailable = false;
+            if (command == QString::fromLatin1("update-rc.d")) {
+                const std::string displaySideChannel = m_model.evidence(
+                    toStd(QString::fromLatin1("display-installable")));
+                bool provedAvailable = false;
+                const QString displayPackage = legacyTargetDisplaySuggestedPackage(
+                    QString::fromLatin1("display"),
+                    m_model.state(toStd(QString::fromLatin1("display"))),
+                    displaySideChannel, &provedAvailable);
+                if (!displayPackage.isEmpty()) {
+                    package = displayPackage;
+                    repoUnavailable = !provedAvailable;
+                }
             }
-            const QString package = QString::fromLatin1(spec.package);
             // Item 2: the Action cell offers "Install" only for a row that is
             // missing AND has a package with an apt install candidate on THIS
             // Etch system AND whose suggested package can actually deliver the
@@ -7959,15 +9655,122 @@ void LegacyMainWindow::refreshCapabilities()
             const bool installable = !available && !package.isEmpty()
                 && hostPackageInstallable(package)
                 && legacyPackageProvidesCommand(package, command);
-            m_capabilityTable->setText(row, 0, tr(spec.feature));
-            m_capabilityTable->setText(row, 1, command);
-            m_capabilityTable->setText(row, 2, tr(spec.scope));
-            m_capabilityTable->setText(row, 3, status);
-            m_capabilityTable->setText(row, 4, package);
-            m_capabilityTable->setText(row, 5, tr(spec.note));
-            m_capabilityTable->setText(row, 6,
+            // Round 105 (ITEM 2): the four-status vocabulary with the SAME
+            // derivation + wording as the modern capabilityStatusText —
+            // present -> Installed; missing but installable (the proven apt
+            // candidate + the package-provides-command proof) -> Available;
+            // missing and not installable -> Missing.  The unshare row keeps
+            // its frontend-limited phrasing (the ported helper falls back to
+            // a guarded plain chroot on Etch).
+            QString status;
+            if (available) {
+                status = tr("Installed");
+            } else if (command == QString::fromLatin1("unshare")) {
+                status = tr("Missing on this frontend");
+            } else if (installable) {
+                status = tr("Available");
+            } else {
+                status = tr("Missing");
+            }
+            m_capabilityTable->setText(outRow, 0, tr(spec.feature));
+            m_capabilityTable->setText(outRow, 1, command);
+            m_capabilityTable->setText(outRow, 2, tr("Host"));
+            m_capabilityTable->setText(outRow, 3, status);
+            m_capabilityTable->setText(outRow, 4, package);
+            {
+                QString noteCell = tr(spec.note);
+                // Round 106 (ITEM 2): the honest not-available caveat (the
+                // shared string, the modern parity).
+                if (!available && !installable && repoUnavailable
+                    && !package.isEmpty()) {
+                    noteCell += QString::fromLatin1(" (")
+                        + tr("Packages not available in this system's repositories")
+                        + QString::fromLatin1(")");
+                }
+                m_capabilityTable->setText(outRow, 5, noteCell);
+            }
+            m_capabilityTable->setText(outRow, 6,
                 installable ? tr("Install")
                             : QString::fromLatin1(kCapabilityActionCell));
+            // The GPU row (the "lspci" probe) ends the modern display/GPU
+            // group: the input-devices and network capability rows follow it
+            // directly (the round-99 ordering parity).
+            if (command == QString::fromLatin1("lspci")) {
+                static const char *const evidenceKeys[2] = {
+                    "input-devices", "network"
+                };
+                for (int e = 0; e < 2; ++e) {
+                    // The evidence rows land AFTER the gpu row (the increment
+                    // runs before the fill so the first one never overwrites
+                    // the gpu row just written at outRow).
+                    ++outRow;
+                    const QString key = QString::fromLatin1(evidenceKeys[e]);
+                    const bool inputRow = e == 0;
+                    const std::string rawState = m_model.state(toStd(key));
+                    std::string reason;
+                    const bool capable = hostEvidenceCached
+                        && !rawState.empty()
+                        && capabilityIsAvailable(rawState, &reason);
+                    QString statusText;
+                    QString noteText;
+                    if (!hostEvidenceCached || rawState.empty()) {
+                        // Fail closed: no cached running-host capability line.
+                        statusText = tr("Missing");
+                        noteText = tr(
+                            "No cached running-host diagnostics; run read-only "
+                            "host diagnostics in Host Maintenance to populate "
+                            "this row.");
+                    } else if (capable) {
+                        statusText = tr("Installed");
+                        noteText = capabilityNoteForToolKey(key);
+                    } else {
+                        statusText = tr("Missing");
+                        noteText = capabilityNoteForToolKey(key);
+                        const QString localized =
+                            localizedCapabilityReason(fromStd(reason));
+                        if (!localized.isEmpty()) {
+                            noteText += QString::fromLatin1(" (")
+                                + localized + QString::fromLatin1(")");
+                        }
+                    }
+                    // The proven install side-channel (the helper emits
+                    // `<key>-installable: <pkg>|available` only after proving
+                    // the package present in the scope's own repositories);
+                    // the suggested package is shown without an Install action
+                    // (the modern parity: the button appears only for a
+                    // missing prerequisite row the helper proved installable —
+                    // the input/network side-channel names a missing
+                    // firmware/module piece of an AVAILABLE capability, so the
+                    // package is information, not a one-click install).
+                    // Round 106 (ITEM 2): the package names the cell for
+                    // either suffix; a |unavailable proof lands the honest
+                    // not-available caveat in the Notes.
+                    QString suggestedPackage;
+                    bool sideProvedAvailable = false;
+                    const std::string sideChannel = m_model.evidence(toStd(
+                        inputRow ? QString::fromLatin1("input-installable")
+                                 : QString::fromLatin1("network-installable")));
+                    suggestedPackage = legacySideChannelPackage(
+                        sideChannel, &sideProvedAvailable);
+                    QString evidenceNoteText = noteText;
+                    if (!suggestedPackage.isEmpty() && !sideProvedAvailable) {
+                        evidenceNoteText += QString::fromLatin1(" (")
+                            + tr("Packages not available in this system's repositories")
+                            + QString::fromLatin1(")");
+                    }
+                    m_capabilityTable->setText(outRow, 0,
+                        inputRow ? tr("Input device repair")
+                                 : tr("Network / connectivity repair"));
+                    m_capabilityTable->setText(outRow, 1,
+                        fromStd(m_model.evidence(toStd(key))));
+                    m_capabilityTable->setText(outRow, 2, tr("Host"));
+                    m_capabilityTable->setText(outRow, 3, statusText);
+                    m_capabilityTable->setText(outRow, 4, suggestedPackage);
+                    m_capabilityTable->setText(outRow, 5, evidenceNoteText);
+                    m_capabilityTable->setText(outRow, 6,
+                        QString::fromLatin1(kCapabilityActionCell));
+                }
+            }
         }
         appendLog(tr(
             "Host capability scan refreshed (read-only PATH probes; nothing was "
@@ -7996,7 +9799,7 @@ void LegacyMainWindow::refreshCapabilities()
             // stayed in the log after diagnostics ran and read as a stale
             // capability verdict.
         } else {
-            // The 15 Repair tool keys map 1:1 to the individual-tool specs
+            // The 17 Repair tool keys map 1:1 to the individual-tool specs
             // (same order), so the friendly title comes from toolSpecs while
             // the state/reason come from the cached target evidence.
             // Item 2 (target-scope install): a missing capability row whose
@@ -8022,23 +9825,110 @@ void LegacyMainWindow::refreshCapabilities()
                 const std::string state = m_model.state(toStd(key));
                 std::string reason;
                 const bool available = capabilityIsAvailable(state, &reason);
-                QString package = legacyTargetInstallablePackage(key, state);
+                // Round 106 (ITEM 2): the Packages column names a package for
+                // EVERY row — the probe-derived suggestion when one exists
+                // (even without the repo proof), else the shared
+                // capability-packages table's static Debian-family name.  The
+                // Install gate keeps the proven side-channel derivation
+                // unchanged.
+                QString probePackage = legacyTargetInstallablePackage(key, state);
                 bool repoProven = dkmsRepoAvailable;
+                bool repoUnavailable = false;
                 if (key == QString::fromLatin1("display")) {
-                    package = legacyTargetDisplayInstallablePackage(
-                        key, state, displaySideChannel);
-                    repoProven = !package.isEmpty();
+                    probePackage = legacyTargetDisplaySuggestedPackage(
+                        key, state, displaySideChannel, &repoProven);
+                    if (!probePackage.isEmpty() && !repoProven) {
+                        repoUnavailable = true;
+                    }
+                } else if (key == QString::fromLatin1("input-devices")
+                           || key == QString::fromLatin1("network")) {
+                    if (available) {
+                        const std::string sideChannel = m_model.evidence(toStd(
+                            key == QString::fromLatin1("input-devices")
+                                ? QString::fromLatin1("input-installable")
+                                : QString::fromLatin1("network-installable")));
+                        probePackage = legacySideChannelPackage(
+                            sideChannel, &repoProven);
+                        repoUnavailable = !probePackage.isEmpty() && !repoProven;
+                    }
+                } else if (key == QString::fromLatin1("bootstack")) {
+                    if (!available
+                        && legacyCapabilityReasonKey(state)
+                            == QString::fromLatin1("bootstack-needs-initramfs-grub")) {
+                        const std::string sideChannel = m_model.evidence(
+                            toStd(QString::fromLatin1("bootstack-installable")));
+                        probePackage = legacySideChannelPackage(
+                            sideChannel, &repoProven);
+                        repoUnavailable = !probePackage.isEmpty() && !repoProven;
+                    }
+                } else if (key == QString::fromLatin1("efi")) {
+                    // Round 141 (ITEM O1/O2): the missing-GRUB-tooling
+                    // suggestion for the EFI row renders in the Suggested
+                    // package column exactly like the bootstack row (the
+                    // modern CapabilityChecker parity; D2 keeps the legacy
+                    // presentation information-only — no Install action).
+                    const QString reasonKey = legacyCapabilityReasonKey(state);
+                    const bool installableReason =
+                        reasonKey.startsWith(QString::fromLatin1("missing-grub"))
+                        || reasonKey == QString::fromLatin1("missing-grub2-mkconfig")
+                        || reasonKey == QString::fromLatin1("missing-grub2-install")
+                        || reasonKey == QString::fromLatin1("missing-grub-config-tooling")
+                        || reasonKey == QString::fromLatin1("missing-tuxedo-uki-builder");
+                    if (!available && installableReason) {
+                        const std::string sideChannel = m_model.evidence(
+                            toStd(QString::fromLatin1("efi-installable")));
+                        probePackage = legacySideChannelPackage(
+                            sideChannel, &repoProven);
+                        repoUnavailable = !probePackage.isEmpty() && !repoProven;
+                    }
                 }
-                const bool installable = !available && !package.isEmpty()
+                QString package = probePackage;
+                if (package.isEmpty()) {
+                    package = legacyCapabilityStaticPackages(key);
+                }
+                const bool installable = !available && !probePackage.isEmpty()
                     && committed && repoProven;
+                // Round 105 (ITEM 2): the SAME three-way status derivation and
+                // wording as the modern capabilityStatusText (available ->
+                // Installed; missing but installable -> Available; neither ->
+                // Missing).  Round 105 (ITEM 3): the Notes cell carries the
+                // shared static note with the machine-readable reason folded in
+                // for an unavailable tool, exactly like the modern Notes
+                // column (the raw reason — the modern parity).
+                QString statusText;
+                if (available) {
+                    statusText = tr("Installed");
+                } else if (installable) {
+                    statusText = tr("Available");
+                } else {
+                    statusText = tr("Missing");
+                }
+                QString noteText = capabilityNoteForToolKey(key);
+                if (!available && !reason.empty()) {
+                    const QString raw = fromStd(reason);
+                    if (!raw.isEmpty()) {
+                        noteText += noteText.isEmpty()
+                            ? raw
+                            : QString::fromLatin1(" (") + raw
+                                + QString::fromLatin1(")");
+                    }
+                }
+                // Round 106 (ITEM 2): the honest not-available caveat — a
+                // missing row whose Packages cell names a package the helper
+                // proved unavailable in this system's repositories says so in
+                // the Notes (the shared string, the modern parity).
+                if (!available && !installable && repoUnavailable
+                    && !package.isEmpty()) {
+                    noteText += QString::fromLatin1(" (")
+                        + tr("Packages not available in this system's repositories")
+                        + QString::fromLatin1(")");
+                }
                 m_capabilityTable->setText(i, 0, tr(toolSpecs[i].title));
                 m_capabilityTable->setText(i, 1, key);
                 m_capabilityTable->setText(i, 2, tr("Repair target"));
-                m_capabilityTable->setText(i, 3,
-                    available ? tr("Available") : tr("Missing"));
+                m_capabilityTable->setText(i, 3, statusText);
                 m_capabilityTable->setText(i, 4, package);
-                m_capabilityTable->setText(i, 5,
-                    available ? QString::null : fromStd(reason));
+                m_capabilityTable->setText(i, 5, noteText);
                 m_capabilityTable->setText(i, 6,
                     installable ? tr("Install")
                                 : QString::fromLatin1(kCapabilityActionCell));
@@ -8297,6 +10187,82 @@ QString LegacyMainWindow::displayToolUnavailableReason(
     return text;
 }
 
+// Round 141 (ITEM O1/O2): the modern missingToolGuidance parity for the
+// missing-tooling prerequisites of the initramfs/grub/efi/bootstack tools —
+// the proven Install pointer derived from the helper's
+// bootstack-installable / efi-installable side-channels (the round-39/42
+// pattern).  Fail closed: an unrecognized reason, a non-tooling reason or a
+// missing side-channel yields empty.
+QString LegacyMainWindow::missingToolGuidanceForTool(
+    const QString &toolKey, const std::string &capabilityReason) const
+{
+    const QString reasonKey = legacyCapabilityReasonKey(capabilityReason);
+    if (reasonKey.isEmpty()) {
+        return QString::null;
+    }
+    QString label;
+    QString channelKey;
+    const bool initramfsTooling = reasonKey == QString::fromLatin1("missing-mkinitfs")
+        || reasonKey == QString::fromLatin1("missing-mkinitcpio")
+        || reasonKey == QString::fromLatin1("missing-dracut")
+        || reasonKey == QString::fromLatin1("missing-initramfs-tools");
+    const bool grubConfigTooling = reasonKey == QString::fromLatin1("missing-grub-generator")
+        || reasonKey == QString::fromLatin1("missing-grub2-mkconfig")
+        || reasonKey == QString::fromLatin1("missing-grub-config-tooling");
+    const bool grubInstallTooling = reasonKey == QString::fromLatin1("missing-grub-install")
+        || reasonKey == QString::fromLatin1("missing-grub2-install");
+    const bool alpineGrubTooling = reasonKey == QString::fromLatin1("missing-grub-install-alpine")
+        || reasonKey == QString::fromLatin1("missing-grub-package-alpine")
+        || reasonKey == QString::fromLatin1("missing-grub-efi-alpine")
+        || reasonKey == QString::fromLatin1("missing-grub-efi-modules");
+    if (toolKey == QString::fromLatin1("efi") && (grubConfigTooling || grubInstallTooling
+            || alpineGrubTooling
+            || reasonKey == QString::fromLatin1("missing-tuxedo-uki-builder"))) {
+        channelKey = QString::fromLatin1("efi-installable");
+        if (alpineGrubTooling) {
+            label = tr("GRUB EFI tooling");
+        } else if (reasonKey == QString::fromLatin1("missing-tuxedo-uki-builder")) {
+            label = tr("TUXEDO UKI builder");
+        } else if (grubInstallTooling) {
+            label = tr("GRUB installation tooling");
+        } else {
+            label = tr("GRUB configuration tooling");
+        }
+    } else if ((toolKey == QString::fromLatin1("initramfs")
+                || toolKey == QString::fromLatin1("grub")
+                || toolKey == QString::fromLatin1("bootstack"))
+               && (initramfsTooling || grubConfigTooling || grubInstallTooling
+                   || reasonKey == QString::fromLatin1("bootstack-needs-initramfs-grub"))) {
+        channelKey = QString::fromLatin1("bootstack-installable");
+        if (reasonKey == QString::fromLatin1("missing-mkinitfs")) {
+            label = tr("mkinitfs");
+        } else if (reasonKey == QString::fromLatin1("missing-mkinitcpio")) {
+            label = tr("mkinitcpio");
+        } else if (reasonKey == QString::fromLatin1("missing-dracut")) {
+            label = tr("dracut");
+        } else if (reasonKey == QString::fromLatin1("missing-initramfs-tools")) {
+            label = tr("initramfs-tools");
+        } else if (grubInstallTooling) {
+            label = tr("GRUB installation tooling");
+        } else if (reasonKey == QString::fromLatin1("bootstack-needs-initramfs-grub")) {
+            label = tr("boot-stack prerequisite");
+        } else {
+            label = tr("GRUB configuration tooling");
+        }
+    } else {
+        return QString::null;
+    }
+    // The proven side-channel (the same derivation the capabilities table's
+    // Install cell uses); fail closed without it.
+    bool proved = false;
+    const QString packages = legacySideChannelPackage(
+        m_model.evidence(toStd(channelKey)), &proved);
+    if (proved && !packages.isEmpty()) {
+        return tr("Missing %1: install the matching package(s) %2 from the Boot capabilities table.").arg(label).arg(packages);
+    }
+    return tr("Missing %1: install the matching package from the Boot capabilities table.").arg(label);
+}
+
 // Missing required diagnostic sections for a repair tool (empty when every
 // required section is cached in m_diagnosticSections). The fail-closed repair
 // gate consumes this list, mirroring MainWindow::missingRequiredDiagnosticTitles.
@@ -8389,7 +10355,11 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
     if (!spec.stage || !*spec.stage) {
         // Display-only tool: prefer the helper's cached capability reason; when
         // the helper reports the capability as available, name the frontend
-        // omission instead (still fail closed, never runnable).
+        // omission instead (still fail closed, never runnable).  Round 99
+        // (ITEM 1c): the wording names the capability state FIRST so it can
+        // never contradict the capability table's "Available" row — the
+        // capability is fine, this legacy frontend simply exposes no
+        // interactive action for it.
         std::string capabilityReason;
         if (!m_model.isAvailable(spec.key, toStd(identity()), &capabilityReason)) {
             if (reason) {
@@ -8397,8 +10367,9 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
             }
         } else if (reason) {
             *reason = tr(
-                "This legacy frontend exposes no %1 action; the helper reports "
-                "the capability as available.").arg(tr(spec.title));
+                "Available as a diagnostic/capability only - this legacy "
+                "frontend exposes no repair action; run the interactive "
+                "repair from the modern GUI.");
         }
         return false;
     }
@@ -8409,10 +10380,19 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
             // capability-derived in the host scope too — the localized reason
             // plus the proven Install action when the helper proved a
             // display-manager package installable (never the reason alone).
-            *reason = QString::fromLatin1(spec.key)
-                    == QString::fromLatin1("display")
-                ? displayToolUnavailableReason(capabilityReason)
-                : localizedCapabilityReason(fromStd(capabilityReason));
+            // Round 141 (ITEM O1/O2): the initramfs/grub/efi/bootstack tools'
+            // missing-tooling reasons carry the same proven Install pointer
+            // (the modern missingToolGuidance parity).
+            if (QString::fromLatin1(spec.key) == QString::fromLatin1("display")) {
+                *reason = displayToolUnavailableReason(capabilityReason);
+            } else {
+                *reason = localizedCapabilityReason(fromStd(capabilityReason));
+                const QString guidance = missingToolGuidanceForTool(
+                    QString::fromLatin1(spec.key), capabilityReason);
+                if (!guidance.isEmpty()) {
+                    *reason += QString::fromLatin1("\n") + guidance;
+                }
+            }
         }
         return false;
     }
@@ -8578,6 +10558,7 @@ QString LegacyMainWindow::kernelsRemovalPreview() const
     QString latest;
     QString repoLatest;
     QString repoLatestStatus;
+    QString buildCompiler;
     QStringList missingHeaders;
     QStringList orphanedHeaders;
     QStringList orphanedKernels;
@@ -8590,6 +10571,8 @@ QString LegacyMainWindow::kernelsRemovalPreview() const
     const QString repoLatestPrefix = QString::fromLatin1("Kernel repository latest:");
     const QString repoLatestStatusPrefix =
         QString::fromLatin1("Kernel repository latest status:");
+    const QString buildCompilerPrefix =
+        QString::fromLatin1("Kernel build compiler:");
     const QString missingPrefix = QString::fromLatin1("Kernel missing headers:");
     const QString orphanedPrefix = QString::fromLatin1("Kernel orphaned headers:");
     const QString orphanedKernelPrefix = QString::fromLatin1("Kernel orphaned kernel:");
@@ -8658,6 +10641,16 @@ QString LegacyMainWindow::kernelsRemovalPreview() const
             if (!version.isEmpty()) {
                 incompleteKernels.append(version);
             }
+        } else if (line.startsWith(buildCompilerPrefix)) {
+            // Round 151 (ITEM C1): the build-compiler evidence — the installed
+            // compiler state (plus the required-for-builds clause and, when
+            // applicable, the compiler meta-package distinction) composed by
+            // the helper; shown verbatim.
+            const QString value = line.mid(buildCompilerPrefix.length())
+                                      .stripWhiteSpace();
+            if (!value.isEmpty()) {
+                buildCompiler = value;
+            }
         } else if (line.startsWith(repoLatestPrefix)) {
             const QString value = line.mid(repoLatestPrefix.length())
                                       .stripWhiteSpace();
@@ -8687,6 +10680,13 @@ QString LegacyMainWindow::kernelsRemovalPreview() const
     }
     if (!latest.isEmpty()) {
         out << tr("Newest installed kernel: %1.").arg(latest);
+    }
+    // Round 151 (ITEM C1): the build-compiler evidence line — the installed
+    // compiler (or "none") with the required-for-builds clause, and the
+    // installed-compiler distinction when the headers reason names an
+    // uninstallable compiler meta-package (the gcc-*-for-host gap).
+    if (!buildCompiler.isEmpty()) {
+        out << tr("Kernel build compiler: %1.").arg(buildCompiler);
     }
     if (!repoLatest.isEmpty() && repoLatest != latest) {
         const QString notInstallable = QString::fromLatin1("not installable ");
@@ -8914,12 +10914,14 @@ void LegacyMainWindow::runSelectedTool()
                  << legacyBase64Encode(cached);
         }
     }
-    // The GPU and kernel repairs drive the helper's interactive menus over the
-    // PROMPT/ANSWER channel; startCommand reserves the mode-600 menu-answer
-    // file and hands the helper the interactive-session environment for these
-    // two tools only.
+    // The GPU, kernel, input-device and network repairs drive the helper's
+    // interactive menus over the PROMPT/ANSWER channel; startCommand reserves
+    // the mode-600 menu-answer file and hands the helper the
+    // interactive-session environment for these tools only.
     const bool interactive = toolKey == QString::fromLatin1("gpu")
-        || toolKey == QString::fromLatin1("kernels");
+        || toolKey == QString::fromLatin1("kernels")
+        || toolKey == QString::fromLatin1("input-devices")
+        || toolKey == QString::fromLatin1("network");
     const bool started = startCommand(args, false, tr(spec.title),
                                        false, false, false, false, QString::null,
                                        stage, false, interactive);
@@ -9486,8 +11488,8 @@ void LegacyMainWindow::finishRepairPlan()
 
 void LegacyMainWindow::configurePlan()
 {
-    if (m_tabs) {
-        m_tabs->setCurrentPage(6);
+    if (m_tabs && m_settingsPage) {
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_settingsPage));
     }
 }
 
@@ -9538,6 +11540,11 @@ void LegacyMainWindow::updateDeviceFilterChecks()
         m_showEncryptedCheck->blockSignals(true);
         m_showEncryptedCheck->setChecked(m_showEncrypted);
         m_showEncryptedCheck->blockSignals(false);
+    }
+    if (m_showSquashfsLoopsCheck) {
+        m_showSquashfsLoopsCheck->blockSignals(true);
+        m_showSquashfsLoopsCheck->setChecked(m_showSquashfsLoops);
+        m_showSquashfsLoopsCheck->blockSignals(false);
     }
 }
 
@@ -10270,6 +12277,16 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     RepairResultDialog *dialog = new RepairResultDialog(this, "legacy-repair-result");
     dialog->setCaption(title);
     dialog->resize(760, 460);
+    // Round 153 (the modern popup contract, Etch scale): the terminal keeps
+    // its CONTENT-derived floor (456 x 276 — the button row + the status
+    // line always visible; the modern terminal's free-vertical exception
+    // mirrors here: no content hug, the output pane grows).  The clamp
+    // lives in LegacyFlooredDialog (the Qt 3.3.7 resize() path does not
+    // honor setMinimumSize — the WM-hint only), so the floor holds on the
+    // rig's Xvfb AND under the KDE drag.
+    // Round 153.1: the terminal keeps the FREE-VERTICAL exception (the
+    // modern terminal's design) — no vertical lock.
+    dialog->setVerticalLocked(false);
     QVBoxLayout *layout = new QVBoxLayout(dialog, 10, 8);
     m_resultStatus = new QLabel(
         tr(
@@ -10330,6 +12347,12 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     m_resultCloseButton->setEnabled(false);
     buttons->addWidget(m_resultCloseButton);
     QObject::connect(m_resultCloseButton, SIGNAL(clicked()), dialog, SLOT(accept()));
+    // Round 153.1 (the user's finding): the width floor is CONTENT-derived —
+    // the Cancel/Close row (the buttons' sizeHint) + the margins, so the
+    // controls and the vertical scrollbar can never be hidden.
+    const int terminalFloor = QMAX(456, buttons->sizeHint().width()
+                                   + 2 * layout->margin());
+    dialog->setFloor(terminalFloor, 276);
     m_resultDialog = dialog;
     // The dialog is shown while the command already runs: arm Cancel now.
     updateResultCancelState();
@@ -10799,6 +12822,10 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     m_transcript = QString::null;
     m_pendingDiagnostic = diagnostic;
     m_pendingQuiet = quiet;
+    // Round 108 (0.2.30 #10, modern parity): a fresh command starts with a
+    // clean progressive assembly state (the combined diagnostic run feeds it
+    // through helperLine()).
+    resetProgressiveDiagnosticAssembly();
     // Round 30: the helper verb of this command (args.first()), so the mapped
     // invalidation path can tell the modifying copy verb from the read-only
     // copy-preview/browse-target verbs (the modern isFileCopy rule).
@@ -10807,6 +12834,18 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     // the busy indicator's modern scope-aware "Running Host/Target diagnostic:
     // <title>" text.
     m_pendingDiagnosticKey = diagnostic ? logSection : QString::null;
+    // Round 118 (modern parity, performance UX): the combined run (a
+    // diagnostic with no fixed key) marks its first section as running
+    // immediately — before the first helper line arrives; the section-start
+    // marker in feedProgressiveDiagnosticLine moves it as each section
+    // streams.  Display-only; the finish/failure paths restore the titles.
+    if (diagnostic && m_pendingDiagnosticKey.isEmpty()) {
+        const std::vector<std::string> firstKeys = legacy::diagnosticKeys();
+        if (!firstKeys.empty()) {
+            m_progressiveRunningKey = fromStd(firstKeys.front());
+            setDiagnosticRowRunning(m_progressiveRunningKey, true);
+        }
+    }
     m_pendingUnlock = unlock;
     m_pendingConfig = config;
     m_pendingShell = shell;
@@ -11019,7 +13058,7 @@ void LegacyMainWindow::helperLine(const QString &line)
                     // shell question surfaces its tab so the armed inline
                     // prompt input is visible and can take keyboard focus the
                     // moment the PROMPT is shown.
-                    m_tabs->setCurrentPage(3);
+                    m_tabs->setCurrentPage(m_tabs->indexOf(m_chrootTab));
                 }
                 if (input) {
                     input->setEnabled(true);
@@ -11071,6 +13110,12 @@ void LegacyMainWindow::helperLine(const QString &line)
     }
     m_transcript += line;
     m_transcript += QString::fromLatin1("\n");
+    // Round 108 (0.2.30 #10, modern parity): the combined diagnostic run also
+    // feeds the progressive per-section assembler, which commits each
+    // COMPLETED section into the per-section cache and the Results pane as
+    // its closing boundary arrives (a no-op for every non-diagnostic command
+    // and for the single-key runs — the guards inside).
+    feedProgressiveDiagnosticLine(line);
     // Diagnostic runs: the stream's `Diagnostic: <key>` markers drive the
     // section tagging of the lines that follow (the marker itself carries the
     // new key, so a section filter shows its header too). Unknown keys leave
@@ -11212,6 +13257,10 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     if (m_pendingLabel.isEmpty() && !m_running) {
         return;
     }
+    // Round 108 (0.2.30 #10, modern parity): close the final progressive
+    // section (its slice ends where the stream ended); the completion
+    // re-parse below overwrites the register with identical slices.
+    finishProgressiveDiagnosticRun();
     // Record the exit status for the file system repair flow (which runs the
     // inspect and each per-device repair as separate commands).
     m_lastCommandOk = ok;
@@ -11225,12 +13274,24 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     if (!m_cancelFilePath.isEmpty()) {
         ::unlink(m_cancelFilePath.local8Bit().data());
     }
+    // Parsed once here so both the aborted-outcome classification below and
+    // the invalidation paths further down share one parse.
+    const std::string transcript = toStd(m_transcript);
+    const ParsedTranscript parsed = parseTranscript(transcript);
     // Round 16 (ITEM 4e, modern parity): a run the user cancelled (through
     // the popup button or the window-close path, the latter visible only as
     // the helper's `Repair aborted:` evidence line) reports the ABORT status —
-    // never a generic failure line.
+    // never a generic failure line.  Round 102 (slice 2): the interactive
+    // menu's Abort option (option 0) ends the session with helper exit 0 and
+    // an `unchanged|reason:<tool>-aborted` change status — aborted too,
+    // never a ✓ success and never a bare no-op (the modern round-97/98
+    // classification, ported).
+    const bool menuAborted = !m_resultCancelRequested
+        && m_transcript.find(QString::fromLatin1("Repair aborted:")) < 0
+        && repairTranscriptHasAbortStatus(parsed);
     const bool aborted = m_resultCancelRequested
-        || m_transcript.find(QString::fromLatin1("Repair aborted:")) >= 0;
+        || m_transcript.find(QString::fromLatin1("Repair aborted:")) >= 0
+        || menuAborted;
     // Round 27 (Debian Legacy #10): the run's diagnostic key captured BEFORE
     // the kind reset below — the round-41 per-key user-run latch consumes it
     // (the Cycle-9 "Re-run Diagnostic" button state), and the reset (added
@@ -11260,12 +13321,14 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     // generic success/error line; the run is never reported successful.
     // Round 16 (ITEM 4e): the window-close cancel (no popup button) is
     // recognized through the helper's `Repair aborted:` evidence line.
+    // Round 102 (slice 2): the interactive menu's Abort option (option 0,
+    // exit 0 + the `<tool>-aborted` status) gets the same stopped wording.
     const bool resultCancelRequested = m_resultCancelRequested;
     const bool cancelled = resultCancelRequested
         || m_transcript.find(QString::fromLatin1("Repair aborted:")) >= 0;
     if (m_resultStatus && m_resultCloseButton) {
         if (m_repairPlanActive) {
-            m_resultStatus->setText(cancelled
+            m_resultStatus->setText((cancelled || menuAborted)
                 ? tr(
                       "Repair stage stopped at your request. The plan is "
                       "finishing; review the streamed output below.")
@@ -11277,7 +13340,7 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
                           "Repair stage stopped with an error. The plan is "
                           "finishing; review the streamed output below.")));
         } else {
-            m_resultStatus->setText(cancelled
+            m_resultStatus->setText((cancelled || menuAborted)
                 ? tr(
                       "The privileged operation was stopped at your request. "
                       "Review the output before closing.")
@@ -11318,8 +13381,6 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
         updateElevationLabel();
     }
 
-    const std::string transcript = toStd(m_transcript);
-    const ParsedTranscript parsed = parseTranscript(transcript);
     const bool wasConfig = m_pendingConfig;
     const bool wasConfigWrite = m_pendingConfigWrite;
     const QString configKey = m_pendingConfigKey;
@@ -11332,6 +13393,16 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     const QString sessionLogDeletePath = m_pendingSessionLogDeletePath;
     const bool wasShell = m_pendingShell;
     const bool wasBrowse = m_pendingBrowse;
+    // Round 117 (0.2.30 #7): the Boot entries tab's read-only efi-list
+    // request — its transcript populates the firmware view below and it
+    // never joins the repair summary block (a listing is not a repair).
+    // Round 124 (0.2.30 #23): the read-only boot-menu requests
+    // (grub-legacy-list / grub-list) behave the same way.
+    const bool wasBootEntriesList =
+        m_pendingVerb == QString::fromLatin1("efi-list");
+    const bool wasBootMenuList =
+        m_pendingVerb == QString::fromLatin1("grub-legacy-list")
+        || m_pendingVerb == QString::fromLatin1("grub-list");
     // Prompt-flow contract (L1/L2): close each shell transcript with its exit
     // marker so successive commands stay delimited in the shared pane (modern
     // "[exit N]" parity; the pane appends and never clears). The transcript
@@ -11475,12 +13546,24 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
                 applyCommandTranscriptMapped(parsed, ok, cancelled, wasShell);
         }
         reportChangeStatuses(parsed);
+        // Round 117 (0.2.30 #7): a finished efi-list run repopulates the
+        // read-only firmware boot-entries view (or shows the honest failure).
+        if (wasBootEntriesList) {
+            applyBootEntriesTranscript(m_transcript, ok && !cancelled);
+        }
+        // Round 124 (0.2.30 #23): a finished grub-legacy-list/grub-list run
+        // repopulates the read-only boot-menu view (or chains the one-time
+        // grub-list fallback / shows the honest not-found state).
+        if (wasBootMenuList) {
+            applyBootMenuTranscript(m_transcript, ok && !cancelled);
+        }
         // B7-4: the structured repair summary block after every repair
-        // command (individual tool or Full Repair); unlock/config/shell and
-        // the read-only browse listing stay out of the summary, and the
-        // round-50 session-log delete carries no repair statuses either.
+        // command (individual tool or Full Repair); unlock/config/shell, the
+        // read-only browse listing and the boot-entries/boot-menu listings
+        // stay out of the summary, and the round-50 session-log delete
+        // carries no repair statuses either.
         if (!wasConfig && !m_pendingUnlock && !wasShell && !wasBrowse
-            && !wasSessionLogDelete) {
+            && !wasSessionLogDelete && !wasBootEntriesList && !wasBootMenuList) {
             appendRepairSummaryBlock(parsed, ok, cancelled);
         }
         if (wasConfig && !wasConfigWrite && ok) {
@@ -11739,7 +13822,13 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     }
 
     if (wasSmoke) {
-        if (!ok) {
+        // Round 117 (0.2.30 #7): the boot-entries smoke step EXPECTS the
+        // efi-list failure on a BIOS-only host (Etch lacks efibootmgr) — the
+        // honest failure presentation is the PASS state there, so the
+        // step's completion never aborts the smoke on a nonzero exit.
+        // Round 124 (0.2.30 #23): the boot-menu step behaves the same way —
+        // a failed list shows the honest failure instead of aborting.
+        if (!ok && !wasBootEntriesList && !wasBootMenuList) {
             m_smokeMode = false;
             emit smokeFinished(false, QString::fromLatin1("helper command failed (exit %1)").arg(exitCode));
             return;
@@ -11753,6 +13842,41 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
                 }
             }
             m_smokeDiagnoseOk = (reported == static_cast<int>(keys.size()));
+        } else if (wasBootEntriesList) {
+            // A loaded view (UEFI hosts), or the honest BIOS failure
+            // presentation: the efibootmgr reason in the transcript, the
+            // table empty and the failure text in the details pane.
+            m_smokeBootEntriesOk =
+                (ok && m_bootEntriesLoaded)
+                || (!ok && !m_bootEntriesLoaded
+                    && m_transcript.find(QString::fromLatin1("efibootmgr")) >= 0
+                    && m_bootEntriesTable && m_bootEntriesTable->numRows() == 0
+                    && m_bootEntriesDetails
+                    && m_bootEntriesDetails->text()
+                           .find(QString::fromLatin1("efibootmgr")) >= 0);
+        } else if (wasBootMenuList) {
+            // A loaded boot menu (the Etch host's menu.lst, or a GRUB2
+            // fallback scope), or the honest not-found/failure presentation.
+            // When the grub-legacy-list returned a "(not found)" config the
+            // deferred grub-list fallback is pending — the smoke step does
+            // NOT advance; the fallback's completion lands here again and
+            // the terminal outcome is then asserted.
+            if (ok && !m_bootMenuLoaded
+                && m_bootMenuRequestVerb == QString::fromLatin1("grub-list")) {
+                // The one-time fallback chain is in flight; wait for it.
+                return;
+            }
+            m_smokeBootMenuOk =
+                (ok && m_bootMenuLoaded && !m_bootMenuRows.empty()
+                 && m_bootMenuTable
+                 && m_bootMenuTable->numRows()
+                        == static_cast<int>(m_bootMenuRows.size()))
+                || (ok && m_bootMenuLoaded && m_bootMenuRows.empty()
+                    && m_bootEntriesDetails
+                    && m_bootEntriesDetails->text().find(
+                           QString::fromLatin1("No boot menu configuration was found")) >= 0)
+                || (!ok && !m_bootMenuLoaded
+                    && m_bootMenuTable && m_bootMenuTable->numRows() == 0);
         } else {
             m_smokeValidateOk = ok;
         }
@@ -12276,6 +14400,18 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     // status, not a per-stage failure — completed stages keep their statuses,
     // the aborted and later stages are "not run (stopped at your request)",
     // and no stage is attributed a failure.
+    // Round 102 (slice 2, modern round-97/98 parity): the interactive menu's
+    // Abort option (option 0) ends the session with helper exit 0 and an
+    // `unchanged|reason:<tool>-aborted` status — an ABORTED run, presented
+    // with the stopped-at-your-request wording and the stop-evidence tail
+    // (never "finished", never a bare no-op).  The force-stop (exit 143 /
+    // the popup Cancel) arrives with `cancelled` already true.
+    const bool menuAborted = !cancelled
+        && repairTranscriptHasAbortStatus(parsed);
+    // The distinct changed-stage count of the transcript (the count the
+    // menu-abort tail names), plus whether any stage changed before the stop.
+    const int changedStageCount = repairTranscriptChangedStageCount(parsed);
+
     const QString failedStageKey = repairFailureStageKey(m_transcript);
     QString failureReason = localizedReason(shortRepairFailureReason(m_transcript));
     if (failureReason.isEmpty()) {
@@ -12286,6 +14422,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     int failed = 0;
     int unchanged = 0;
     int notRun = 0;
+    int aborted = 0;
     bool failureAttributed = false;
     QStringList handledKeys;
     QStringList lines;
@@ -12304,7 +14441,14 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
         QString detail;
         if (found != outcomes.end()) {
             const QString state = found.data();
-            if (changeStatusIsUnchanged(toStd(state))) {
+            if (repairChangeStatusIsAbort(toStd(state))) {
+                // Round 102 (slice 2): the stage the user's Abort choice
+                // stopped reads as aborted with the stopped-at-your-request
+                // wording, never as a no-op success and never a failure.
+                ++aborted;
+                detail = tr("[-] %1 - aborted - stopped at your request")
+                             .arg(title);
+            } else if (changeStatusIsUnchanged(toStd(state))) {
                 ++unchanged;
                 const QString reason = state.startsWith(QString::fromLatin1("unchanged|"))
                     ? localizedReason(state.mid(10)) : QString::fromLatin1("no repair needed");
@@ -12383,12 +14527,26 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     }
 
     QString tail;
-    if (cancelled) {
+    if (cancelled || menuAborted) {
         // Round 16 (ITEM 4e, modern parity): the abort status, never a
         // per-stage failure — completed stages keep their statuses above.
-        tail = tr(
-            "the plan was stopped at your request; no stage failure is "
-            "reported (review the helper output in Logs).");
+        // Round 102 (slice 2): the stop-evidence distinction — the tails are
+        // the modern repairAbortDetail fragments verbatim: a stop after
+        // stages reported changes says so (applied for a menu abort, may
+        // already be applied for a force-stop) and never claims
+        // "no changes were made" after a change.  The "Review the output
+        // before closing" pointer lives in the result popup, like modern.
+        if (menuAborted && changedStageCount > 0) {
+            tail = tr(
+                "%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated")
+                .arg(changedStageCount);
+        } else if (changedStageCount > 0) {
+            tail = tr(
+                "a stage reported a change before the stop; its changes may already be applied");
+        } else {
+            tail = tr(
+                "no changes were made");
+        }
     } else if (failed > 0) {
         tail = tr(
             "%1 stage(s) failed; review the helper output in Logs.").arg(failed);
@@ -12404,7 +14562,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
             "regenerated.");
     }
     QString headline;
-    if (cancelled) {
+    if (cancelled || menuAborted) {
         headline = tr(
             "%1 stopped at your request: [OK] %2 successful "
             "| [-] %3 no repair needed - %4")
@@ -12423,6 +14581,11 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     }
     if (notRun > 0) {
         headline += QString::fromLatin1(" | [-] %1 not run").arg(notRun);
+    }
+    if (aborted > 0) {
+        // Round 102 (slice 2): the aborted stage count stays visible in the
+        // aggregate (the per-stage line above carries the wording).
+        headline += QString::fromLatin1(" | [-] %1 aborted").arg(aborted);
     }
 
     // The block is Repair-tagged so the Repairs log filter shows it.
@@ -12519,6 +14682,22 @@ void LegacyMainWindow::runSmokeStep()
                      false, false, false, false, QString::null,
                      QString::fromLatin1("validate"));
     } else if (m_smokeStep == 2) {
+        // Round 117 (0.2.30 #7): the read-only firmware boot-entries load —
+        // on a BIOS-only host (Etch) the helper fails closed with its
+        // efibootmgr reason and the smoke asserts the honest failure
+        // presentation (empty table + the failure text); a UEFI-capable host
+        // asserts the populated read-only rows instead.
+        loadBootEntries();
+    } else if (m_smokeStep == 3) {
+        // Round 124 (0.2.30 #23): the read-only boot-menu load through the
+        // view dropdown — the Etch host's menu.lst lists its GRUB legacy
+        // entries; the smoke asserts the loaded rows (or the honest
+        // not-found/failure presentation on a menu-less host).
+        if (m_bootEntriesViewCombo) {
+            m_bootEntriesViewCombo->setCurrentItem(1);
+        }
+        loadBootMenuEntries();
+    } else if (m_smokeStep == 4) {
         // Item #8 adjacent: verifySmokeControls() exercises the real commit
         // path via a synthetic setRepairTarget(), which now (correctly)
         // invalidates the scope's cached diagnostics. Capture the step-0
@@ -12551,7 +14730,7 @@ void LegacyMainWindow::runSmokeStep()
         // layouts first.
         QString geometryReport;
         if (m_planGroup && m_toolsGroup && m_planScroll) {
-            m_tabs->setCurrentPage(2);  // Repair page
+            m_tabs->setCurrentPage(m_tabs->indexOf(m_repairPage));  // Repair page
             qApp->sendPostedEvents();
             qApp->processEvents();
             for (QWidget *ancestor = m_planGroup; ancestor;
@@ -12621,17 +14800,30 @@ void LegacyMainWindow::runSmokeStep()
             problems.append(QString::fromLatin1(
                 "layout verification checked only %1 widgets").arg(layoutChecked));
         }
+        // Round 152.5 (ITEM 1): the popup-floor drill — every popup opens on
+        // the Xvfb desktop, is shrunk toward zero, and the REAL achieved
+        // geometry is asserted against the ~60%-of-opening floor.  The modal
+        // popups exec() inside this chain (the pre-armed timer drills each
+        // inside its exec and accepts it), so the whole drill completes
+        // before the summary below.
+        runPopupFloorDrill();
+        if (!m_smokePopupFloorReport.isEmpty()) {
+            geometryReport += m_smokePopupFloorReport;
+        }
         const bool ok = m_smokeDiagnoseOk && m_smokeValidateOk
+            && m_smokeBootEntriesOk && m_smokeBootMenuOk
             && reported == static_cast<int>(keys.size()) && controlsOk
-            && layoutOk && layoutChecked >= 20;
+            && layoutOk && layoutChecked >= 20
+            && m_smokePopupFloorOk;
         if (!problems.isEmpty()) {
             appendLog(QString::fromLatin1("smoke layout/control problems:\n%1").arg(problems));
         }
         const QString summary = QString::fromLatin1(
             "host-diagnose: %1 capability lines parsed; host-validate: %2; "
-            "controls: %3; layout: %4 (%5 widgets checked)")
+            "boot entries: %3; controls: %4; layout: %5 (%6 widgets checked)")
             .arg(reported)
             .arg(m_smokeValidateOk ? QString::fromLatin1("ok") : QString::fromLatin1("incomplete"))
+            .arg(m_smokeBootEntriesOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"))
             .arg(controlsOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"))
             .arg(layoutOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"))
             .arg(layoutChecked)
@@ -12641,12 +14833,232 @@ void LegacyMainWindow::runSmokeStep()
     }
 }
 
+// Round 152.5 (ITEM 1): the popup-floor drill (the smoke-embedded contract —
+// the round-67 rule: smoke assertions over standalone Qt3 probe binaries).
+// Opens every legacy popup on the Xvfb desktop, records the OPENING size,
+// resizes toward zero and reads the REAL achieved geometry (Qt 3.3.7 does
+// not clamp a programmatic resize against setMinimumSize — the minimum is a
+// WM hint only — so the LegacyFlooredDialog resizeEvent clamp is the
+// mechanism this drill proves).  Asserts the achieved floor is at least 55%
+// of the opening in BOTH dimensions, reports the numbers, and folds the
+// verdict into the smoke summary.
+void LegacyMainWindow::runPopupFloorDrill()
+{
+    m_smokePopupFloorOk = true;
+    m_smokePopupFloorReport = QString::null;
+
+    // 1. The repair terminal (the user's shrinkable-to-a-sliver popup) —
+    // non-modal, constructible directly with the production floor.
+    RepairResultDialog *terminal = new RepairResultDialog(this, "smoke-floor-terminal");
+    terminal->setCaption(tr("Smoke popup floor drill"));
+    terminal->resize(760, 460);
+    terminal->setFloor(456, 276);
+    terminal->show();
+    qApp->sendPostedEvents();
+    qApp->processEvents();
+    recordPopupFloorMeasurement(m_smokePopupFloorReport,
+                                QString::fromLatin1("repair terminal"), terminal);
+    terminal->setCloseAllowed(true);
+    terminal->close();
+    qApp->processEvents();
+
+    // 2-4. The modal popups: the pre-armed timer drills the visible dialog
+    // INSIDE its exec loop and accepts it, so the chain proceeds.
+    m_smokePopupFloorExpect = QString::fromLatin1("legacy-hidden-input");
+    QTimer::singleShot(150, this, SLOT(popupFloorDrillTimer()));
+    bool ignoredOk = false;
+    promptHiddenPassword(this, tr("Smoke popup floor drill"),
+                         tr("Smoke popup floor drill input."), &ignoredOk);
+
+    m_smokePopupFloorExpect = QString::fromLatin1("legacy-confirm");
+    QTimer::singleShot(150, this, SLOT(popupFloorDrillTimer()));
+    confirmWrapped(this, tr("Smoke popup floor drill"),
+                   tr("Smoke popup floor drill confirmation text."),
+                   true, tr("Run"), tr("Cancel"),
+                   kHiddenInputMaximumWidth, true);
+
+    m_smokePopupFloorExpect = QString::fromLatin1("legacy-usage-help");
+    QTimer::singleShot(150, this, SLOT(popupFloorDrillTimer()));
+    showUsageHelp();
+
+    // Round 152.8 (ITEM 2): the explicit-width (fixedSize) confirm — the
+    // delete-log shape the user shrank to 22x29 — is drilled too.
+    m_smokePopupFloorExpect = QString::fromLatin1("legacy-confirm");
+    QTimer::singleShot(150, this, SLOT(popupFloorDrillTimer()));
+    confirmWrapped(this, tr("Smoke popup floor drill"),
+                   tr("Smoke popup floor drill fixed-size confirmation text."),
+                   true, tr("Run"), tr("Cancel"),
+                   kDeleteLogConfirmTextWidth, true);
+
+    // Round 153.2 (the complete audit): the unlock popup — the user's
+    // shrinkable-to-22x29 find — is drilled too (the buildUnlockDialog
+    // returns the dialog without the exec, so the drill shows it directly).
+    m_smokePopupFloorExpect = QString::fromLatin1("legacy-unlock-passphrase");
+    QLineEdit *unlockEdit = 0;
+    LegacyFlooredDialog *unlockDialog =
+        static_cast<LegacyFlooredDialog *>(buildUnlockDialog(
+            QString::fromLatin1("/dev/test-crypt"), &unlockEdit));
+    unlockDialog->show();
+    qApp->sendPostedEvents();
+    qApp->processEvents();
+    recordPopupFloorMeasurement(m_smokePopupFloorReport,
+                                QString::fromLatin1("unlock"), unlockDialog);
+    QApplication::postEvent(unlockDialog, new QKeyEvent(QEvent::KeyPress,
+                                                        Qt::Key_Escape, 0, 0));
+    qApp->processEvents();
+
+    if (!m_smokePopupFloorOk) {
+        appendLog(QString::fromLatin1(
+            "smoke popup-floor drill problems:\n%1").arg(m_smokePopupFloorReport));
+    }
+}
+
+void LegacyMainWindow::popupFloorDrillTimer()
+{
+    // Runs INSIDE the modal popup's exec: find the visible floored dialog,
+    // measure, shrink, measure, assert, accept.
+    LegacyFlooredDialog *found = 0;
+    // Qt 3.3.7's QApplication::topLevelWidgets() returns a POINTER to the
+    // internal QWidgetList (not a copy, the Qt4 shape).
+    QWidgetList *tops = QApplication::topLevelWidgets();
+    for (uint index = 0; tops && index < tops->count(); ++index) {
+        QWidget *widget = tops->at(index);
+        if (!widget->isVisible() || widget->name() != m_smokePopupFloorExpect) {
+            continue;
+        }
+        found = static_cast<LegacyFlooredDialog *>(widget);
+        break;
+    }
+    if (!found) {
+        m_smokePopupFloorOk = false;
+        m_smokePopupFloorReport += QString::fromLatin1(
+            "; popup floor (%1): DIALOG NOT FOUND").arg(m_smokePopupFloorExpect);
+        return;
+    }
+    recordPopupFloorMeasurement(m_smokePopupFloorReport,
+                                m_smokePopupFloorExpect, found);
+    // QDialog::accept()/reject()/done() are ALL protected in Qt 3.3.7 —
+    // the public dismissal path is the Escape key event (the default
+    // QDialog::keyPressEvent rejects), which the exec loop consumes and
+    // returns.  The RepairResultDialog's own Escape handling stays untouched
+    // (the smoke drill's terminal is closed via setCloseAllowed above).
+    QApplication::postEvent(found, new QKeyEvent(QEvent::KeyPress,
+                                                 Qt::Key_Escape, 0, 0));
+}
+
+// Round 152.6 (the drag-settle re-assert): re-asserts the floor on every
+// visible floored dialog.  Armed by each dialog's resizeEvent (the 180 ms
+// single-shot), it runs AFTER an interactive WM drag ends — the moment the
+// WM honors a client resize again — so a KDE3-dragged popup snaps back to
+// its ~60%-of-opening floor instead of staying at the sliver size.
+void LegacyMainWindow::reassertPopupFloors()
+{
+    QWidgetList *tops = QApplication::topLevelWidgets();
+    for (uint index = 0; tops && index < tops->count(); ++index) {
+        QWidget *widget = tops->at(index);
+        if (!widget->isVisible()) {
+            continue;
+        }
+        // The floored dialogs are the only LegacyFlooredDialog instances;
+        // the name set is the construction-time set.
+        const QString name = widget->name();
+        if (name == QString::fromLatin1("legacy-hidden-input")
+            || name == QString::fromLatin1("legacy-confirm")
+            || name == QString::fromLatin1("legacy-usage-help")
+            || name == QString::fromLatin1("legacy-repair-result")
+            || name == QString::fromLatin1("smoke-floor-terminal")) {
+            static_cast<LegacyFlooredDialog *>(widget)->reassertFloor();
+        }
+    }
+}
+
+// Round 152.8 (ITEM 1): the deferred last-writer re-assert — hands the
+// pending popups back to the filter so the PMinSize write lands AFTER Qt3's
+// own hint emission.
+void LegacyMainWindow::reassertPopupFloorHints()
+{
+    if (m_popupFloorHintFilter) {
+        m_popupFloorHintFilter->reassertPending();
+    }
+}
+
+void LegacyMainWindow::recordPopupFloorMeasurement(QString &report,
+        const QString &name, QWidget *dialog)
+{
+    const int openW = dialog->width();
+    const int openH = dialog->height();
+    dialog->resize(1, 1);
+    qApp->sendPostedEvents();
+    qApp->processEvents();
+    const int achievedW = dialog->width();
+    const int achievedH = dialog->height();
+    const int minW = QMAX(1, openW * 55 / 100);
+    const int minH = QMAX(1, openH * 55 / 100);
+    const bool ok = achievedW >= minW && achievedH >= minH;
+    if (!ok) {
+        m_smokePopupFloorOk = false;
+    }
+    report += QString::fromLatin1(
+        "; popup floor (%1): open %2x%3 achieved %4x%5 %6")
+        .arg(name).arg(openW).arg(openH).arg(achievedW).arg(achievedH)
+        .arg(ok ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"));
+
+    // Round 153 (the modern popup contract): the button row must be FULLY
+    // visible at the floor, and the hug must keep the bottom edge on the
+    // button row at several widths (no dead gap, no clipped buttons).
+    int buttonBottom = -1;
+    bool buttonsVisible = true;
+    QObjectList *buttonsList = dialog->queryList("QPushButton");
+    for (uint buttonIndex = 0; buttonsList
+         && buttonIndex < buttonsList->count(); ++buttonIndex) {
+        QPushButton *button = (QPushButton *)buttonsList->at(buttonIndex);
+        if (!button->isVisible()) {
+            continue;
+        }
+        const int bottom = button->mapTo(dialog, QPoint(0, 0)).y()
+            + button->height();
+        buttonBottom = QMAX(buttonBottom, bottom);
+    }
+    if (buttonBottom >= 0) {
+        const int gap = dialog->height() - buttonBottom
+            - (dialog->layout() ? dialog->layout()->margin() : 8);
+        buttonsVisible = gap >= 0 && gap <= 10;
+        report += QString::fromLatin1("; buttons %1 (bottom=%2 gap=%3)")
+            .arg(buttonsVisible ? QString::fromLatin1("visible")
+                                : QString::fromLatin1("CLIPPED"))
+            .arg(buttonBottom).arg(gap);
+        if (!buttonsVisible) {
+            m_smokePopupFloorOk = false;
+        }
+    }
+    // The hug walk: narrow (the floor width) then wide (the opening) —
+    // the height follows the re-wrapped content both ways with the bottom
+    // edge on the button row.
+    dialog->resize(achievedW, 1);
+    qApp->sendPostedEvents();
+    qApp->processEvents();
+    const int narrowH = dialog->height();
+    dialog->resize(openW, 1);
+    qApp->sendPostedEvents();
+    qApp->processEvents();
+    const int wideH = dialog->height();
+    const bool hugOk = narrowH >= achievedH - 4 && wideH >= narrowH;
+    report += QString::fromLatin1("; hug narrowH=%1 wideH=%2 %3")
+        .arg(narrowH).arg(wideH)
+        .arg(hugOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"));
+    if (!hugOk) {
+        m_smokePopupFloorOk = false;
+    }
+}
+
 void LegacyMainWindow::startSmokeTest()
 {
     m_smokeMode = true;
     m_smokeStep = 0;
     m_smokeDiagnoseOk = false;
     m_smokeValidateOk = false;
+    m_smokeBootEntriesOk = false;
+    m_smokeBootMenuOk = false;
     // The layout contract is asserted at 1024x768: resize before the first
     // event-loop turn so the verification step sees the final geometry.
     resize(1024, 768);
@@ -12702,19 +15114,25 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             "shell command field lost the in-field command placeholder"));
         ok = false;
     }
-    if (!m_tabs || m_tabs->count() != 7) {
-        problems->append(QString::fromLatin1("tab set missing (expected 7 tabs)"));
+    if (!m_tabs || m_tabs->count() != 8) {
+        problems->append(QString::fromLatin1("tab set missing (expected 8 tabs)"));
         ok = false;
     } else {
         // The Chroot Shell tab label switches to "Host Shell" in host mode
         // (modern updateChrootShellMode); the smoke runs with Host Maintenance
         // active, so expect the host label here. Modern parity: there is no
-        // About tab (Help -> About Boot Bitch is the dialog).
+        // About tab (Help -> About Boot Bitch is the dialog). Round 117
+        // (0.2.30 #7): the read-only EFI boot entries tab sits between
+        // Diagnostics and Repair (the modern position).  Round 125 (0.2.30
+        // #27): this check asserts the WITH-EVIDENCE state — the step-0
+        // host-diagnose has reported the boot-menu capability, so the
+        // dynamic tab is present; the empty-evidence (7-tab) state is
+        // asserted after the synthetic commit below.
         const char *expectedTabs[] = {
-            "Systems", "Diagnostics", "Repair", "Host Shell", "File Copy",
-            "Logs", "Settings"
+            "Systems", "Diagnostics", "EFI boot entries", "Repair",
+            "Host Shell", "File Copy", "Logs", "Settings"
         };
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < 8; ++i) {
             if (m_tabs->label(i) != QString::fromLatin1(expectedTabs[i])) {
                 problems->append(QString::fromLatin1("tab %1 is '%2', expected '%3'")
                                      .arg(i).arg(m_tabs->label(i))
@@ -12800,6 +15218,15 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "busy indicator row lost its reserved height when cleared"));
             ok = false;
         }
+    }
+    // Round 103: the tab info buttons render the rasterized circle-i extracted
+    // from the modern icon atlas; the packaged PNG must resolve through the
+    // same fallback chain the running GUI uses (the button keeps the plain
+    // "i" text fallback when the PNG is missing).
+    if (legacyInfoPixmap().isNull()) {
+        problems->append(QString::fromLatin1(
+            "info-button circle-i badge did not load (legacyInfoPixmap)"));
+        ok = false;
     }
     // Section titles: the page headings plus the sectionTitle label inside
     // every titleless group frame (Qt3 clips QGroupBox titles).
@@ -13635,7 +16062,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             // ancestor chain (bottom-up, so the page's top-level layout runs
             // last and re-queries the nested boxes' heightForWidth).
             const int pageBeforeToolTitles = m_tabs->currentPageIndex();
-            m_tabs->setCurrentPage(2);
+            m_tabs->setCurrentPage(m_tabs->indexOf(m_repairPage));
             qApp->sendPostedEvents();
             qApp->processEvents();
             for (QWidget *ancestor = m_toolTitle->parentWidget(); ancestor;
@@ -13819,12 +16246,12 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     if (m_tabs) {
         const int originalPage = m_tabs->currentPageIndex();
         showLogsTab();
-        if (m_tabs->currentPageIndex() != 5) {
+        if (m_tabs->currentPageIndex() != 6) {
             problems->append(QString::fromLatin1("View > Logs did not select the Logs tab"));
             ok = false;
         }
         showSettingsTab();
-        if (m_tabs->currentPageIndex() != 6) {
+        if (m_tabs->currentPageIndex() != 7) {
             problems->append(QString::fromLatin1("View > Settings did not select the Settings tab"));
             ok = false;
         }
@@ -13926,21 +16353,22 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     }
     // Modern 1:1 capability table: seven columns (the trailing Action column
     // is a read-only placeholder), the 16 modern-mirrored probe rows plus the
-    // two legacy-specific rows (LUKS support and process-namespace isolation),
-    // and the disabled Install Missing Support... button with the modern
-    // tooltip.
+    // two legacy-specific rows (LUKS support and process-namespace isolation)
+    // plus (round 99) the two helper-evidence capability rows (input-devices
+    // and network) in the modern position directly after the gpu row, and the
+    // disabled Install Missing Support... button with the modern tooltip.
     if (m_capabilityTable) {
         if (m_capabilityTable->numCols() != 7
-            || m_capabilityTable->numRows() != capabilitySpecCount) {
+            || m_capabilityTable->numRows() != capabilitySpecCount + 2) {
             problems->append(QString::fromLatin1(
-                "host capability table is %1x%2, expected 18x7")
+                "host capability table is %1x%2, expected 20x7")
                 .arg(m_capabilityTable->numRows())
                 .arg(m_capabilityTable->numCols()));
             ok = false;
         } else {
             const char *expectedHeaders[] = {
                 "Feature", "Command", "Scope", "Status",
-                "Suggested package", "Notes", "Action"
+                "Packages", "Notes", "Action"
             };
             for (int column = 0; column < 7; ++column) {
                 if (m_capabilityTable->horizontalHeader()->label(column)
@@ -13951,7 +16379,29 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 }
             }
             bool unshareRow = false;
-            for (int row = 0; row < capabilitySpecCount; ++row) {
+            int gpuRow = -1;
+            for (int row = 0; row < capabilitySpecCount + 2; ++row) {
+                // Round 105 (ITEM 1): the host table is scoped to the running
+                // host — EVERY row's Scope cell must read "Host" (the mixed
+                // Host/Target/Host+Target scope display is the round-105 bug).
+                if (m_capabilityTable->text(row, 2) != tr("Host")) {
+                    problems->append(QString::fromLatin1(
+                        "host capability row %1 shows scope '%2', expected Host")
+                        .arg(row).arg(m_capabilityTable->text(row, 2)));
+                    ok = false;
+                }
+                // Round 105 (ITEM 2): the status vocabulary is the locked
+                // four-status set (the modern table renders the same words for
+                // the same rows).
+                const QString statusText = m_capabilityTable->text(row, 3);
+                if (statusText != tr("Installed") && statusText != tr("Available")
+                    && statusText != tr("Missing")
+                    && statusText != tr("Missing on this frontend")) {
+                    problems->append(QString::fromLatin1(
+                        "host capability row %1 shows unknown status '%2'")
+                        .arg(row).arg(statusText));
+                    ok = false;
+                }
                 if (m_capabilityTable->text(row, 0)
                     == QString::fromLatin1("Process namespace isolation")) {
                     unshareRow = true;
@@ -13962,10 +16412,58 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                         ok = false;
                     }
                 }
+                if (m_capabilityTable->text(row, 0)
+                    == QString::fromLatin1("GPU driver repair")) {
+                    gpuRow = row;
+                }
             }
             if (!unshareRow) {
                 problems->append(QString::fromLatin1(
                     "legacy unshare capability row missing"));
+                ok = false;
+            }
+            // Round 106 (ITEM 2): the Packages column names the shared
+            // capability-packages table's static names on the host rows (the
+            // parity contract locks them to the legacy capabilitySpecs).
+            for (int pRow = 0; pRow < m_capabilityTable->numRows(); ++pRow) {
+                const QString feature = m_capabilityTable->text(pRow, 0);
+                QString expectedPackage;
+                if (feature == QString::fromLatin1("LVM inspection")) {
+                    expectedPackage = QString::fromLatin1("lvm2");
+                } else if (feature == QString::fromLatin1("Software RAID")) {
+                    expectedPackage = QString::fromLatin1("mdadm");
+                } else if (feature == QString::fromLatin1("extlinux configuration")) {
+                    expectedPackage = QString::fromLatin1("syslinux");
+                } else if (feature == QString::fromLatin1("Kernel repair")) {
+                    expectedPackage = QString::fromLatin1("module-init-tools");
+                }
+                if (!expectedPackage.isEmpty()
+                    && m_capabilityTable->text(pRow, 4) != expectedPackage) {
+                    problems->append(QString::fromLatin1(
+                        "host capability row '%1' shows Packages '%2', expected '%3'")
+                        .arg(feature)
+                        .arg(m_capabilityTable->text(pRow, 4))
+                        .arg(expectedPackage));
+                    ok = false;
+                }
+            }
+            // Round 99 (ITEM 1): the input-devices and network capability
+            // rows sit DIRECTLY after the gpu row (the modern parity).
+            if (gpuRow < 0
+                || m_capabilityTable->text(gpuRow + 1, 0)
+                    != QString::fromLatin1("Input device repair")
+                || m_capabilityTable->text(gpuRow + 2, 0)
+                    != QString::fromLatin1("Network / connectivity repair")) {
+                QString dump;
+                for (int dRow = 0; dRow < m_capabilityTable->numRows(); ++dRow) {
+                    dump += QString::fromLatin1("[%1:'%2'] ")
+                        .arg(dRow)
+                        .arg(m_capabilityTable->text(dRow, 0).left(24));
+                }
+                problems->append(QString::fromLatin1(
+                    "input/network capability rows are not directly after the "
+                    "gpu row (gpuRow=%1 rows: %2)")
+                    .arg(gpuRow).arg(dump));
                 ok = false;
             }
         }
@@ -13993,6 +16491,30 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             }
             m_capabilityTable->setCurrentCell(0, 0);
             m_capabilityTable->selectRow(0);
+        }
+        // Round 105 (ITEM 1): the scope selector isolates the table — the
+        // Repair-target selection shows ONLY the target placeholder (no cached
+        // target evidence exists in the smoke), never a host row.
+        if (m_capabilityScopeSelector) {
+            m_capabilityScopeSelector->setCurrentItem(0); // Repair target
+            refreshCapabilities();
+            bool targetRowsIsolated = true;
+            for (int row = 0; row < m_capabilityTable->numRows(); ++row) {
+                if (m_capabilityTable->text(row, 2) == tr("Host")) {
+                    targetRowsIsolated = false;
+                }
+            }
+            if (!targetRowsIsolated
+                || m_capabilityTable->numRows() != 1
+                || m_capabilityTable->text(0, 0)
+                    != tr("No capability evidence cached")
+                || m_capabilityTable->text(0, 2) != tr("Repair target")) {
+                problems->append(QString::fromLatin1(
+                    "Repair-target capability scope is not isolated from the host rows"));
+                ok = false;
+            }
+            m_capabilityScopeSelector->setCurrentItem(1); // Host
+            refreshCapabilities();
         }
     }
     if (m_capAuthLabel
@@ -14037,6 +16559,30 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             "diagnostic list does not show the friendly titles (first='%1')")
             .arg(m_diagnosticList->firstChild()->text(0)));
         ok = false;
+    }
+    // Round 99 (ITEM 1b): the input and network diagnostics sit directly
+    // BELOW the graphics driver stack diagnostic (the modern round-97
+    // order, mirrored to the live list).
+    if (m_diagnosticList) {
+        QListViewItem *gpuItem = 0;
+        for (QListViewItem *item = m_diagnosticList->firstChild(); item;
+             item = item->nextSibling()) {
+            if (item->text(0) == QString::fromLatin1("Graphics / GPU driver stack")) {
+                gpuItem = item;
+                break;
+            }
+        }
+        if (!gpuItem || !gpuItem->nextSibling()
+            || gpuItem->nextSibling()->text(0)
+                != QString::fromLatin1("Input devices / keyboard")
+            || !gpuItem->nextSibling()->nextSibling()
+            || gpuItem->nextSibling()->nextSibling()->text(0)
+                != QString::fromLatin1("Network / connectivity")) {
+            problems->append(QString::fromLatin1(
+                "input/network diagnostics are not directly after the gpu "
+                "diagnostic"));
+            ok = false;
+        }
     }
 
     // Read-only udev metadata probe: a locked LUKS container must be visible in
@@ -14435,7 +16981,24 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("shell run button did not switch to Run on Host"));
         ok = false;
     }
-    if (m_tabs && m_tabs->label(3) != tr("Host Shell")) {
+    // Round 125 (0.2.30 #27): the synthetic commit above invalidated the
+    // scope's cached diagnostics — the EFI boot entries tab must be HIDDEN
+    // again (the modern gate: absent evidence hides the tab, fail closed),
+    // and the tab bar must sit at 7 tabs.  This is the smoke's empty-evidence
+    // state assertion; the with-evidence state is the 8-tab check above.
+    if (m_tabs && m_tabs->count() != 7) {
+        problems->append(QString::fromLatin1(
+            "boot entries tab visible without cached diagnostics (expected 7 tabs after invalidation, found %1)")
+            .arg(m_tabs->count()));
+        ok = false;
+    } else if (m_tabs && m_bootEntriesPage
+               && m_tabs->indexOf(m_bootEntriesPage) >= 0) {
+        problems->append(QString::fromLatin1(
+            "boot entries tab still present after the diagnostics invalidation"));
+        ok = false;
+    }
+    if (m_tabs && m_chrootTab
+        && m_tabs->label(m_tabs->indexOf(m_chrootTab)) != tr("Host Shell")) {
         problems->append(QString::fromLatin1("Chroot Shell tab label did not switch to Host Shell"));
         ok = false;
     }
@@ -15015,6 +17578,167 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         m_transcript = savedTranscript;
     }
 
+    // Round 102 (slice 2): the aborted-outcome presentation — a
+    // menu-answer-0 abort (`unchanged|reason:<tool>-aborted`, helper exit 0)
+    // renders the stopped-at-your-request summary with the stop-evidence
+    // tail, and a changed-then-aborted transcript names the change instead
+    // of claiming "no changes were made"; the force-stop shape keeps the
+    // uncertain wording (the modern repairAbortDetail parity).
+    {
+        const QString abortTranscript = QString::fromLatin1(
+            "Repair change status input-devices: unchanged|reason:input-aborted\n");
+        const ParsedTranscript abortParsed = parseTranscript(
+            toStd(abortTranscript));
+        const QStringList savedStages = m_activeRepairStages;
+        const QString savedPendingLabel = m_pendingLabel;
+        const std::size_t savedEntries = m_logEntries.size();
+        m_activeRepairStages =
+            QStringList(QString::fromLatin1("input-devices"));
+        m_pendingLabel = tr("Input device repair");
+        appendRepairSummaryBlock(abortParsed, true, false);
+        QString abortBlockText;
+        for (std::size_t e = savedEntries; e < m_logEntries.size(); ++e) {
+            abortBlockText += m_logEntries[e].text;
+            abortBlockText += QString::fromLatin1("\n");
+        }
+        if (abortBlockText.find(QString::fromLatin1(
+                "Input device repair stopped at your request")) < 0
+            || abortBlockText.find(QString::fromLatin1(
+                "[-] Input device repair - aborted - stopped at your request")) < 0
+            || abortBlockText.find(QString::fromLatin1(
+                "no changes were made")) < 0
+            || abortBlockText.find(QString::fromLatin1("1 aborted")) < 0) {
+            problems->append(QString::fromLatin1(
+                "aborted summary lost the stopped-at-your-request wording: %1")
+                .arg(abortBlockText.left(400)));
+            ok = false;
+        }
+        const QString changedAbortTranscript = QString::fromLatin1(
+            "Repair change status input-devices:load-module: changed\n"
+            "Repair change status input-devices: unchanged|reason:input-aborted\n");
+        const ParsedTranscript changedAbortParsed = parseTranscript(
+            toStd(changedAbortTranscript));
+        const std::size_t savedEntries2 = m_logEntries.size();
+        appendRepairSummaryBlock(changedAbortParsed, true, false);
+        QString changedAbortBlockText;
+        for (std::size_t e = savedEntries2; e < m_logEntries.size(); ++e) {
+            changedAbortBlockText += m_logEntries[e].text;
+            changedAbortBlockText += QString::fromLatin1("\n");
+        }
+        if (changedAbortBlockText.find(QString::fromLatin1(
+                "1 stage(s) reported changes before the stop")) < 0
+            || changedAbortBlockText.find(QString::fromLatin1(
+                "no changes were made")) >= 0) {
+            problems->append(QString::fromLatin1(
+                "changed-then-aborted summary lost the applied-changes tail: %1")
+                .arg(changedAbortBlockText.left(400)));
+            ok = false;
+        }
+        const QString forceStopTranscript = QString::fromLatin1(
+            "Repair change status network:module-load: changed\n");
+        const ParsedTranscript forceStopParsed = parseTranscript(
+            toStd(forceStopTranscript));
+        m_activeRepairStages = QStringList(QString::fromLatin1("network"));
+        m_pendingLabel = tr("Network / connectivity repair");
+        const std::size_t savedEntries3 = m_logEntries.size();
+        appendRepairSummaryBlock(forceStopParsed, false, true);
+        QString forceStopBlockText;
+        for (std::size_t e = savedEntries3; e < m_logEntries.size(); ++e) {
+            forceStopBlockText += m_logEntries[e].text;
+            forceStopBlockText += QString::fromLatin1("\n");
+        }
+        if (forceStopBlockText.find(QString::fromLatin1(
+                "Network / connectivity repair stopped at your request")) < 0
+            || forceStopBlockText.find(QString::fromLatin1(
+                "a stage reported a change before the stop")) < 0) {
+            problems->append(QString::fromLatin1(
+                "force-stopped summary lost the changed-before-stop tail: %1")
+                .arg(forceStopBlockText.left(400)));
+            ok = false;
+        }
+        m_activeRepairStages = savedStages;
+        m_pendingLabel = savedPendingLabel;
+    }
+
+    // Round 102 (slice 3): the input-devices + network tool rows are
+    // runnable interactive rows (the gpu/kernels template), never
+    // display-only: when the capability is available the run button arms
+    // with the interactive button text and the plan status names the
+    // interactive-tool state; when it is unavailable the gating reason is
+    // capability-derived, never the removed round-99 display-only wording.
+    {
+        int inputRow = -1;
+        int networkRow = -1;
+        int rowIndex = 0;
+        for (QListViewItem *row = m_toolList->firstChild(); row;
+             row = row->nextSibling(), ++rowIndex) {
+            if (row->text(0) == QString::fromLatin1("Input device repair")) {
+                inputRow = rowIndex;
+            } else if (row->text(0)
+                       == QString::fromLatin1("Network / connectivity repair")) {
+                networkRow = rowIndex;
+            }
+        }
+        if (inputRow < 0 || networkRow < 0) {
+            problems->append(QString::fromLatin1(
+                "tool list rows missing (input-devices/network)"));
+            ok = false;
+        }
+        for (int toolRow = 0; toolRow < 2; ++toolRow) {
+            const int row = toolRow == 0 ? inputRow : networkRow;
+            const char *key = toolRow == 0 ? "input-devices" : "network";
+            const char *buttonText =
+                toolRow == 0 ? "Repair input devices" : "Repair network";
+            if (row < 0) {
+                continue;
+            }
+            QListViewItem *item = m_toolList->firstChild();
+            for (int step = 0; item && step < row; ++step) {
+                item = item->nextSibling();
+            }
+            m_toolList->setSelected(item, true);
+            m_toolList->setCurrentItem(item);
+            updateToolDetails();
+            QString runReason;
+            const bool ready = toolRunReady(row, &runReason);
+            if (m_model.isAvailable(key, toStd(identity()), 0)) {
+                if (!ready) {
+                    problems->append(QString::fromLatin1(
+                        "%1 tool row not runnable: %2")
+                        .arg(QString::fromLatin1(key)).arg(runReason));
+                    ok = false;
+                }
+                if (m_toolRunButton->text()
+                    != QString::fromLatin1(buttonText)) {
+                    problems->append(QString::fromLatin1(
+                        "%1 tool button is '%2', expected %3")
+                        .arg(QString::fromLatin1(key))
+                        .arg(m_toolRunButton->text())
+                        .arg(QString::fromLatin1(buttonText)));
+                    ok = false;
+                }
+            } else if (runReason.find(QString::fromLatin1(
+                           "diagnostic/capability only")) >= 0) {
+                problems->append(QString::fromLatin1(
+                    "%1 tool row still shows the display-only wording: %2")
+                    .arg(QString::fromLatin1(key)).arg(runReason));
+                ok = false;
+            }
+            if (m_toolPlanStatus->text().find(
+                    QString::fromLatin1("Interactive tool - run individually")) < 0) {
+                problems->append(QString::fromLatin1(
+                    "%1 tool lost its interactive plan status")
+                    .arg(QString::fromLatin1(key)));
+                ok = false;
+            }
+        }
+        if (m_toolList->firstChild()) {
+            m_toolList->setSelected(m_toolList->firstChild(), true);
+            m_toolList->setCurrentItem(m_toolList->firstChild());
+            updateToolDetails();
+        }
+    }
+
     // Session list: the live session must be listed and selectable.
     ensureLogFile();
     refreshSessionLogList();
@@ -15288,7 +18012,7 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked,
     if (m_fileCopyDestinationGroup && m_fileCopyOptionsGroup
         && m_fileCopyDestinationTitle && m_fileCopyOptionsTitle
         && m_fileCopyDestinationEdit && m_fileCopyOwnershipCombo) {
-        m_tabs->setCurrentPage(4);
+        m_tabs->setCurrentPage(m_tabs->indexOf(m_fileCopyPage));
         qApp->sendPostedEvents();
         qApp->processEvents();
         for (QWidget *ancestor = m_fileCopyDestinationGroup; ancestor;
@@ -16075,7 +18799,7 @@ void LegacyMainWindow::fileCopyBrowseEntry(const QString &initial)
            : QString::fromLatin1("/home"))
         : initial;
     while (true) {
-        QDialog dialog(this, "legacy-file-copy-destination", true);
+        LegacyFlooredDialog dialog(this, "legacy-file-copy-destination");
         dialog.setCaption(tr("Select repair-system destination"));
         m_fileCopyBrowseEntryDialog = &dialog;
         m_fileCopyBrowseEntryEdit = 0;
@@ -16122,6 +18846,16 @@ void LegacyMainWindow::fileCopyBrowseEntry(const QString &initial)
         // addUniformDialogButtons [OK][Cancel] convention).
         buttons->addWidget(ok);
         buttons->addWidget(cancel);
+        // Round 153.2 (the complete audit): the content-derived width floor
+        // (the path row + the margins — the Browse/OK/Cancel row visible)
+        // + the hug on the wrapping description.
+        dialog.setFloor(QMAX(360, pathRow->sizeHint().width()
+                             + 2 * layout->margin()), 240);
+        dialog.setHug(description, 2 * layout->margin()
+                      + 3 * layout->spacing()
+                      + heading->sizeHint().height()
+                      + pathRow->sizeHint().height()
+                      + buttons->sizeHint().height());
         QObject::connect(cancel, SIGNAL(clicked()), &dialog, SLOT(reject()));
         QObject::connect(ok, SIGNAL(clicked()), &dialog, SLOT(accept()));
         dialog.resize(560, 250);
@@ -16348,7 +19082,7 @@ void LegacyMainWindow::handleFileCopyBrowseResult(const std::string &transcript,
 // dialog around the modal exec; the stack dialog avoids that pattern.)
 void LegacyMainWindow::openFileCopyBrowsePicker()
 {
-    QDialog picker(this, "legacy-file-copy-browse", true);
+    LegacyFlooredDialog picker(this, "legacy-file-copy-browse");
     const bool sourceMode = m_fileCopyBrowseMode == 1;
     picker.setCaption(sourceMode
                           ? tr("Select repair-system source folder")
@@ -16388,6 +19122,12 @@ void LegacyMainWindow::openFileCopyBrowsePicker()
     navigation->addWidget(upButton);
     navigation->addWidget(openButton);
     navigation->addWidget(refreshButton);
+    // Round 153.2 (the complete audit): the content-derived width floor
+    // (the navigation row + the margins); the list grows — the free-
+    // vertical class (the modern picker exception).
+    picker.setFloor(QMAX(360, navigation->sizeHint().width()
+                         + 2 * pickerLayout->margin()), 320);
+    picker.setVerticalLocked(false);
     navigation->addStretch();
     QLabel *pickerStatus = new QLabel(
         tr("Read-only target view; no files are modified."), &picker);
@@ -17381,6 +20121,19 @@ QString LegacyMainWindow::selectedDiagnosticKey() const
     if (!item) {
         return QString::null;
     }
+    // Round 124 (0.2.30 #9): resolve the key through the key -> row map
+    // (the modern UserRole-keyed lookup), never through the rendered title
+    // text — the round-118 running-row marker appended to the title broke
+    // every title->key lookup, which showed the mangled title in the details
+    // pane and an EMPTY results pane for every per-section cache read.
+    for (QMap<QString, QListViewItem *>::const_iterator it = m_diagRowByKey.begin();
+         it != m_diagRowByKey.end(); ++it) {
+        if (it.data() == item) {
+            return it.key();
+        }
+    }
+    // Fallback (the map is empty only when the list was built before the
+    // round-124 wiring): the historical title lookup.
     return mapValue(m_diagKeyByTitle, item->text(0).stripWhiteSpace());
 }
 
@@ -17396,8 +20149,11 @@ void LegacyMainWindow::updateDiagnosticDetails()
         m_diagAvailability->setText(tr("Unavailable"));
         return;
     }
-    const QString key = mapValue(m_diagKeyByTitle,
-                                 item->text(0).stripWhiteSpace());
+    // Round 124 (0.2.30 #9): the key resolves through the key -> row map
+    // (the modern UserRole-keyed lookup) — the round-118 running-row marker
+    // broke the title-text lookup and showed the MANGLED row title here
+    // (the user's "Environment validation …" report).
+    const QString key = selectedDiagnosticKey();
     const QString description = diagnosticDescription(key);
     m_diagTitle->setText(key.isEmpty() ? item->text(0) : diagnosticTitle(key));    m_diagDescription->setText(description);
     QToolTip::add(m_diagnosticList, description);
@@ -17440,13 +20196,194 @@ void LegacyMainWindow::refreshDiagnosticResultsView()
         m_rawView->setText(QString::null);
         return;
     }
-    const QString key = mapValue(m_diagKeyByTitle,
-                                 item->text(0).stripWhiteSpace());
+    // Round 124 (0.2.30 #9): the key resolves through the key -> row map —
+    // the round-118 marker broke the title lookup and left the results pane
+    // EMPTY for every individual diagnostic section.
+    const QString key = selectedDiagnosticKey();
     if (key == QString::fromLatin1("report")) {
         m_rawView->setText(m_fullDiagnosticReport);
         return;
     }
     m_rawView->setText(mapValue(m_diagnosticSections, key));
+}
+
+// Round 108 (0.2.30 #10, modern parity — the round-54 M5 progressive
+// diagnostic cache): the combined `diagnose all` run assembles its streamed
+// section frames incrementally here.  Each COMPLETED section commits into
+// m_diagnosticSections and the Results pane the moment its closing boundary
+// arrives, so the per-check rows fill live instead of all at completion.
+// The completion re-parse overwrites the values with identical slices and
+// the existing fail-closed paths clear the whole register, so the completion
+// signal and the invalidation model are unchanged (see the declaration block
+// in LegacyMainWindow.h).
+void LegacyMainWindow::resetProgressiveDiagnosticAssembly()
+{
+    // Round 118 (modern parity): any leftover running-row marker is display
+    // stale once the assembly resets (run start or finish).
+    setDiagnosticRowRunning(m_progressiveRunningKey, false);
+    m_progressiveRunningKey = QString::null;
+    m_progressiveLines.clear();
+    m_progressivePendingKey = QString::null;
+    m_progressiveFrameStart = -1;
+}
+
+void LegacyMainWindow::feedProgressiveDiagnosticLine(const QString &line)
+{
+    if (!m_pendingDiagnostic || !m_pendingDiagnosticKey.isEmpty()) {
+        // Only the combined all/report run assembles progressively; the
+        // individual single-key run commits at completion exactly as before.
+        return;
+    }
+    m_progressiveLines.append(line);
+    // Bound the assembly buffer: a runaway helper can never grow it without
+    // limit.  Dropping the oldest lines loses the pending section's frame
+    // start; that section is then skipped (the completion re-parse still
+    // stores it), which degrades the progressive display, never the final
+    // register.
+    if (static_cast<int>(m_progressiveLines.count()) > kProgressiveMaxLines) {
+        const int drop = static_cast<int>(m_progressiveLines.count())
+                         - kProgressiveMaxLines + kProgressiveDropChunk;
+        QStringList kept;
+        for (int index = drop;
+             index < static_cast<int>(m_progressiveLines.count()); ++index) {
+            kept.append(m_progressiveLines[index]);
+        }
+        m_progressiveLines = kept;
+        if (m_progressiveFrameStart >= 0) {
+            m_progressiveFrameStart -= drop;
+            if (m_progressiveFrameStart < 0) {
+                m_progressiveFrameStart = -1;
+            }
+        }
+    }
+    if (!line.startsWith(QString::fromLatin1("Diagnostic: "))) {
+        return;
+    }
+    const QString key = line.mid(
+        QString::fromLatin1("Diagnostic: ").length()).stripWhiteSpace();
+    bool known = false;
+    for (int i = 0; i < diagnosticSpecCount; ++i) {
+        if (key == QString::fromLatin1(diagnosticSpecs[i].key)) {
+            known = true;
+            break;
+        }
+    }
+    if (!known || key == QString::fromLatin1("report")) {
+        // Unknown marker or the damaged-recovery report frame: commit
+        // nothing (the completion parse is authoritative for it).
+        return;
+    }
+    // The new frame's opening divider sits three lines above its header
+    // (divider, title, divider, header).  A non-matching signature falls
+    // back to the header line itself, mirroring the end-of-run parser's
+    // fallback.
+    const int count = static_cast<int>(m_progressiveLines.count());
+    int newFrameStart = count - 4;
+    if (newFrameStart < 0
+        || !isDiagnosticSectionDivider(m_progressiveLines[count - 2])
+        || !isDiagnosticSectionDivider(m_progressiveLines[newFrameStart])
+        || m_progressiveLines[count - 3].isEmpty()
+        || isDiagnosticSectionDivider(m_progressiveLines[count - 3])) {
+        newFrameStart = count - 1;
+    }
+    if (!m_progressivePendingKey.isEmpty() && m_progressiveFrameStart >= 0) {
+        QStringList slice;
+        for (int index = m_progressiveFrameStart; index < newFrameStart; ++index) {
+            slice.append(m_progressiveLines[index]);
+        }
+        commitProgressiveDiagnosticSection(
+            m_progressivePendingKey,
+            slice.join(QString::fromLatin1("\n")).stripWhiteSpace());
+    }
+    m_progressivePendingKey = key;
+    m_progressiveFrameStart = newFrameStart;
+    // Round 118 (modern parity, performance UX): the section is now
+    // streaming — move the running-row marker onto it (restoring the
+    // previous row).  Display-only, like the modern assembler's
+    // section-start callback.
+    setDiagnosticRowRunning(m_progressiveRunningKey, false);
+    m_progressiveRunningKey = key;
+    setDiagnosticRowRunning(key, true);
+}
+
+void LegacyMainWindow::finishProgressiveDiagnosticRun()
+{
+    if (!m_pendingDiagnostic || !m_pendingDiagnosticKey.isEmpty()
+        || m_progressivePendingKey.isEmpty() || m_progressiveFrameStart < 0) {
+        resetProgressiveDiagnosticAssembly();
+        return;
+    }
+    QStringList slice;
+    for (int index = m_progressiveFrameStart;
+         index < static_cast<int>(m_progressiveLines.count()); ++index) {
+        slice.append(m_progressiveLines[index]);
+    }
+    commitProgressiveDiagnosticSection(
+        m_progressivePendingKey,
+        slice.join(QString::fromLatin1("\n")).stripWhiteSpace());
+    // Round 118 (modern parity): the streaming phase is over — restore any
+    // row the commits did not already restore.
+    setDiagnosticRowRunning(m_progressiveRunningKey, false);
+    m_progressiveRunningKey = QString::null;
+    resetProgressiveDiagnosticAssembly();
+}
+
+// Round 118 (modern parity, performance UX): the running-row display.
+// While the combined diagnostic run streams, the row whose section is
+// currently streaming shows its title plus an ellipsis, so progress is
+// visible from the run start instead of only at each section's closing
+// boundary.  Display-only: the per-section register and the completion
+// paths never consult it, and every exit path restores the plain titles.
+// Round 124 (0.2.30 #9) FIX: two defects shipped in the round-118 form —
+// (1) the marker literal was `QString::fromLatin1(" …")`: fromLatin1
+// interprets the UTF-8 source bytes (E2 80 A6) as Latin-1 code points, so
+// the Etch list rows literally carried "â<ctrl>¦" (the user's "mangled at
+// end of each string"); the Etch-safe ASCII ellipsis is used instead (the
+// D1/round-104 ASCII-marker ruling, like the round-34 dash separators);
+// (2) the restore pass looked the row up BY ITS TITLE TEXT — the marked
+// text never equals the plain title, so no row was ever restored and every
+// title lookup downstream (selectedDiagnosticKey) failed, emptying the
+// per-section results pane.  The lookup now goes through the key -> row
+// map (the modern UserRole-keyed lookup), so the marker is applied and
+// removed reliably.
+void LegacyMainWindow::setDiagnosticRowRunning(const QString &key, bool running)
+{
+    if (!m_diagnosticList || key.isEmpty()) {
+        return;
+    }
+    QMap<QString, QListViewItem *>::iterator found = m_diagRowByKey.find(key);
+    if (found == m_diagRowByKey.end() || !found.data()) {
+        return;
+    }
+    const QString title = diagnosticTitle(key);
+    found.data()->setText(0, running
+        ? title + QString::fromLatin1(" ...")
+        : title);
+}
+
+void LegacyMainWindow::commitProgressiveDiagnosticSection(const QString &key,
+                                                          const QString &section)
+{
+    if (section.stripWhiteSpace().isEmpty() || !m_running || !m_pendingDiagnostic
+        || !m_pendingDiagnosticKey.isEmpty()) {
+        return;
+    }
+    // A scope change while the request was streaming: the completion path
+    // invalidates this run; never cache one scope's evidence as another's.
+    if (identity() != m_pendingIdentity) {
+        return;
+    }
+    m_diagnosticSections.insert(key.lower(), section.stripWhiteSpace());
+    // Round 118 (modern parity, performance UX): the committed row is no
+    // longer running — restore its plain title (the section-start marker
+    // already moved to the next section).
+    setDiagnosticRowRunning(key, false);
+    if (m_progressiveRunningKey == key) {
+        m_progressiveRunningKey = QString::null;
+    }
+    // Re-render the Diagnostics rows: the selected check's results pane now
+    // shows the fresh evidence while the run continues.
+    refreshDiagnosticResultsView();
 }
 
 void LegacyMainWindow::updateActionStates()
@@ -17464,6 +20401,9 @@ void LegacyMainWindow::updateActionStates()
     updatePlanView();
     updatePlanChecks();
     updateDeviceFilterChecks();
+    // Round 117 (0.2.30 #7) + round 124 (0.2.30 #23): the Boot entries tab's
+    // view dropdown and status/scope labels follow the same scope/run state.
+    updateBootEntriesControls();
 
     // Round 21 (modern cancel-surface parity): every Cancel affordance arms
     // only while its request kind owns the helper — the Diagnostics page's
@@ -18134,11 +21074,20 @@ void LegacyMainWindow::refreshLogView()
         // the workflow rows accept as a kind-only match.
         QString kindWord;    // APPLICATION | DIAGNOSTIC | REPAIR (from the header)
         QString diagKey;     // the current "Diagnostic: <key>" marker
+        // Round 97 (modern parity): a prior session renders NEWEST-first,
+        // exactly like the live register. The scan still walks the file
+        // forward (a header classifies the lines that follow it), so the
+        // filtered lines are collected as whole ENTRIES (one per
+        // "---- CATEGORY ----" block) and the entries are then emitted in
+        // reverse order; each entry's internal line order is untouched.
+        QStringList filteredEntries;
+        QStringList currentBlock;
         for (QStringList::ConstIterator it = m_priorLogLines.begin();
              it != m_priorLogLines.end(); ++it) {
             const QString line = *it;
-            if (line.startsWith(QString::fromLatin1("---- "))
-                && line.endsWith(QString::fromLatin1(" ----"))) {
+            const bool entryHeader = line.startsWith(QString::fromLatin1("---- "))
+                && line.endsWith(QString::fromLatin1(" ----"));
+            if (entryHeader) {
                 const QString word = line.mid(5, line.length() - 10);
                 kindWord = (word == QString::fromLatin1("DIAGNOSTIC"))
                     ? QString::fromLatin1("DIAGNOSTIC")
@@ -18163,9 +21112,20 @@ void LegacyMainWindow::refreshLogView()
                     ? LogEntry::Repair
                     : LogEntry::Application);
             entry.diagnostic = diagKey;
-            if (logLinePassesFilter(entry)) {
-                m_logView->append(line);
+            if (!logLinePassesFilter(entry)) {
+                continue;
             }
+            if (entryHeader && !currentBlock.isEmpty()) {
+                filteredEntries.append(currentBlock.join(QString::fromLatin1("\n")));
+                currentBlock.clear();
+            }
+            currentBlock.append(line);
+        }
+        if (!currentBlock.isEmpty()) {
+            filteredEntries.append(currentBlock.join(QString::fromLatin1("\n")));
+        }
+        for (int i = static_cast<int>(filteredEntries.size()) - 1; i >= 0; --i) {
+            m_logView->append(filteredEntries[i]);
         }
         // Round 36 (Etch #5): a rebuild lands on the top of the document
         // (modern setPlainText() parity), never on the appended tail.

@@ -40,7 +40,7 @@ for check_tool in e2fsck fsck.fat btrfs xfs_repair fsck.exfat ntfsfix fsck.f2fs 
 done
 
 # The capability key is present and keeps every existing key unchanged.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER"
 grep -Fq 'File system check %s: %s uuid=%s mount=%s tool=%s result=%s' "$HELPER"
 grep -Fq 'File system check detail %s: tool=%s output=%s' "$HELPER"
 grep -Fq 'File system check summary: devices=0 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=0' "$HELPER"
@@ -716,6 +716,41 @@ mount_snapshot_top() {
     return 0
 }
 snapshot_free_space_ok() { return 0; }
+# Round 85: the input/network capability probes stay fixture-scoped: the
+# sandbox scope has no devices, journal, images or modules, so the evidence
+# collectors are fixed to the deterministic empty state (never the recovery
+# host's real /proc, /sys, /lib/modules or /boot).
+input_collect_evidence() {
+    INPUT_EVIDENCE_COLLECTED=1
+    INPUT_DEVICES=(); INPUT_DEVICE_BUS=(); INPUT_DEVICE_CLASS=(); INPUT_DEVICE_DRIVER=()
+    INPUT_BOOTLOG_DEVICES=()
+    INPUT_LAYOUT="none-detected"
+    INPUT_LOADED_MODULES="none"; INPUT_BUILTIN_MODULES="none"
+    INPUT_AVAILABLE_MODULES="none"; INPUT_BLACKLISTED_MODULES="none"
+    INPUT_MISSING_MODULES="none"
+    INPUT_BUS_CONTROLLER=""
+    INPUT_INITRAMFS_INCLUSION="none-detected"
+    INPUT_INITRAMFS_PROOF=""; INPUT_MODULE_OWNERSHIP=""
+    INPUT_JOURNAL_COUNT="0"; INPUT_JOURNAL_CLASSES="none"
+    INPUT_FIRMWARE_FAILURES="none"
+    INPUT_QUIRK_STATE="none"
+    INPUT_LUKS_EXPECTED="unknown"
+    INPUT_VERDICT="ok"
+}
+network_collect_evidence() {
+    NETWORK_EVIDENCE_COLLECTED=1
+    NETWORK_CONFIG_BACKEND="none"; NETWORK_CONFIG_NOTE=""
+    NETWORK_ADAPTERS=(); NETWORK_ADAPTER_STATES=(); NETWORK_ADAPTER_NOTE=""
+    NETWORK_BOUND_MODULES=""; NETWORK_PCI_DEVICES=(); NETWORK_BOOTLOG_ADAPTERS=()
+    NETWORK_LOADED_MODULES="none"; NETWORK_BLACKLISTED_MODULES="none"
+    NETWORK_AVAILABLE_MODULES="none"
+    NETWORK_FIRMWARE="none"; NETWORK_FIRMWARE_MISSING="none"
+    NETWORK_DEFAULT_ROUTE="none"; NETWORK_ADDRESSES="none"
+    NETWORK_DNS_CHAIN="missing"; NETWORK_DNS_SERVERS="none"
+    NETWORK_LEASE_GATEWAY="none"; NETWORK_REACHABILITY="unknown"
+    NETWORK_JOURNAL_COUNT="0"; NETWORK_JOURNAL_FIRMWARE_FAILURES="none"
+    NETWORK_FAILURE_CLASS="no-adapter"
+}
 eval "\${HARNESS_CODE:?missing HARNESS_CODE}"
 HARNESS
 
@@ -811,12 +846,18 @@ grep -Fqx 'Repair capability evidence filesystem: scope filesystems unresolved' 
     || { echo "FAIL: missing unresolved filesystem evidence" >&2; exit 1; }
 grep -Fqx 'Repair tool validate: available' <<<"$cap_unresolved" \
     || { echo "FAIL: existing capability keys changed" >&2; exit 1; }
-for cap_key in dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
+for cap_key in dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
     grep -Eq "^Repair tool $cap_key: " <<<"$cap_unresolved" \
         || { echo "FAIL: existing capability key missing: $cap_key" >&2; exit 1; }
 done
-[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 15 ]] \
-    || { echo "FAIL: expected 15 capability keys" >&2; exit 1; }
+[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 17 ]] \
+    || { echo "FAIL: expected 17 capability keys" >&2; exit 1; }
+# The input-device/network capability rows are evidence-driven: the empty
+# fixture reports the fail-closed no-evidence / no-adapter reasons.
+grep -Eq '^Repair tool input-devices: unavailable\|reason:no-input-evidence' <<<"$cap_unresolved" \
+    || { echo "FAIL: missing input-devices no-input-evidence capability line" >&2; exit 1; }
+grep -Eq '^Repair tool network: unavailable\|reason:network-unavailable' <<<"$cap_unresolved" \
+    || { echo "FAIL: missing network-unavailable capability line" >&2; exit 1; }
 # Running-host maintenance adds host-scope capability evidence but must never
 # become a `Repair tool` key; target scope never emits the host-only lines
 # (the storage-stack markers are scope-neutral and appear in both scopes).
@@ -830,8 +871,8 @@ TARGET_INITRAMFS_BACKEND=mkinitcpio
 TARGET_BOOTLOADER_BACKEND=grub
 diagnostic_repair_capabilities
 ')"
-[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 15 ]] \
-    || { echo "FAIL: host scope changed the 15 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
+[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 17 ]] \
+    || { echo "FAIL: host scope changed the 17 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
 grep -Eq '^Host snapshot rollback: (available|unavailable\|)' <<<"$host_caps" \
     || { echo "FAIL: host snapshot rollback capability line is missing" >&2; exit 1; }
 grep -Eq '^Host reboot: (available|unavailable\|)' <<<"$host_caps" \
@@ -1335,8 +1376,8 @@ ROOT_DEVICE=/dev/test-root
 filesystem_repair_tool() { return 1; }
 diagnostic_repair_capabilities
 ')"
-grep -Fqx 'Repair tool filesystem: unavailable|reason:no-filesystem-check-tool' <<<"$cap_notools" \
-    || { echo 'FAIL: no-tools filesystem capability did not fail closed' >&2; grep '^Repair tool filesystem' <<<"$cap_notools" >&2; exit 1; }
+grep -Fqx 'Repair tool filesystem: unavailable|reason:no-filesystem-check-tool|param:e2fsck' <<<"$cap_notools" \
+    || { echo 'FAIL: no-tools filesystem capability did not fail closed with the named tool' >&2; grep '^Repair tool filesystem' <<<"$cap_notools" >&2; exit 1; }
 
 # A scope with no supported filesystem type fails closed with its own reason.
 cap_unsupported="$(run_harness '
@@ -1433,11 +1474,13 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report emitted duplicate capability preambles' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
     || { echo 'FAIL: combined report emitted duplicate capability evidence headers' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 15 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 17 ]] \
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
-[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
-    || { echo 'FAIL: combined report lost capability evidence lines' >&2; exit 1; }
-[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 17 ]] \
+for comb_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
+    [[ "$(grep -c "^Repair capability evidence $comb_ev_key: " <<<"$combined_report")" -eq 1 ]] \
+        || { echo "FAIL: combined report lost the capability evidence line for $comb_ev_key" >&2; exit 1; }
+done
+[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 19 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }
@@ -1446,6 +1489,12 @@ grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
 # entry/target selection like every other section.
 grep -Fqx 'Diagnostic: filesystem' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the File systems diagnostic section' >&2; exit 1; }
+# 0.2.30 Phase 1: the new input/network evidence sections join the combined
+# report (after LUKS, before the File systems tail).
+grep -Fqx 'Diagnostic: input' <<<"$combined_report" \
+    || { echo 'FAIL: combined report lost the Input devices section' >&2; exit 1; }
+grep -Fqx 'Diagnostic: network' <<<"$combined_report" \
+    || { echo 'FAIL: combined report lost the Network section' >&2; exit 1; }
 grep -Fq 'File system check summary:' <<<"$combined_report" \
     || { echo 'FAIL: combined report File systems section did not run the read-only check' >&2; exit 1; }
 

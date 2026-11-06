@@ -1,6 +1,7 @@
 <RCC>
   <qresource prefix="/data">
     <file alias="repair-diagnostic-map.tsv">../data/repair-diagnostic-map.tsv</file>
+    <file alias="capability-packages.tsv">../data/capability-packages.tsv</file>
   </qresource>
   <qresource prefix="/icons">
     <file alias="org.bootrepair.BootRepair.png">org.bootrepair.BootRepair.png</file>

@@ -83,13 +83,13 @@ grep -q 'Legacy feature ' "$PARSER" \
     || fail "parser lost the 'Legacy feature' prefix"
 grep -q 'Legacy config ' "$PARSER" \
     || fail "parser lost the 'Legacy config' prefix"
-for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
+for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
     grep -q "\"$key\"" "$PARSER" || fail "capability key missing from the parser: $key"
 done
 for feature in file-copy shell host-shell host-maintenance snapshots host-default; do
     grep -q "\"$feature\"" "$PARSER" || fail "legacy feature key missing from the parser: $feature"
 done
-for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage filesystem fstab btrfs mapper luks report; do
+for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage filesystem fstab btrfs mapper luks input network report; do
     grep -q "\"$key\"" "$PARSER" || fail "diagnostic key missing from the parser: $key"
 done
 grep -q 'legacyFeatureAvailable' "$PARSER" || fail "parser lost the fail-closed legacy feature gate"
@@ -99,7 +99,7 @@ for key in fstab inittab menu-lst crypttab modules interfaces sources-list apt-c
 done
 grep -q 'configFileAvailable' "$PARSER" || fail "parser lost the fail-closed configuration probe gate"
 grep -q 'configFileState' "$PARSER" || fail "parser lost the configuration state helper"
-pass "15-key evidence contract + 6 legacy feature probes + 8 Etch config keys + 18 diagnostic keys"
+pass "17-key evidence contract + 6 legacy feature probes + 8 Etch config keys + 20 diagnostic keys"
 
 # --- Qt3 widget/toolkit usage ------------------------------------------------
 for symbol in QMainWindow QListView QTextEdit QTabWidget QProcess; do
@@ -460,7 +460,7 @@ grep -q 'Privilege elevation' "$WINDOW" \
 grep -q 'm_settingsElevationLabel' "$WINDOW" \
     || fail "Settings lost the privileged-authorization support label"
 # Modern 1:1 Logs filter combo: All entries / Diagnostics / Repairs / the
-# three workflows / the 18 diagnostic section titles.
+# three workflows / the 20 diagnostic section titles.
 for filter in 'All entries' 'Diagnostics' 'Repairs' 'File system repair' \
     'Package repair' 'File copy'; do
     grep -q "$filter" "$WINDOW" || fail "GUI lost a log filter option: $filter"
@@ -653,13 +653,14 @@ grep -q 'unavailable: see the helper.s Legacy feature shell: probe reason above'
 pass "chroot shell wired to shell/host-shell with probe + session gating and host-mode labels"
 
 # --- tab parity, Systems panel, unlock status and Logs session/search --------
-# Modern parity: seven tabs (the About tab is gone; Help -> About Boot Bitch
-# opens the dialog).
-for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings'; do
+# Modern parity: eight tabs (the About tab is gone; Help -> About Boot Bitch
+# opens the dialog; round 117 added the read-only EFI boot entries tab —
+# 0.2.30 #7).
+for tab in 'Systems' 'Diagnostics' 'EFI boot entries' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings'; do
     grep -q "\"$tab\"" "$WINDOW" || fail "GUI lost a modern-parity tab: $tab"
 done
 grep -q 'buildAboutTab' "$WINDOW" && fail "About tab still present"
-grep -q 'expected 7 tabs' "$WINDOW" || fail "smoke tab-count assertion still expects 8 tabs"
+grep -q 'expected 8 tabs' "$WINDOW" || fail "smoke tab-count assertion still expects 7 tabs"
 for marker in 'Developer:' 'CaptainMorgan12' 'Qt 3.3.x frontend' \
     'Lock Administrator Session'; do
     grep -q "$marker" "$WINDOW" || fail "About dialog marker missing: $marker"
@@ -667,6 +668,23 @@ done
 for marker in 'Selected drive details' 'Connection:' 'UUID:' 'Protection:' 'updateDriveDetails'; do
     grep -q "$marker" "$WINDOW" || fail "Systems details panel marker missing: $marker"
 done
+# Round 117 (0.2.30 #7) + round 124 (0.2.30 #23): the Boot entries tab
+# markers — the read-only efi-list wiring, the six firmware columns, the
+# no-edit surface, and the EFI Entries / Boot Menu view dropdown with the
+# read-only grub-legacy-list (+ grub-list fallback) boot-menu view.
+for marker in 'buildBootEntriesTab' 'efi-list' 'loadBootEntries' \
+    'applyBootEntriesTranscript' 'bootEntriesSelectionChanged' \
+    'setReadOnly(true)' 'setSorting(false)' \
+    'm_bootEntriesViewCombo' 'bootEntriesViewChanged' 'loadBootMenuEntries' \
+    'applyBootMenuTranscript' 'bootMenuSelectionChanged' \
+    'grub-legacy-list' 'Boot Menu'; do
+    grep -q "$marker" "$WINDOW" || fail "Boot entries tab marker missing: $marker"
+done
+grep -q 'm_bootEntriesLoadButton' "$WINDOW" \
+    && fail "Boot entries tab still wires the round-117 Load Entries button (the view dropdown replaces it)"
+grep -q 'efi-reorder' "$WINDOW" && fail "Boot entries tab wires an edit verb (out of scope)"
+grep -q 'efi-delete' "$WINDOW" && fail "Boot entries tab wires a delete verb (out of scope)"
+grep -q 'efi-rename' "$WINDOW" && fail "Boot entries tab wires a rename verb (out of scope)"
 for marker in 'Unlock status' 'm_unlockStatusCache' 'State: unlocked' 'State: locked' 'visibleMapperForDisk'; do
     grep -q "$marker" "$WINDOW" || fail "unlock status marker missing: $marker"
 done
@@ -908,8 +926,10 @@ grep -q 'setChildrenCollapsible(false)' "$WINDOW" \
 grep -q 'setMinimumSize(820, 600)' "$WINDOW" || fail "window minimum size contract changed"
 grep -q 'verifyLayout' "$WINDOW" || fail "GUI lost the programmatic layout verification"
 grep -q 'verifySmokeControls' "$WINDOW" || fail "GUI lost the smoke control verification"
-grep -q 'controls: %3; layout: %4' "$WINDOW" \
+grep -q 'controls: %4; layout: %5' "$WINDOW" \
     || fail "--smoke-test does not report the controls/layout results"
+grep -q 'boot entries: %3' "$WINDOW" \
+    || fail "--smoke-test does not report the boot-entries step result"
 pass "layout guards and the extended --smoke-test coverage"
 
 # --- headless CLI before QApplication ---------------------------------------
@@ -972,6 +992,30 @@ grep -qF 'boot-repair-legacy-shield.png' "$WINDOW" \
 grep -qF 'setText(tr("[OK]"))' "$WINDOW" \
     || fail "the green [OK] text fallback is gone from the host card"
 pass "legacy shield badge extracted from the modern icon atlas (PySide6 script, [OK] fallback)"
+
+# --- Round 103: the tab info-button circle-i badge --------------------------
+# The tab info buttons render the MONOCHROME circle-i extracted from the
+# shared modern icon atlas (resources/icons/atlas/info.svg, the same asset
+# the modern contextHelpButton renders through themedIcon("help-contextual")),
+# generated by the fail-fast PySide6/QtSvg script, and loaded by the GUI
+# (legacyInfoPixmap) with the plain "i" text fallback when the PNG is missing.
+INFO_SCRIPT="$GUI_DIR/data/make-info-icon.py"
+[[ -f "$INFO_SCRIPT" ]] || fail "missing legacy info-icon script"
+grep -q 'resources/icons/atlas/info.svg' "$INFO_SCRIPT" \
+    || fail "info-icon script no longer extracts the modern atlas asset"
+grep -q 'PySide6' "$INFO_SCRIPT" \
+    || fail "info-icon script no longer renders through the Qt SVG engine"
+grep -q 'sys.exit' "$INFO_SCRIPT" \
+    || fail "info-icon script does not fail when the atlas asset is missing"
+INFO_PNG="$GUI_DIR/data/boot-repair-legacy-info-18x18.png"
+[[ -f "$INFO_PNG" ]] || fail "missing generated legacy info badge: $INFO_PNG"
+grep -q 'legacyInfoPixmap' "$WINDOW" \
+    || fail "GUI does not load the info badge through legacyInfoPixmap"
+grep -qF 'boot-repair-legacy-info.png' "$WINDOW" \
+    || fail "GUI does not resolve the packaged info badge path"
+grep -qF 'button->setText(QString::fromLatin1("i"))' "$WINDOW" \
+    || fail "the plain i text fallback is gone from the info button"
+pass "legacy info-button circle-i extracted from the modern icon atlas (PySide6 script, i fallback)"
 
 # --- B3 hardening: secrets/logs/bounded waits (A10-01/06/07/08/09) ----------
 grep -q '<config-write content redacted>' "$WINDOW" \

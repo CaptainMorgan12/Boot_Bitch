@@ -761,10 +761,21 @@ bool HelperRunner::authenticateElevation(const QByteArray &secret, QString *erro
     // instead of terminating the GUI.
     {
         ScopedSigPipeIgnore ignoreSigPipe;
+        // Round 127 (C5, the round-111 writeSecretFile class): the secret
+        // arrives as `password.local8Bit()` — a Qt 3.3.7 QCString whose
+        // size() INCLUDES the terminating NUL.  Strip exactly one trailing
+        // NUL before the write loop (never a blanket trim): no legitimate
+        // payload can end in a NUL (the passphrase comes from a QLineEdit),
+        // so the strip is lossless by construction — the same rationale as
+        // the round-111 writeSecretFile fix.
+        std::size_t payloadLen = static_cast<std::size_t>(secret.size());
+        if (payloadLen > 0 && secret.data()[payloadLen - 1] == '\0') {
+            --payloadLen;
+        }
         std::size_t offset = 0;
-        while (offset < static_cast<std::size_t>(secret.size())) {
+        while (offset < payloadLen) {
             const ssize_t written = ::write(inputPipe[1], secret.data() + offset,
-                                            static_cast<std::size_t>(secret.size()) - offset);
+                                            payloadLen - offset);
             if (written < 0) {
                 if (errno == EINTR) {
                     continue;

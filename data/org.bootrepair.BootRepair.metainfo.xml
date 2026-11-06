@@ -320,6 +320,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.30" date="2026-10-27">
+      <description>
+        <p>Planned scope for this development cycle: input-device and network diagnostics and repair, together with the carried refinements from the 0.2.29 Known notes (the Ukrainian catalog wording, the legacy unlock keyfile trailing byte, the translation parity backlog and the Alpine EFI reuse provenance).</p>
+      </description>
+    </release>
     <release version="0.2.29" date="2026-10-27">
       <description>
         <p>Host/target repair-environment isolation hardening, the Snapshots tab visible whenever a snapshot inventory exists, splitter and plan-frame layout alignment, in-run confirmations for package-mutating repair stages, graphical-login repair on every service manager (including the black-screen-after-unlock class), cancel/cache/shell and session-log fixes in both editions, and a security hardening pass over the privileged backend and both GUIs.</p>

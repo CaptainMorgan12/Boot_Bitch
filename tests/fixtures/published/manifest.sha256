@@ -106,3 +106,21 @@ c7c7b108239d52d725f99d438a0ccfa25fca053ea5afe3110e4b61eeea8d236d  README-0.2.24.
 768e9ece07ff710479bb7e1189b306981714511c3bbef2c538e2dc0eadb73506  README-0.2.25.section
 b06a0f026416abd949da9888fbcaf4fc1b6c2fff737cc7a89823145dc12030b5  README-0.2.26.section
 79481cb25c8817ceca9dbce86c3369bc189e15081cc14158cc6fe08e74d31cb2  README-0.2.27.section
+#
+#   - 0.2.28 and 0.2.29 README/CHANGELOG sections, docs/release-notes-*.md and
+#     the Development capture files (SHA256SUMS + release notes): frozen in
+#     round 78 after publishing 0.2.29 (the fixture freeze step was missed at
+#     both publishes; the live sections were verified byte-identical to the
+#     v0.2.28/v0.2.29 tag content first). From this point both releases are
+#     immutable like the older ones; the exception is not reusable.
+#
+336150c30ea936095fee2df1ed060e2b88d1c2b9a52258f5c02d8aa2bc72baae  captures/release-0.2.28/release-notes-0.2.28.md
+fa9849fd46da2d75d43b76b4693fdb90318d509a6214c66ad0143c86aa3b2fbd  captures/release-0.2.28/SHA256SUMS
+160ab098239adce9c3572a5d1eebe6807116e853f64f37ca94522e0721100ed6  captures/release-0.2.29/release-notes-0.2.29.md
+7885d8d8c4209d87f3a2a2f0c4f79d0d4fc58f71b92ffc9a8caa89f48d716d47  captures/release-0.2.29/SHA256SUMS
+a0e0f5a74535db4962b567fb4e98a1f2144e9861ec79ffdf3d8d00858cd95115  CHANGELOG-0.2.28.section
+37f0d777fbfbc1231642eaa23ad85085f900a9ef5033f70f12e833c438865f0f  CHANGELOG-0.2.29.section
+336150c30ea936095fee2df1ed060e2b88d1c2b9a52258f5c02d8aa2bc72baae  docs/release-notes-0.2.28.md
+160ab098239adce9c3572a5d1eebe6807116e853f64f37ca94522e0721100ed6  docs/release-notes-0.2.29.md
+195f3251d117a48f063675b385c7fdf48a2f0c70e3571fc51e87d32a812487ab  README-0.2.28.section
+074546efbced75cd6dded2b01176a4f9f08e2519843d4ba25d445b9f66a718dc  README-0.2.29.section

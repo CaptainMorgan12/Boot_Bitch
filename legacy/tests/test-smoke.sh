@@ -5,7 +5,7 @@
 # The fixture root carries /etc/debian_version + a dpkg database, an
 # update-grub-only GRUB legacy menu.lst, initramfs-tools tooling and an APT
 # source, so root detection, the dpkg status fallback, the GRUB legacy branch
-# and the 15-key capability report are exercised without touching a real disk.
+# and the 17-key capability report are exercised without touching a real disk.
 #
 # shellcheck disable=SC2034
 # Several assignments (TARGET_ROOT, ROOT_CANONICAL, CHROOT_TRY_*) are consumed
@@ -36,7 +36,7 @@ FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-smoke.XXXXXX")"
 smoke_cleanup()
 {
     # BOOT_REPAIR_LEGACY_SMOKE_KEEP=1 preserves the fixture for evidence
-    # capture (the guest-side Etch run collects the 15 capability lines).
+    # capture (the guest-side Etch run collects the 17 capability lines).
     if [[ -n "${BOOT_REPAIR_LEGACY_SMOKE_KEEP:-}" ]]; then
         printf 'fixture kept: %s\n' "$FIXTURE"
         return 0
@@ -600,9 +600,9 @@ grep -q 'Repair change status validate: unchanged|reason:validation-read-only' "
     || fail "validate did not emit its change status"
 
 run_target_diagnostic all > "$FIXTURE/diagnose.txt" 2>&1
-[[ "$(grep -c '^Repair tool ' "$FIXTURE/diagnose.txt")" -eq 15 ]] \
-    || fail "diagnose all did not emit exactly 15 Repair tool lines"
-for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
+[[ "$(grep -c '^Repair tool ' "$FIXTURE/diagnose.txt")" -eq 17 ]] \
+    || fail "diagnose all did not emit exactly 17 Repair tool lines"
+for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
     grep -q "^Repair tool ${key}: " "$FIXTURE/diagnose.txt" || fail "diagnose is missing Repair tool $key"
 done
 grep -q '^Repair tool efi: unavailable|reason:legacy-bios-no-efi$' \

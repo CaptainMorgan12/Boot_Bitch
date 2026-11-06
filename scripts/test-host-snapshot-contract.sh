@@ -46,7 +46,7 @@ grep -Fq 'Host reboot: available' "$HELPER"
 grep -Fq 'Storage lvm inspection: available' "$HELPER"
 grep -Fq 'Storage software raid: available' "$HELPER"
 grep -Fq 'if (( RUNNING_HOST_MODE == 1 )); then' "$HELPER"
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER"
 
 # The host mechanism is the name-preserving transaction, never snapper
 # rollback or a bare set-default.
@@ -102,8 +102,11 @@ case "${1:-}" in
                 printf '%s\n' "${FAKE_DEFAULT_LINE:-ID 5 gen 1 top level 5 path <FS_TREE>}"
                 ;;
             snapshot)
-                mkdir -p "${4:-}"
-                cp -a "${3:-}"/. "${4:-}/" 2>/dev/null || true
+                # shift past `subvolume snapshot`; skip an optional -r flag
+                shift 2
+                [[ "${1:-}" == "-r" ]] && shift
+                mkdir -p "${2:-}"
+                cp -a "${1:-}"/. "${2:-}/" 2>/dev/null || true
                 ;;
             set-default)
                 printf 'set-default %s\n' "${3:-}" >> "${FAKE_COMMAND_LOG:-/dev/null}"
@@ -150,7 +153,11 @@ mount_snapshot_top() {
 }
 mount() { printf 'mount %s\n' "\$*" >> "$sandbox/commands.log"; }
 umount() { :; }
-mountpoint() { return 1; }
+mountpoint() {
+    local target="\${2:-\$1}"
+    [[ "\$target" == /boot ]] && return "\${FAKE_BOOT_MOUNTED_RC:-1}"
+    return 1
+}
 need() { :; }
 lsblk() { printf '%s\n' "\${FAKE_HOST_FSTYPE:-btrfs}"; }
 snapper() {
@@ -167,6 +174,21 @@ validate_snapshot_crypttab_for_rollback() { return 0; }
 snapshot_has_separate_boot() { return "\${FAKE_SNAP_BOOT_RC:-1}"; }
 snapshot_kernel_pair_audit() { return 0; }
 snapshot_separate_subvolumes() { :; }
+# Round 149 (ITEM 1): the separate /boot capture surface is stubbed here (the
+# real capture/restore is exercised by the Fedora rig drills); the contract
+# asserts the ORDER (capture before the transaction, restore before the
+# reconcile) and the fail-closed gates through the commands.log evidence.
+snapshot_boot_capture_feasible() {
+    [[ -n "\${FAKE_BOOT_FEASIBLE_REASON:-}" ]] && printf '%s\n' "\$FAKE_BOOT_FEASIBLE_REASON"
+    return "\${FAKE_BOOT_FEASIBLE_RC:-0}"
+}
+snapshot_boot_capture() { printf 'boot-capture %s\n' "\$1" >> "$sandbox/commands.log"; }
+snapshot_boot_restore_capture() { printf 'boot-restore %s\n' "\$1" >> "$sandbox/commands.log"; }
+snapshot_boot_capture_present() { [[ "\${FAKE_CAPTURE_PRESENT:-0}" == 1 ]]; }
+snapshot_separate_boot_device() {
+    [[ -n "\${FAKE_BOOT_DEVICE:-}" ]] && printf '%s\n' "\$FAKE_BOOT_DEVICE" && return 0
+    return 1
+}
 host_snapshot_snapper_config_ok() { return "\${FAKE_SNAPPER_CONFIG_RC:-0}"; }
 host_snapshot_running_path() { printf '%s\n' "\${FAKE_RUNNING_PATH:-@}"; }
 host_snapshot_subvolid_pinned() { return "\${FAKE_SUBVOLID_RC:-1}"; }
@@ -191,7 +213,11 @@ btrfs_subvol_id() {
     esac
 }
 prepare_host_command_guard() { printf 'guard\n' >> "$sandbox/commands.log"; }
-host_snapshot_mount_promoted_root_rw() { printf 'mount-promoted\n' >> "$sandbox/commands.log"; }
+host_snapshot_mount_promoted_root_rw() {
+    TARGET_ROOT="$sandbox/promoted"
+    mkdir -p "\$TARGET_ROOT"
+    printf 'mount-promoted\n' >> "$sandbox/commands.log"
+}
 snapshot_post_switch_reconcile() {
     local count=0
     [[ -f "$sandbox/reconcile-count" ]] && count="\$(cat "$sandbox/reconcile-count")"
@@ -265,11 +291,31 @@ plan_code='run_host_snapshots plan 1'
 expect_refusal 'missing snapper config' 'FAKE_SNAPPER_CONFIG_RC=1; run_host_snapshots plan 1' \
     'No Snapper root configuration'
 expect_refusal 'running from a snapshot' "FAKE_RUNNING_PATH='@/.snapshots/1/snapshot'; run_host_snapshots plan 1" \
-    'not the top-level @'
+    'not a top-level root subvolume name'
 expect_refusal 'subvolid pin' 'FAKE_SUBVOLID_RC=0; run_host_snapshots plan 1' \
     'pins subvolid='
-expect_refusal 'separate /boot' 'FAKE_BOOT_RC=0; run_host_snapshots plan 1' \
-    'separate /boot'
+# Round 149 (ITEM 1): a separate /boot is no longer refused — the plan must
+# name the bounded capture and pass when the capture is feasible.
+build_nested_fixture
+separate_boot_plan="$(run_harness 'FAKE_BOOT_RC=0; FAKE_SNAP_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=0; FAKE_BOOT_DEVICE=/dev/test-boot; run_host_snapshots plan 1' 2>&1 || true)"
+grep -Fq 'PLAN_OK=1' <<<"$separate_boot_plan" \
+    || { echo 'FAIL: a feasible separate /boot plan did not emit PLAN_OK=1' >&2; printf '%s\n' "$separate_boot_plan" >&2; exit 1; }
+grep -Fq 'Separate /boot capture (round 149):' <<<"$separate_boot_plan" \
+    || { echo 'FAIL: the separate /boot plan does not name the bounded capture' >&2; printf '%s\n' "$separate_boot_plan" >&2; exit 1; }
+grep -Fq 'restored over the live /boot' <<<"$separate_boot_plan" \
+    || { echo 'FAIL: the separate /boot plan does not name the promote-step restore' >&2; printf '%s\n' "$separate_boot_plan" >&2; exit 1; }
+grep -Fq '/home is retained BY DESIGN' <<<"$separate_boot_plan" \
+    || { echo 'FAIL: the plan does not state the /home retention rationale' >&2; printf '%s\n' "$separate_boot_plan" >&2; exit 1; }
+# An infeasible capture (too large) is refused with the honest gate reason,
+# never the old blanket separate-boot refusal.
+expect_refusal 'separate /boot capture infeasible' \
+    'FAKE_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=0; FAKE_BOOT_FEASIBLE_RC=1; FAKE_BOOT_FEASIBLE_REASON="reason:boot-capture-too-large|param:5|param:1"; run_host_snapshots plan 1' \
+    'separate /boot capture is not feasible'
+# An unmounted /boot refuses the capture (the capture must read the mounted
+# filesystem).
+expect_refusal 'separate /boot not mounted' \
+    'FAKE_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=1; run_host_snapshots plan 1' \
+    'not currently mounted'
 expect_refusal 'Timeshift inventory' 'FAKE_TIMESHIFT_RC=0; run_host_snapshots plan 1' \
     'Timeshift'
 expect_refusal 'other nested child' 'FAKE_NESTED_CHILD="@/data"; run_host_snapshots plan 1' \
@@ -280,8 +326,16 @@ expect_refusal 'insufficient free space' 'FAKE_SPACE_RC=1; run_host_snapshots pl
     'Less than 1 GiB'
 expect_refusal 'snapshot fstab incompatibility' 'FAKE_FSTAB_RC=1; run_host_snapshots plan 1' \
     'fstab is not compatible'
-expect_refusal 'snapshot separate /boot' 'FAKE_SNAP_BOOT_RC=0; run_host_snapshots plan 1' \
-    'separate /boot entry'
+# Round 149 (ITEM 1): the snapshot-side separate /boot entry is supported when
+# its device resolves; an unresolvable device stays refused fail-closed.
+build_nested_fixture
+snap_boot_unresolved="$(run_harness 'FAKE_SNAP_BOOT_RC=0; FAKE_BOOT_RC=1; run_host_snapshots plan 1' 2>&1 || true)"
+grep -Fq 'cannot be resolved for the bounded capture' <<<"$snap_boot_unresolved" \
+    || { echo 'FAIL: an unresolvable snapshot /boot entry was not refused fail-closed' >&2; printf '%s\n' "$snap_boot_unresolved" >&2; exit 1; }
+if grep -Fq 'PLAN_OK=1' <<<"$snap_boot_unresolved"; then
+    echo 'FAIL: an unresolvable snapshot /boot entry emitted PLAN_OK=1' >&2
+    exit 1
+fi
 expect_refusal 'active snapshot' 'FAKE_RUNNING_ID=101; FAKE_SNAP_ID=101; run_host_snapshots plan 1' \
     'currently running root'
 expect_refusal 'snapper list query failure' 'FAKE_SNAPPER_LIST_RC=1; run_host_snapshots plan 1' \
@@ -302,14 +356,25 @@ expect_refusal 'snapshot is the default subvolume' \
     "export FAKE_DEFAULT_LINE='ID 101 gen 1 top level 5 path @/.snapshots/1/snapshot'; run_host_snapshots plan 1" \
     'current Btrfs default subvolume'
 
-# A pre or post snapshot is refused as a rollback target.
+# Round 146 (ITEM 1): a pre or post snapshot is a complete read-only root
+# snapshot and a legitimate rollback target — the plan accepts it and names
+# the type truthfully (the round-134 confirm names the type too).
 for snapshot_type in pre post; do
     build_nested_fixture
     sed -i "s#<type>single</type>#<type>$snapshot_type</type>#" "$sandbox/top/@/.snapshots/1/info.xml"
     type_output="$(run_harness 'run_host_snapshots plan 1' 2>&1 || true)"
-    grep -Fq "Snapper '$snapshot_type' snapshot" <<<"$type_output" \
-        || { echo "FAIL: $snapshot_type snapshot refusal reason is missing" >&2; printf '%s\n' "$type_output" >&2; exit 1; }
+    grep -Fq 'PLAN_OK=1' <<<"$type_output" \
+        || { echo "FAIL: $snapshot_type snapshot plan did not emit PLAN_OK=1" >&2; printf '%s\n' "$type_output" >&2; exit 1; }
+    grep -Fq "Snapper type: $snapshot_type" <<<"$type_output" \
+        || { echo "FAIL: $snapshot_type snapshot plan does not name the type truthfully" >&2; printf '%s\n' "$type_output" >&2; exit 1; }
 done
+# A Snapper type outside the supported set (e.g. timeline) stays refused with
+# the honest reason naming the supported set.
+build_nested_fixture
+sed -i "s#<type>single</type>#<type>timeline</type>#" "$sandbox/top/@/.snapshots/1/info.xml"
+timeline_output="$(run_harness 'run_host_snapshots plan 1' 2>&1 || true)"
+grep -Fq "only single, pre and post snapshots" <<<"$timeline_output" \
+    || { echo 'FAIL: non-rollback snapshot type refusal reason is missing' >&2; printf '%s\n' "$timeline_output" >&2; exit 1; }
 
 # Capability reasons are probe-based too: a non-Btrfs root and an active
 # package-manager lock each name their own missing prerequisite.
@@ -327,6 +392,259 @@ home_only="$(run_harness 'FAKE_SNAPPER_CONFIG_RC=1; host_snapshot_rollback_unava
 grep -Fq 'reason:no-snapper-root-config' <<<"$home_only" \
     || { echo 'FAIL: missing root configuration reason is missing' >&2; printf '%s\n' "$home_only" >&2; exit 1; }
 
+# Round 149 (ITEM 1): a separate /boot no longer refuses the capability — a
+# feasible capture reports available (exit 0, no reason); an infeasible
+# capture reports the honest gate reason (never the blanket separate-boot).
+if ! run_harness 'FAKE_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=0; host_snapshot_rollback_unavailable_reason' >/dev/null 2>&1; then
+    echo 'FAIL: a feasible separate /boot capture must report rollback available' >&2
+    exit 1
+fi
+sep_boot_too_large="$(run_harness 'FAKE_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=0; FAKE_BOOT_FEASIBLE_RC=1; FAKE_BOOT_FEASIBLE_REASON="reason:boot-capture-too-large|param:5|param:1"; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
+grep -Fq 'reason:boot-capture-too-large' <<<"$sep_boot_too_large" \
+    || { echo 'FAIL: an infeasible separate /boot capture must name the gate reason' >&2; printf '%s\n' "$sep_boot_too_large" >&2; exit 1; }
+if grep -Fq 'reason:separate-boot' <<<"$sep_boot_too_large"; then
+    echo 'FAIL: the blanket separate-boot refusal must be gone' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. Round 147 (ITEM 3): the ROOT-scope store filter.  The host list
+#     enumerates ONLY the root-scope stores (the top-level .snapshots /
+#     @.snapshots store and the detected root's own nested @/.snapshots); a
+#     foreign subvolume's own store (@home/.snapshots — the /home subvolume's
+#     Snapper configuration) is a different rollback scope and its snapshots
+#     are never listed, so a root-list row never shows the
+#     "Incomplete/non-root snapshot" validation for a foreign store.
+# ---------------------------------------------------------------------------
+build_nested_fixture
+mkdir -p "$sandbox/top/@home/.snapshots/2/snapshot/etc"
+cat > "$sandbox/top/@home/.snapshots/2/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>home store snapshot (foreign scope)</description>
+</snapshot>
+XML
+filtered_host_list="$(run_harness 'run_host_snapshots list')"
+grep -Fq $'SNAPSHOT\t1\t' <<<"$filtered_host_list" \
+    || { echo 'FAIL: the host list dropped the root-store snapshot 1' >&2; printf '%s\n' "$filtered_host_list" >&2; exit 1; }
+if grep -Fq $'SNAPSHOT\t2\t' <<<"$filtered_host_list"; then
+    echo 'FAIL: the host list listed a @home/.snapshots (foreign-store) snapshot' >&2
+    printf '%s\n' "$filtered_host_list" >&2
+    exit 1
+fi
+if grep -Fq 'Incomplete/non-root snapshot' <<<"$filtered_host_list"; then
+    echo 'FAIL: the filtered host list still carries a foreign-store incomplete validation' >&2
+    printf '%s\n' "$filtered_host_list" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2c. Round 152.3 (the chained replacement rollback): the STAGED state.
+#     After a first rollback the running root carries a
+#     @rollback-before-<stamp> name, the promoted root owns the canonical
+#     name AND the migrated .snapshots store, and the Btrfs default points at
+#     the promoted root.  The host list must show the migrated store's
+#     snapshots (the catalogue stays listed) and STILL never admit a foreign
+#     store; the plan must name both subvolumes truthfully; and a second
+#     rollback must re-preserve the RUNNING root under the fresh stamp,
+#     demote the earlier staged root to the vacated name (kept on disk, no
+#     longer the recorded undo point), promote the candidate and migrate the
+#     store — with the chained restore on failure.
+# ---------------------------------------------------------------------------
+build_staged_fixture() {
+    local top="$sandbox/top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@/etc" "$top/@/.snapshots/1/snapshot/etc" \
+        "$top/@/.snapshots/2/snapshot/etc" \
+        "$top/@rollback-before-20260920-120000/etc" \
+        "$top/@home/.snapshots/9/snapshot/etc"
+    printf 'ID=test\nPRETTY_NAME="PROMOTED-A"\n' > "$top/@/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@/etc/fstab"
+    printf 'ID=test\nPRETTY_NAME="PROMOTED-A"\n' > "$top/@/.snapshots/1/snapshot/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@/.snapshots/1/snapshot/etc/fstab"
+    cat > "$top/@/.snapshots/1/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>contract test snapshot</description>
+</snapshot>
+XML
+    printf 'ID=test\nPRETTY_NAME="SNAP-TWO"\n' > "$top/@/.snapshots/2/snapshot/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@/.snapshots/2/snapshot/etc/fstab"
+    cat > "$top/@/.snapshots/2/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>contract test snapshot two</description>
+</snapshot>
+XML
+    printf 'ID=test\nPRETTY_NAME="RUNNING-ORIG"\n' > "$top/@rollback-before-20260920-120000/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@rollback-before-20260920-120000/etc/fstab"
+    cat > "$top/@home/.snapshots/9/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>home store snapshot (foreign scope)</description>
+</snapshot>
+XML
+}
+
+staged_env() {
+    printf 'export FAKE_RUNNING_PATH=%q; ' "$1"
+    printf 'export FAKE_DEFAULT_LINE=%q; ' "$2"
+    printf 'export FAKE_SUBVOLUME_LIST=%q; ' "$3"
+}
+
+staged_subvol_list='ID 295 gen 1223 top level 5 path @
+ID 999 gen 800 top level 5 path @rollback-before-20260920-120000
+ID 256 gen 90 top level 5 path @/.snapshots
+ID 101 gen 91 top level 5 path @/.snapshots/1/snapshot
+ID 102 gen 92 top level 5 path @/.snapshots/2/snapshot'
+
+# 2c-1: the staged list shows the migrated store's catalogue and never the
+# foreign store (the round-147 exclusion must hold in the staged state).
+build_staged_fixture
+staged_list_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")run_host_snapshots list"
+staged_list="$(run_harness "$staged_list_code")"
+grep -Fq $'SNAPSHOT\t1\t' <<<"$staged_list" \
+    || { echo 'FAIL: the staged host list dropped the migrated store snapshot 1' >&2; printf '%s\n' "$staged_list" >&2; exit 1; }
+grep -Fq $'SNAPSHOT\t2\t' <<<"$staged_list" \
+    || { echo 'FAIL: the staged host list dropped the migrated store snapshot 2' >&2; printf '%s\n' "$staged_list" >&2; exit 1; }
+if grep -Fq $'SNAPSHOT\t9\t' <<<"$staged_list"; then
+    echo 'FAIL: the staged host list admitted the @home/.snapshots foreign store' >&2
+    printf '%s\n' "$staged_list" >&2
+    exit 1
+fi
+
+# 2c-2: the staged plan names BOTH subvolumes truthfully and still passes.
+build_staged_fixture
+staged_plan_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")run_host_snapshots plan 2"
+staged_plan="$(run_harness "$staged_plan_code")"
+grep -Fq 'PLAN_OK=1' <<<"$staged_plan" \
+    || { echo 'FAIL: the staged plan did not emit PLAN_OK=1' >&2; printf '%s\n' "$staged_plan" >&2; exit 1; }
+grep -Fq 'Running root subvolume: @rollback-before-20260920-120000 (staged state' <<<"$staged_plan" \
+    || { echo 'FAIL: the staged plan does not name the running staging root' >&2; printf '%s\n' "$staged_plan" >&2; exit 1; }
+grep -Fq 'Promoted root subvolume: @' <<<"$staged_plan" \
+    || { echo 'FAIL: the staged plan does not name the promoted root' >&2; printf '%s\n' "$staged_plan" >&2; exit 1; }
+grep -Fq 'Re-preserve the running @rollback-before-20260920-120000 root' <<<"$staged_plan" \
+    || { echo 'FAIL: the staged plan does not describe the chained re-preserve step' >&2; printf '%s\n' "$staged_plan" >&2; exit 1; }
+grep -Fq 'Move the earlier staged root @ aside to the vacated @rollback-before-20260920-120000 name' <<<"$staged_plan" \
+    || { echo 'FAIL: the staged plan does not describe the demote step' >&2; printf '%s\n' "$staged_plan" >&2; exit 1; }
+
+# 2c-3: the chained rollback transaction — the running root re-preserved
+# under the fresh stamp, the earlier staged root demoted to the vacated name
+# (on disk, no longer the undo point), the candidate promoted and the store
+# migrated into it.
+build_staged_fixture
+: > "$sandbox/commands.log"
+rm -f "$sandbox/reconcile-count"
+chained_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")run_host_snapshots rollback 2"
+chained_output="$(run_harness "$chained_code")"
+grep -Fq 'HOST_ROLLBACK_RESULT=SUCCESS' <<<"$chained_output" \
+    || { echo 'FAIL: the chained rollback did not succeed' >&2; printf '%s\n' "$chained_output" >&2; exit 1; }
+grep -Fq 'SNAP-TWO' "$sandbox/top/@/etc/os-release" \
+    || { echo 'FAIL: the chained rollback did not promote snapshot 2 as @' >&2; exit 1; }
+[[ -f "$sandbox/top/@/.snapshots/1/info.xml" ]] \
+    || { echo 'FAIL: the migrated store was not moved into the newly promoted @' >&2; exit 1; }
+[[ -f "$sandbox/top/@rollback-before-20260920-120000/etc/os-release" ]] \
+    || { echo 'FAIL: the earlier staged root was not kept on disk at the vacated name' >&2; exit 1; }
+grep -Fq 'PROMOTED-A' "$sandbox/top/@rollback-before-20260920-120000/etc/os-release" \
+    || { echo 'FAIL: the vacated name does not hold the earlier staged root (PROMOTED-A)' >&2; exit 1; }
+new_undo="$(find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-before-*' \
+    ! -name '@rollback-before-20260920-120000' | head -n1)"
+[[ -n "$new_undo" ]] \
+    || { echo 'FAIL: the running root was not re-preserved under a fresh @rollback-before-* stamp' >&2; exit 1; }
+grep -Fq 'RUNNING-ORIG' "$new_undo/etc/os-release" \
+    || { echo 'FAIL: the fresh stamp does not hold the running root (RUNNING-ORIG)' >&2; exit 1; }
+backup_count="$(find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-before-*' | wc -l)"
+[[ "$backup_count" == 2 ]] \
+    || { echo 'FAIL: the chained rollback must leave exactly two @rollback-before-* roots' >&2; exit 1; }
+if find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-new-*' | grep -q .; then
+    echo 'FAIL: a rollback candidate was left behind after the chained success' >&2
+    exit 1
+fi
+
+# 2c-4: a failing reconcile in the chained transaction restores the STAGED
+# pre-transaction state through the chained restore (the earlier staged root
+# back at @ with the store, the running root back at its staging name, the
+# failed candidate tombstoned) and reports recovery.
+build_staged_fixture
+: > "$sandbox/commands.log"
+rm -f "$sandbox/reconcile-count"
+chained_fail_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")FAKE_RECONCILE_RC=1; run_host_snapshots rollback 2"
+if chained_fail_output="$(run_harness "$chained_fail_code" 2>&1)"; then
+    echo 'FAIL: a failing reconcile must fail the chained rollback' >&2
+    exit 1
+fi
+grep -Fq 'HOST_ROLLBACK_RECOVERY=ok' <<<"$chained_fail_output" \
+    || { echo 'FAIL: the chained failure did not report recovery ok' >&2; printf '%s\n' "$chained_fail_output" >&2; exit 1; }
+grep -Fq 'PROMOTED-A' "$sandbox/top/@/etc/os-release" \
+    || { echo 'FAIL: the chained restore did not put the earlier staged root back at @' >&2; exit 1; }
+[[ -f "$sandbox/top/@/.snapshots/1/info.xml" ]] \
+    || { echo 'FAIL: the chained restore did not move the store back into the restored @' >&2; exit 1; }
+grep -Fq 'RUNNING-ORIG' "$sandbox/top/@rollback-before-20260920-120000/etc/os-release" \
+    || { echo 'FAIL: the chained restore did not put the running root back at its staging name' >&2; exit 1; }
+if find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-failed-*' | grep -q .; then
+    failed_hold="$(find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-failed-*' | head -n1)"
+    grep -Fq 'SNAP-TWO' "$failed_hold/etc/os-release" \
+        || { echo 'FAIL: the chained failure tombstone does not hold the failed candidate' >&2; exit 1; }
+else
+    echo 'FAIL: the chained failure left no failed-candidate tombstone' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2d. Round 152.4 (ITEM 1): the STAGED-state manual snapshot creation.  The
+#     create verb writes the new snapshot into the ACTIVE store (the promoted
+#     root's migrated .snapshots): a read-only btrfs snapshot of the RUNNING
+#     root under <promoted>/.snapshots/<max+1>/snapshot plus the Snapper-
+#     format info.xml, the top level remounted rw for the verb's window, the
+#     count proven after, and the CONFIRM/decline outcomes identical to the
+#     non-staged path.
+# ---------------------------------------------------------------------------
+build_staged_fixture
+: > "$sandbox/commands.log"
+staged_create_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")FAKE_NO_RUNNING_STORE=1; run_host_snapshots create"
+staged_create="$(run_harness "$staged_create_code")"
+grep -Fq 'SNAPSHOT_CREATE_RESULT=SUCCESS' <<<"$staged_create" \
+    || { echo 'FAIL: the staged create did not succeed' >&2; printf '%s\n' "$staged_create" >&2; exit 1; }
+[[ -d "$sandbox/top/@/.snapshots/3/snapshot" ]] \
+    || { echo 'FAIL: the staged create did not write snapshot dir 3 (max+1)' >&2; exit 1; }
+grep -Fq 'RUNNING-ORIG' "$sandbox/top/@/.snapshots/3/snapshot/etc/os-release" \
+    || { echo 'FAIL: the staged create snapshot is not the RUNNING root' >&2; exit 1; }
+[[ -f "$sandbox/top/@/.snapshots/3/info.xml" ]] \
+    || { echo 'FAIL: the staged create did not write the info.xml' >&2; exit 1; }
+grep -Fq '<type>single</type>' "$sandbox/top/@/.snapshots/3/info.xml" \
+    || { echo 'FAIL: the staged info.xml lacks the single type' >&2; exit 1; }
+grep -Fq '<num>3</num>' "$sandbox/top/@/.snapshots/3/info.xml" \
+    || { echo 'FAIL: the staged info.xml lacks the correct num' >&2; exit 1; }
+grep -Fq '<description>Boot Bitch manual snapshot</description>' "$sandbox/top/@/.snapshots/3/info.xml" \
+    || { echo 'FAIL: the staged info.xml lacks the manual-snapshot description' >&2; exit 1; }
+grep -Fq '<date>' "$sandbox/top/@/.snapshots/3/info.xml" \
+    || { echo 'FAIL: the staged info.xml lacks the created date' >&2; exit 1; }
+grep -Fq 'mount -o remount,rw' "$sandbox/commands.log" \
+    || { echo 'FAIL: the staged create never remounted the top level rw' >&2; exit 1; }
+if find "$sandbox/top/@/.snapshots/3/snapshot" -mindepth 1 -name 'fstab-*' -o -name '*outside*' | grep -q .; then
+    echo 'FAIL: the staged create touched files outside the store' >&2
+    exit 1
+fi
+
+# The decline path: a declined CONFIRM leaves the store untouched.
+build_staged_fixture
+staged_decline_code="$(staged_env '@rollback-before-20260920-120000' \
+    'ID 295 gen 1 top level 5 path @' "$staged_subvol_list")FAKE_NO_RUNNING_STORE=1; confirm_snapshot_create() { return 1; }; run_host_snapshots create"
+staged_decline="$(run_harness "$staged_decline_code")"
+grep -Fq 'SNAPSHOT_CREATE_RESULT=DECLINED' <<<"$staged_decline" \
+    || { echo 'FAIL: the staged decline was not reported' >&2; printf '%s\n' "$staged_decline" >&2; exit 1; }
+[[ ! -e "$sandbox/top/@/.snapshots/3" ]] \
+    || { echo 'FAIL: the staged decline still created snapshot 3' >&2; exit 1; }
+
 # ---------------------------------------------------------------------------
 # 3. Plan succeeds only after every check and creates nothing.
 # ---------------------------------------------------------------------------
@@ -341,6 +659,11 @@ grep -Fq 'A reboot is required and is never performed automatically.' <<<"$plan_
     || { echo 'FAIL: plan must state the reboot requirement' >&2; exit 1; }
 grep -Fq 'Nested @/.snapshots child subvolume: will be migrated' <<<"$plan_output" \
     || { echo 'FAIL: nested migration evidence is missing' >&2; exit 1; }
+# Round 149 (ITEM 1): the in-Btrfs /boot coverage is stated explicitly.
+grep -Fq '/boot is part of the root snapshot' <<<"$plan_output" \
+    || { echo 'FAIL: the in-Btrfs /boot coverage line is missing' >&2; exit 1; }
+grep -Fq '/home is retained BY DESIGN' <<<"$plan_output" \
+    || { echo 'FAIL: the /home retention rationale is missing' >&2; exit 1; }
 top_after="$(find "$sandbox/top" -printf '%P %y\n' | LC_ALL=C sort)"
 [[ "$top_before" == "$top_after" ]] \
     || { echo 'FAIL: the host plan modified the snapshot tree' >&2; diff <(printf '%s\n' "$top_before") <(printf '%s\n' "$top_after") >&2; exit 1; }
@@ -371,6 +694,37 @@ backup_count="$(find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@roll
     || { echo 'FAIL: the running @ was not preserved as one @rollback-before-* root' >&2; exit 1; }
 if find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-new-*' | grep -q .; then
     echo 'FAIL: a rollback candidate was left behind after success' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 4b. Round 149 (ITEM 1): the separate /boot capture runs BEFORE the
+#     transaction and the restore runs BEFORE the boot-stack reconcile, in
+#     that order (the commands.log evidence).  The in-Btrfs case (no separate
+#     /boot) never captures or restores.
+# ---------------------------------------------------------------------------
+build_nested_fixture
+: > "$sandbox/commands.log"
+rm -f "$sandbox/reconcile-count"
+capture_rollback="$(run_harness 'FAKE_NESTED_SNAPSHOTS_RC=0; FAKE_BOOT_RC=0; FAKE_SNAP_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=0; FAKE_BOOT_DEVICE=/dev/test-boot; FAKE_CAPTURE_PRESENT=1; run_host_snapshots rollback 1')"
+grep -Fq 'HOST_ROLLBACK_RESULT=SUCCESS' <<<"$capture_rollback" \
+    || { echo 'FAIL: the separate /boot rollback did not succeed' >&2; printf '%s\n' "$capture_rollback" >&2; exit 1; }
+capture_idx="$(grep -n '^boot-capture /boot$' "$sandbox/commands.log" | head -n1 | cut -d: -f1)"
+mount_idx="$(grep -n '^mount-promoted$' "$sandbox/commands.log" | head -n1 | cut -d: -f1)"
+restore_idx="$(grep -n '^boot-restore ' "$sandbox/commands.log" | head -n1 | cut -d: -f1)"
+[[ -n "$capture_idx" ]] \
+    || { echo 'FAIL: the separate /boot rollback never captured /boot' >&2; cat "$sandbox/commands.log" >&2; exit 1; }
+[[ -n "$mount_idx" && -n "$restore_idx" ]] \
+    || { echo 'FAIL: the separate /boot rollback never restored the capture' >&2; cat "$sandbox/commands.log" >&2; exit 1; }
+[[ "$capture_idx" -lt "$mount_idx" && "$mount_idx" -lt "$restore_idx" ]] \
+    || { echo 'FAIL: the /boot capture must precede the transaction and the restore must follow the promoted mount' >&2; cat "$sandbox/commands.log" >&2; exit 1; }
+# The in-Btrfs rollback (no separate /boot) must never touch the capture.
+build_nested_fixture
+: > "$sandbox/commands.log"
+run_harness 'FAKE_NESTED_SNAPSHOTS_RC=0; run_host_snapshots rollback 1' >/dev/null
+if grep -qE '^boot-(capture|restore)' "$sandbox/commands.log"; then
+    echo 'FAIL: an in-Btrfs rollback captured or restored a separate /boot' >&2
+    cat "$sandbox/commands.log" >&2
     exit 1
 fi
 
@@ -740,7 +1094,7 @@ if grep -E '^Repair tool [a-z]+: unavailable\|' <<<"$zc_out" | grep -Eqi 'ubuntu
     printf '%s\n' "$zc_out" >&2
     exit 1
 fi
-[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 15 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 17 ]] \
     || { echo 'FAIL: the ZFS-on-root capability preamble lost a key line' >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
 
 # 8e. Missing ZFS prerequisites fail closed with the exact prerequisite named.
@@ -952,10 +1306,15 @@ run_target_snapshot_harness() {
 
 # Build a damaged target: the top-level @ root has no /etc/os-release, but the
 # @.snapshots store holds an intact Linux root snapshot (os-release + fstab).
+# A foreign @home/.snapshots store is present too: the damaged case cannot
+# attribute any nested store to the (undetectable) root, so the recovery list
+# fails OPEN and shows every store (the plan then resolves the root name from
+# the selected snapshot's fstab — the round-143 damaged-recovery design).
 build_damaged_target_fixture() {
     local top="$sandbox/top"
     rm -rf -- "$top"
-    mkdir -p "$top/@/etc" "$top/@.snapshots/1/snapshot/etc"
+    mkdir -p "$top/@/etc" "$top/@.snapshots/1/snapshot/etc" \
+             "$top/@home/.snapshots/7/snapshot/etc"
     # The damaged @ root: an /etc exists but os-release was deleted.
     : > "$top/@/etc/fstab"
     printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$top/@.snapshots/1/snapshot/etc/os-release"
@@ -965,6 +1324,13 @@ build_damaged_target_fixture() {
 <snapshot>
   <type>single</type>
   <description>contract damaged-target snapshot</description>
+</snapshot>
+XML
+    cat > "$top/@home/.snapshots/7/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>home store snapshot (foreign scope)</description>
 </snapshot>
 XML
     mkdir -p "$sandbox/session-dir/mount"
@@ -979,6 +1345,10 @@ damaged_list="$(run_target_snapshot_harness "$target_code
 run_snapshots list")"
 grep -Fq $'SNAPSHOT\t1\t' <<<"$damaged_list" \
     || { echo 'FAIL: damaged-target snapshot list did not report snapshot 1' >&2; printf '%s\n' "$damaged_list" >&2; exit 1; }
+# The damaged root name is undetectable, so the filter fails open: the
+# foreign-store snapshot stays visible for the recovery selection.
+grep -Fq $'SNAPSHOT\t7\t' <<<"$damaged_list" \
+    || { echo 'FAIL: the damaged-target fail-open list dropped the foreign-store snapshot 7' >&2; printf '%s\n' "$damaged_list" >&2; exit 1; }
 if grep -Fq 'does not contain /etc/os-release' <<<"$damaged_list"; then
     echo 'FAIL: damaged-target snapshot list hit the /etc/os-release hard failure' >&2
     printf '%s\n' "$damaged_list" >&2
@@ -1035,6 +1405,108 @@ grep -Fq 'DEFAULT_DONE' <<<"$default_probe" \
     || { echo 'FAIL: default prepare_target_snapshots_only did not complete' >&2; printf '%s\n' "$default_probe" >&2; exit 1; }
 grep -Fq 'msg:protected-host-check-pass' <<<"$default_probe" \
     || { echo 'FAIL: prepare_target_snapshots_only default lost the safety preamble' >&2; printf '%s\n' "$default_probe" >&2; exit 1; }
+
+# 10e. Round 147 (ITEM 3): the ROOT-scope store filter on the target list.  A
+#     healthy @ root with its nested @/.snapshots store lists only that
+#     store; the @home/.snapshots store (the /home subvolume's own Snapper
+#     configuration) is a different rollback scope and is never listed.
+rm -rf "$sandbox/top"
+mkdir -p "$sandbox/top/@/etc" "$sandbox/top/@/.snapshots/1/snapshot/etc" \
+         "$sandbox/top/@home/.snapshots/2/snapshot/etc"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/etc/fstab"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/fstab"
+cat > "$sandbox/top/@/.snapshots/1/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>root store snapshot</description>
+</snapshot>
+XML
+cat > "$sandbox/top/@home/.snapshots/2/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>home store snapshot (foreign scope)</description>
+</snapshot>
+XML
+target_filtered="$(run_target_snapshot_harness "$target_code
+run_snapshots list")"
+grep -Fq $'SNAPSHOT\t1\t' <<<"$target_filtered" \
+    || { echo 'FAIL: the target list dropped the root-store snapshot 1' >&2; printf '%s\n' "$target_filtered" >&2; exit 1; }
+if grep -Fq $'SNAPSHOT\t2\t' <<<"$target_filtered"; then
+    echo 'FAIL: the target list listed a @home/.snapshots (foreign-store) snapshot' >&2
+    printf '%s\n' "$target_filtered" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 10f. Round 147 (ITEM 5b): the TARGET rollback migrates a nested
+#     @/.snapshots child into the promoted root (the host-path behaviour
+#     extended to the target path) — without it the promoted root carries an
+#     empty shadow directory and the real store stays under the preserved
+#     root.  The plan names the migration; a successful rollback leaves the
+#     store under the promoted @.
+# ---------------------------------------------------------------------------
+rm -rf "$sandbox/top"
+mkdir -p "$sandbox/top/@/etc" "$sandbox/top/@/.snapshots/1/snapshot/etc"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/etc/fstab"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/fstab"
+cat > "$sandbox/top/@/.snapshots/1/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>nested-store target snapshot</description>
+</snapshot>
+XML
+nested_list_out="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots' \
+    run_target_snapshot_harness "$target_code
+run_snapshots plan 1")"
+grep -Fq 'Nested @/.snapshots child subvolume: will be migrated into the promoted @.' <<<"$nested_list_out" \
+    || { echo 'FAIL: the target plan does not name the nested-child migration' >&2; printf '%s\n' "$nested_list_out" >&2; exit 1; }
+migrated_rollback="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots' \
+    run_target_snapshot_harness "$target_code
+run_snapshots rollback 1")"
+grep -Fq 'ROLLBACK_RESULT=SUCCESS' <<<"$migrated_rollback" \
+    || { echo 'FAIL: the nested-store target rollback did not succeed' >&2; printf '%s\n' "$migrated_rollback" >&2; exit 1; }
+[[ -f "$sandbox/top/@/.snapshots/1/info.xml" ]] \
+    || { echo 'FAIL: the nested @/.snapshots child was not migrated into the promoted @' >&2; exit 1; }
+for leftover in "$sandbox/top"/@rollback-before-*; do
+    [[ -e "$leftover" ]] || continue
+    if [[ -d "$leftover/.snapshots" ]]; then
+        echo 'FAIL: the real store stayed under the preserved root after migration' >&2
+        exit 1
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# 10g. Round 147 (ITEM 5b): a FAILED target rollback restores the preserved
+#     root and moves the migrated nested child BACK into it.
+# ---------------------------------------------------------------------------
+rm -rf "$sandbox/top"
+mkdir -p "$sandbox/top/@/etc" "$sandbox/top/@/.snapshots/1/snapshot/etc"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/etc/fstab"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/os-release"
+printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$sandbox/top/@/.snapshots/1/snapshot/etc/fstab"
+cat > "$sandbox/top/@/.snapshots/1/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>nested-store target snapshot</description>
+</snapshot>
+XML
+if restored_out="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots' \
+    FAKE_RECONCILE_RC=1 run_target_snapshot_harness "$target_code
+run_snapshots rollback 1" 2>&1)"; then
+    echo 'FAIL: a failing reconcile must fail the nested-store target rollback' >&2
+    exit 1
+fi
+[[ -f "$sandbox/top/@/.snapshots/1/info.xml" ]] \
+    || { echo 'FAIL: the migrated nested child was not moved back into the restored @' >&2; printf '%s\n' "$restored_out" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 11. Damaged-target reduced recovery report.  run_target_diagnostic must
@@ -1193,6 +1665,10 @@ promoted_out="$(run_promoted_root_harness '
     SESSION_LOG="$SANDBOX/session/session.log"
     mkdir -p "$SESSION_DIR"
     : > "$SESSION_LOG"
+    # Round 143 (ITEM T1): the promoted-root mount uses the DETECTED root
+    # subvolume name; this @-layout fixture pins SNAPSHOT_ROOT_NAME=@ (the
+    # pre-rollback detection the rollback flow performs before mounting).
+    SNAPSHOT_ROOT_NAME=@
     # Stale pre-rollback state: prepare_target_snapshots_only never profiles
     # backends, so these globals are empty/unknown when the rollback promotes
     # @.  The re-profile must overwrite them.  TARGET_DISTRO_FAMILY is left
@@ -1476,7 +1952,17 @@ mount() { printf 'mount %s\n' "$*" >> "$FAKE_COMMAND_LOG"; return 0; }
 umount() { :; }
 mountpoint() { return 1; }
 snapshot_unmount_target_keep_top() { printf 'unmount-keep-top\n' >> "$FAKE_COMMAND_LOG"; return 0; }
-btrfs() { printf 'btrfs %s\n' "$*" >> "$FAKE_COMMAND_LOG"; return 0; }
+btrfs() {
+    printf 'btrfs %s\n' "$*" >> "$FAKE_COMMAND_LOG"
+    # Round 147 (ITEM 5b): the restore path probes the migrated nested child
+    # with `btrfs subvolume show <path>`; mirror the real tool's semantics
+    # (missing path -> nonzero) so the move-back only runs when the child
+    # actually exists in the fixture.
+    if [[ "${2:-}" == show ]]; then
+        [[ -d "${3:-}" ]] || return 1
+    fi
+    return 0
+}
 btrfs_subvol_id() { printf '200\n'; }
 snapshot_mount_promoted_root_rw() { printf 'mount-promoted\n' >> "$FAKE_COMMAND_LOG"; return 0; }
 snapshot_post_switch_reconcile() { printf 'reconcile\n' >> "$FAKE_COMMAND_LOG"; return 0; }
@@ -1516,7 +2002,8 @@ build_preserved_root_healthy_fixture() {
 #      never mount/reconcile the promoted root.
 build_preserved_root_damaged_fixture
 : > "$sandbox/preserved-commands.log"
-damaged_preserved="$(run_preserved_root_harness 'snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
+damaged_preserved="$(run_preserved_root_harness 'SNAPSHOT_ROOT_NAME=@
+snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
 printf "RESTORE_RC=%s\n" "$?"')"
 grep -Fqx 'RESTORE_RC=0' <<<"$damaged_preserved" \
     || { echo 'FAIL: damaged preserved-root recovery did not return 0' >&2; printf '%s\n' "$damaged_preserved" >&2; exit 1; }
@@ -1535,7 +2022,8 @@ fi
 # 16b. Healthy preserved root: still proceeds to mount + reconcile and returns 0.
 build_preserved_root_healthy_fixture
 : > "$sandbox/preserved-commands.log"
-healthy_preserved="$(run_preserved_root_harness 'snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
+healthy_preserved="$(run_preserved_root_harness 'SNAPSHOT_ROOT_NAME=@
+snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
 printf "RESTORE_RC=%s\n" "$?"')"
 grep -Fqx 'RESTORE_RC=0' <<<"$healthy_preserved" \
     || { echo 'FAIL: healthy preserved-root recovery did not return 0' >&2; printf '%s\n' "$healthy_preserved" >&2; exit 1; }

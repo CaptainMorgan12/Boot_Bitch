@@ -48,12 +48,12 @@
         <translation>Alpine používá apk; konfigurace dpkg není k dispozici na Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Hlavní úložiště společnosti Alpine nemá vlastní NVIDIA DKMS ovladač; na tomto cíli není k dispozici výměna ovladačů GPU.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Alternativní bootloader; Etch boty přes GRUB-odkaz, takže extlinux není součástí výchozí zaváděcí cesty</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Alternativní bootloader; v tomto systému extlinux není součástí výchozí zaváděcí cesty</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Sesouhlasení zásobníků bot</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Projděte složky opraveného systému pouze pro čtení a nastavte zvolenou složku.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Zkontrolujte a opravte zjištěné souborové systémy.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Před jakoukoli opravou zkontrolujte montáž vybraného systému, metadata souborového systému, zaváděcí soubory, konzistenci mapu a připravenost na závislost. Jedná se o nezávislý bezpečnostní předlet spíše než volitelné Fall Opravy fáze.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Debian- family initramfs helper</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian- rodina initramfs pomocník; na Etch přestavba běží přes hlídané prostranství</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Obnovit obrázky initramfs pro nainstalovaná jádra</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Použití disků</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Zobrazuje běžící hostitele nebo vybraný opravárenský systém fstab; kontrola opravárenského systému je namontována pouze pro čtení.</translation>
     </message>
     <message>
@@ -364,7 +364,7 @@
         <translation>Ověření na místě</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspekce EFI / UKI důkazy; nedostupný na tomto odkazu BIOS frontend s důvodem pomocníka sondy.</translation>
     </message>
     <message>
@@ -528,8 +528,8 @@
         <translation>Offline opravy systému</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Jeden hlídaný průsmyk (validace mapper / crypttab, obnova initramfs, regenerace GRUB- dědictví) přes záklopné pole</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Jeden hlídaný pas: validace mapper / crypttab, obnova initramfs a regenerace konfigurace bootloader</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Izolace jmenného prostoru procesu</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Read- pouze schopnost na této frontě; odstranění kernel / čištění / instalace běží přes interaktivní menu pomocníka</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>Odstranění kernel, čištění a instalace běží přes interaktivní menu pomocníka; nic není odstraněno nebo upraveno, dokud si nevyberete akci a potvrdit</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Read- pouze schopnost na této frontě; oprava GPU- driver běží přes pomocníka</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Opravy ovládaných GPU ovladačů pomocí interaktivního menu pomocníka</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Read- pouze kontrola kořenových a / boot souborů vybraného systému, pak opravit pouze zařízení, která hlásí chyby (e2fsck pro ext2 / ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Read- pouze kontrola kořenových a / boot souborů vybraného systému, pak opravit pouze zařízení, která hlásí chyby</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>Přestavět initramfs pro vybraný rozsah? Pomocník si nechává svůj mapper / krypttab a záložní předlety.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Přestavuje out- of- tree moduly kernel; vyžaduje se pouze v případě, že cíl používá moduly dkms</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Přestavuje out- of- tree moduly kernel; vyžaduje se pouze v případě, že systém používá systém pro budování modulů</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Uvolněte zásobník.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Reconcile zvoleného zavazadlového zásobníku opravárenského systému v jednom hlídaném vstupním průsmyku: validace mapper / crypttab, obnova initramfs a regenerace konfigurace GRUB- dědictví, přičemž zálohy komponent a předlety nezměněny. Toto je Etch ekvivalent moderního boot- stack usmíření a zůstane mimo Full Opravy plánu.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Obnovte konfiguraci extlinux.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Po povinném předletu bezpečnosti obnovte nabídku / konfiguraci vybraného servisního systému GRUB. Pomocník zálohuje menu.lst, zachovává každý existující vstup a vrací se k jakémukoliv selhání.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Regenerovat konfiguraci bootloader vybraného systému extlinux. Tento odkaz ukazuje žádnou akci extlinux.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regeneruje Etch GRUB- odkaz menu.lst konfigurace (zálohován, každý záznam zachován)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regeneruje konfiguraci GRUB (zálohovaný, každý záznam zachován)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Oprava zaváděcí cesty EFI / UKI.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Oprava zvolené zaváděcí cesty systému EFI / UKI. Tento odkaz ukazuje žádnou akci EFI; Etch cíl je BIOS / GRUB- dědictví systému.</translation>
     </message>
     <message>
@@ -812,11 +812,11 @@
         <translation>Obnovit odkaz sysv displej správce nakonfigurován pro vybraný systém: / etc / X11 / default-display-manager vstup a chybějící runlevel S-symlink, se zálohou a rollback, nikdy spuštění GUI. Když bota očekává příkaz k odemykání disků, směrování konzole je také opraveno: konzole = tty0 je přiložen poslední k příkazové řádce bootloader (menu.lst na tomto odkazu GRUB; sériová konzole zůstává), takže příznak zůstává na viditelné obrazovce místo černé. K dispozici pro běžící hostitele a odhodlaný cíl opravy.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Resors / etc / X11 / default-display-manager a chybějící sysv runlevel S- symlink bez spuštění GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Obnovuje nakonfigurovaný správce displeje a jeho spouštěcí odkaz bez spuštění GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Prohlédněte si nainstalovaný inventář jádra a zvolte jednu akci na opravu betonu: odstraňte nejstarší / nahrazované nebo nejnovější jádro, odstraňte osiřelé hlavičky / komponenty / build podporu, nainstalujte chybějící záhlaví, znovu nainstalujte nekompletní jádro, nebo nainstalujte repozitář-nejnovější jádro. Nic není odstraněno nebo upraveno, dokud nevyberete akci a nepotvrdíte ji. Běžící jádro je vždy chráněno a po odstranění se regenerují obrázky zbývajících jader initramfs a konfigurace bootloader.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Spustit hlídanou opravu? Pomocník si nechává svou simulaci - první pre-let a runtime stráží.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Spusťte kontrolu systému read- only souborového systému pro kořenové a / boot soubory vybraného systému a nahlaste kontrolní nástroj každého zařízení a výsledek bez změny. Tento odkaz zobrazuje pouze kontrolu read- only; oprava zařízení není připojena.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Spusťte kontrolu souborového systému pouze pro čtení na kořenových a / boot souborových stoncích vybraného systému a poté opravte pouze zařízení, která hlásí chyby. Nástroje Etch check (e2fsck for ext2 / ext3) běží až poté, co pomocník uvolní své sestavy pouze pro čtení; stále instalovaný souborový systém není nikdy offline opravován a nepodporované souborové systémy jsou hlášeny spíše než hádat.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Spusťte předlet pouze pro bezpečnost.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Spustí kontrolu pouze souborového systému pro kořenový, / boot a další souborový systém vybraného systému.</translation>
     </message>
     <message>
@@ -925,7 +925,7 @@
     </message>
     <message>
         <source>Software RAID</source>
-        <translation>Software RAID</translation>
+        <translation>Softwarový RAID</translation>
     </message>
     <message>
         <source>Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction.</source>
@@ -1008,7 +1008,7 @@
         <translation>Zvolený rozsah nemá žádný podporovaný typ souborového systému pro kontrolu pouze pro čtení.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Nelze vyřešit kořenové, / boot, ESP a / domácí soubory.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Potvrdit prostředí</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Procházka důkaz-vedená interaktivní relace opravit jádro GPU ovladač (nvidia / nouveau / amdgpu / radeon / mesa), použití pouze malý hlídaný krok, který si zvolíte s vlastním Rollback. Dva rozhodovací body řídí session: kernel- vs- driver (nahradit nejnovější jádro, proti kterému řidič nemůže postavit, nebo odstranit starší jádro, ke kterému je řidič připnut) a neoprávněný ovladač (očistěte nesprávný ovladač, nainstalujte správné a obnovte ho proti každému instalovanému jádru). Samostatný jednobotový nomodeset se dostane k konzoli na rozbitém řidiči.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Projděte interaktivním sezením řízeným důkazy pro opravu ovladače GPU; menu se přizpůsobí diagnostickým důkazům, každý hlídaný krok je znovu ověřen v tomto okně před další volbou a jeden-boot nomoodeset pack udržuje konzoli dosažitelnou na rozbitém ovladači.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1237,7 +1237,7 @@
     </message>
     <message>
         <source>initramfs, EFI/UKI and GRUB artifacts are byte-identical</source>
-        <translation type="unfinished" />
+        <translation>artefakty initramfs, EFI/UKI a GRUB jsou byte-identické</translation>
     </message>
     <message>
         <source>legacy BIOS target; no EFI boot path is available.</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>validace je pouze pro čtení</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Vstupní zařízení / klávesnice</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Síť / připojení</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Recenze stack vstupního zařízení: detekovány klávesnice / myš / touchpad zařízení a třídy, načteno, buildtin, dostupné a černé seznamu HID / klávesnice moduly kernel, bus- controller stavu, rozložení klávesnice, zařazení initramfs a built- image keyboard- modul důkaz pro LUKS odemknout okamžitě, plus nejnovější důkazy o spuštění.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Recenze síťového stacku: detekovaný konfigový backend, adaptéry a jejich vázané ovladače / moduly, blacklist a firmware stav, a běh hostitele trasy, DNS a ohraničené reakční důkazy, bez změny nic.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>pouze pro čtení a kontrolu klávesnice initramfs</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>kontrola pouze síťového adaptéru a konektivity</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Oprava vstupního zařízení</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Opravy vstupních zařízení</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Projděte interaktivní relaci, která se řídí důkazy pro opravu vstupu klávesnice, myši a touchpad; menu se přizpůsobí diagnostickým důkazům, každá akce je znovu ověřena v tomto okně před další volbou a hlídané kroky pokrývají ovladače, moduly, firmware, černé listy, nouzový režim HID a klávesové moduly initramfs.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Vyberte si akci na opravu vstupního zařízení z důkazů.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Oprava sítě / připojení</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Opravy sítě</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Procházka důkaz-řízené interaktivní relaci opravit síť stack; menu se přizpůsobí diagnostickým důkazům, každá akce je znovu ověřena v tomto okně před další volbou, a hlídané kroky pokrývají ovladače, moduly, firmware, černé listy, initramfs NIC moduly, adresování, trasy a DNS. Živé změny konektivity se nikdy nedotknou rozhraní držícího výchozí trasu.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Vyberte si akci na opravu sítě z důkazů.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Nedostupný: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1425,19 +1481,19 @@ Nedostupný: %1</translation>
     </message>
     <message>
         <source>%1 filesystem(s) are unsupported or have no installed check tool</source>
-        <translation type="unfinished" />
+        <translation>%1 souborový(ch) systém(ů) není podporováno nebo nemá nainstalovaný kontrolní nástroj</translation>
     </message>
     <message>
         <source>%1 mounted filesystem(s) were skipped because their check tools are offline-only</source>
-        <translation type="unfinished" />
+        <translation>%1 připojený(ch) souborový(ch) systém(ů) bylo přeskočeno, protože jejich kontrolní nástroje fungují pouze offline</translation>
     </message>
     <message>
         <source>%1 results: [OK] %2 successful | [FAIL] %3 failed | [-] %4 no repair needed - %5</source>
-        <translation type="unfinished" />
+        <translation>%1 výsledky: [OK] %2 úspěšné | [FAIL] %3 selhaly | [-] %4 není potřeba žádná oprava - %5</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
-        <translation type="unfinished" />
+        <translation>%1 fáze selhaly; zkontrolujte výstup pomocníka v logech.</translation>
     </message>
     <message>
         <source>%1 stages selected</source>
@@ -1445,7 +1501,7 @@ Nedostupný: %1</translation>
     </message>
     <message>
         <source>%1 stopped at your request: [OK] %2 successful | [-] %3 no repair needed - %4</source>
-        <translation type="unfinished" />
+        <translation>%1 zastaveno na vaši žádost: [OK] %2 úspěšné | [-] %3 není potřeba žádná oprava - %4</translation>
     </message>
     <message>
         <source>&amp;About Boot Bitch</source>
@@ -1564,7 +1620,7 @@ Nedostupný: %1</translation>
         <translation>; nejlepší zjištěná systémová složka: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt; h3 &gt; Boot Bitch %1 &lt; / h3 &gt; &lt; p &gt; &lt; b &gt; Vývojář: &lt; / b &gt; CaptainMorgan12 &lt; / p &gt; &lt; p &gt; Tento GUI je vstupní bod balíku: Qt 3.3.x frontend s přenosným hlídaným pomocníkem pro systémy Debian Etch-era. &lt; / p &gt; &lt; p &gt; &lt; b &gt; Opravený režim opravy: &lt; / b &gt; read-only diagnostics can control buďto the protected running Host nebo explicitně vybraný opravárenský pohon. Stadia hlídaného balíčku Debian / APT (přerušená konfigurace, porušené závislosti, obnova metadat, upgrade), regenerace konfigurace GRUB- dědictví, terč LUKS odemknout a hlídaná editace cílového souboru běží přes přenášený pomocník po potvrzení; Host Maintenance umožňuje stejné podporované etapy nativně na aktivním systému po opakování hostitelské identity a boot- montážní kontroly. &lt; / p &gt; &lt; p &gt; Moderní-pouze funkce - ověřený soubor Kopírování, Btrfs snímek zpět, EFI / UKI a extlinux opravy, boot- stack sesouhlasení a Make Výchozí - jsou šedivé s pomocníkem vlastní sondy důvody na této frontě; Arch / Alpine / Fedora balíček zálohuje zůstat diagnózy-pouze zde. &lt; / p &gt; &lt; p &gt; První privilegovaná akce opravňuje k jednomu relaci v cached administrátora na rozsah prostřednictvím hidden- input modal (Qt GUI zůstává neprivilegovaný). Může být kdykoliv ukončen z File - Lock Administrator Session. &lt; / p &gt;</translation>
     </message>
     <message>
@@ -1772,7 +1828,7 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <translation>Automatická instalace bude vyžadovat výslovné mapování balíků a oprávnění k výsadám.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Automatická instalace bude vyžadovat výslovné mapování balíků a povolení privilegia; nainstaluje vybraný balíček chybějící schopnosti na aktuální rozsah (spuštěný hostitelský nebo závazný cíl opravy) přes hlídaný pomocník.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <translation>Boot Bitch odkaz GUI připraven. Každý privilegovaný příkaz běží přes vysílaného pomocníka; akce zůstávají zakázány, dokud není spáchán opravárenský cíl (nebo je aktivní Host Maintenance) a diagnostika hlásí jejich schopnost.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch musí běžet z jiného prostředí Linux, než je opravené zařízení. Použijte živé médium Linux nebo jinou instalaci Linux na jiný fyzický pohon. &lt; br &gt; &lt; br &gt; Běžící hostitel je chráněn před běžným výběrem opravárenských cílů, ale může být explicitně vybrán pomocí &lt; b &gt; Hostitelské údržby &lt; / b &gt; pro hlídané přirozené diagnostiky a podporované fáze údržby. &lt; br &gt; &lt; br &gt; Diagnostika se řídí záložkou Systems: oddaný opravárenský disk při vypnutí Host Maintenance, nebo chráněný pojízdný hostitel, když je aktivní. &lt; br &gt; &lt; br &gt; První privilegovaná akce žádá administrátora o autorizaci jednou pro toto okno Boot Bitch; &lt; b &gt; Soubor - Session správce Lock &lt; / b &gt; okamžitě ukončí tuto pomocné relaci. Každá oprava udržuje pomocníkovy vlastní předlety.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <translation>Prohlížet opravné složky...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Projděte složky opraveného systému pouze pro čtení a nastavte zvolenou složku.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Projděte vybraný opravárenský systém dočasným nastavením a vyberte absolutní cílovou cestu. Žádné cílové soubory se při prohlížení nemění.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <translation>Vybrat adresář pro určení hostitele</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Vyberte si, které cached schopnosti rozsahu tabulky ukazuje.</translation>
     </message>
     <message>
@@ -1913,7 +1969,7 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
     </message>
     <message>
         <source>Chroot Shell</source>
-        <translation>Chroot Shell</translation>
+        <translation>Shell chroot</translation>
     </message>
     <message>
         <source>Chroot shell</source>
@@ -2064,7 +2120,7 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <translation>Kopírovat a ověřovat</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Kopírovat a ověřovat soubory v obou směrech prostřednictvím hlídaného pomocníka (cp -a plus obnovení vlastnictví a per- file byte- compare). Pomocníkova kopírovací sonda ovládá ovládání a udržuje kontrolu směru a cesty.</translation>
     </message>
     <message>
@@ -2075,7 +2131,9 @@ Zadejte heslo pro %2 (sudo). Používá se pouze pro toto sudo ověření, je od
         <source>Copy the %1 staged item(s) to %2?
 
 The helper keeps its direction and path containment checks; a sensitive repair-system destination is refused unless the helper approves it, and every regular file is byte-compared after the copy.</source>
-        <translation type="unfinished" />
+        <translation>Zkopírovat %1 připravených položek do %2?
+
+Pomocník zachovává kontroly směru a uzavřenosti cesty; citlivý cíl v opravovaném systému je odmítnut, pokud jej pomocník neschválí, a každý běžný soubor je po kopírování porovnán bajt po bajtu.</translation>
     </message>
     <message>
         <source>Copy the staged files and folders with cp -a, restore ownership with chown --reference and byte-compare every regular file afterwards.</source>
@@ -2250,13 +2308,13 @@ The helper keeps its direction and path containment checks; a sensitive repair-s
         <translation>Nejdřív zadejte příkaz.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Zadejte čísla zařízení pro opravy (mezerní- nebo comma- oddělené, např. "1 3"), nebo 0 pro přeskočení.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Zadejte čísla zařízení pro opravy (mezerní- nebo comma- oddělené, např. &quot;1 3&quot;), nebo 0 pro přeskočení.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Zadejte heslo pro %1.
 
 Je odesílán pouze do kryptsetupu přes standardní vstup pomocníka a nikdy není přihlášen nebo umístěn na příkazovém řádku.</translation>
@@ -2274,7 +2332,7 @@ Je odesílán pouze do kryptsetupu přes standardní vstup pomocníka a nikdy ne
         <translation>Uspořádejte privilegované pomocné sezení pro současný rozsah.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Konfigurační soubory Etch-era; dostupnost je kontrolována pouze diagnostikou pomocníka.</translation>
     </message>
     <message>
@@ -2303,7 +2361,7 @@ Je odesílán pouze do kryptsetupu přes standardní vstup pomocníka a nikdy ne
     </message>
     <message>
         <source>File Copy</source>
-        <translation>Kopírovat soubor</translation>
+        <translation>Kopírovat soubory</translation>
     </message>
     <message>
         <source>File Copy - Browse Source Folders</source>
@@ -2459,7 +2517,7 @@ Je odesílán pouze do kryptsetupu přes standardní vstup pomocníka a nikdy ne
     </message>
     <message>
         <source>Host Shell</source>
-        <translation>Hostitel Shell</translation>
+        <translation>Shell hostitele</translation>
     </message>
     <message>
         <source>Host capabilities and dependencies</source>
@@ -2552,12 +2610,12 @@ Pomocník nezávisle re- kontroluje, zda vybraný disk zálohuje /, / boot a / b
         <translation>Nainstalujte chybějící podporu...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Nainstalovat balíček '%1' do vybraného cíle opravy přes střežený backend balíčku? To upravuje cíl opravy a znehodnocuje cached diagnostiku.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Nainstalovat balíček &apos;%1&apos; do vybraného cíle opravy přes střežený backend balíčku? To upravuje cíl opravy a znehodnocuje cached diagnostiku.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Nainstalovat balíček '%1' na běžící hostitele přes hlídaný backend balíčku? Tím se mění běžící hostitel a neplatnost cached running- host diagnostika.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Nainstalovat balíček &apos;%1&apos; na běžící hostitele přes hlídaný backend balíčku? Tím se mění běžící hostitel a neplatnost cached running- host diagnostika.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2633,7 +2691,7 @@ Pomocník nezávisle re- kontroluje, zda vybraný disk zálohuje /, / boot a / b
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Udělat kanonickou nainstalovanou položku jádra výchozí položku GRUB-dědictví boot na spuštěném hostiteli?
 
-Pomocník ověřuje / boot / grub / menu.lst, nastaví směrnici "default &lt; N &gt;" na kanonický vstup, nejprve zazálohuje menu a obnoví jej při každém selhání.</translation>
+Pomocník ověřuje / boot / grub / menu.lst, nastaví směrnici &quot;default &lt; N &gt;&quot; na kanonický vstup, nejprve zazálohuje menu a obnoví jej při každém selhání.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2646,6 +2704,50 @@ Pomocník ověřuje / boot / grub / menu.lst, nastaví směrnici "default &lt; N
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Chybějící správce displeje: nainstalujte balíček %1 z tabulky Kapacity.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI nářadí</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>Konfigurační nástroje GRUB</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>Zařízení GRUB</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Chybějící %1: nainstalujte odpovídající balíček (balíky) %2 z tabulky Boot schopností.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Chybějící %1: nainstalujte odpovídající balíček z tabulky Boot schopnosti.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI stavitel</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>boot- stack předpoklad</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramfs- tools</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2692,8 +2794,12 @@ Pomocník ověřuje / boot / grub / menu.lst, nastaví směrnici "default &lt; N
         <translation>Nejnovější instalovaný kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Ne 'Legacy funkce shell:' řádek je cached; spustit diagnostiku pro zvolený rozsah pro vyhodnocení chroot / timeout controlling sond pomocníka (self closed).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Sestavovač pro sestavení jádra: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Ne &apos;Legacy funkce shell:&apos; řádek je cached; spustit diagnostiku pro zvolený rozsah pro vyhodnocení chroot / timeout controlling sond pomocníka (self closed).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2760,8 +2866,8 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Zatím žádné diagnostické výsledky.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
-        <translation type="unfinished" />
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
+        <translation>V kořenovém, /boot ani /home souborovém systému %1 nebyly zjištěny žádné chyby souborového systému. Nebyla spuštěna žádná oprava.</translation>
     </message>
     <message>
         <source>No locked LUKS component is currently visible on this selected drive.</source>
@@ -2784,8 +2890,8 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Není vybrán žádný nástroj pro opravy.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
-        <translation type="unfinished" />
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <translation>V kořenovém, /boot ani /home souborovém systému %1 nebyly zjištěny žádné opravitelné chyby souborového systému, ale %2. Nebyla spuštěna žádná oprava.</translation>
     </message>
     <message>
         <source>No selected stages are available. %1</source>
@@ -2836,7 +2942,7 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Dobře.</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Příkazy Offline běží jeden po druhém v čerstvém chroot a nemůže odpovědět interaktivní podněty (apt- get -y upgrade funguje). Příkazy Host- shell běží přímo na spuštěném hostiteli. Pomocná sonda vede bránou povelové pole; přesný důvod se objeví v nástrojové špičce.</translation>
     </message>
     <message>
@@ -3024,11 +3130,11 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Obnovit zařízení</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Regenerovat konfiguraci %1 GRUB</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Regenerovat konfiguraci %1 extlinux</translation>
     </message>
     <message>
@@ -3057,7 +3163,7 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
     </message>
     <message>
         <source>Repair</source>
-        <translation>Opravy</translation>
+        <translation>Oprava</translation>
     </message>
     <message>
         <source>Repair broken APT dependencies</source>
@@ -3184,7 +3290,7 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Spusťte příkaz uvnitř vybraného opravárenského systému jako root (sudo není potřeba). Příkazy jsou prováděny jeden po druhém v čerstvé chroot a nemůže odpovědět interaktivní podněty; používat neinteraktivní vlajky, jako apt- get -y upgrade. Výstup je uložen v tomto okně a v protokolu aplikace.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Spustit příkaz na spuštěném hostiteli jako root (Host Shell) nebo uvnitř vybraného opravného systému jako root (Chroot Shell); sudo není potřeba ani v. Příkazy Host-Shell jsou prováděny přímo na aktivním systému; příkazy chroot jsou prováděny jeden po druhém v čerstvém chroot a nemohou odpovědět interaktivní podněty, takže non-interaktivní vlajky, jako apt- get -y upgrade i nadále doporučuje pro bezobslužné běhy. Výstup je uložen v tomto okně a v protokolu aplikace. Pomocník je čitelný pouze sondy brány povelové pole; zatímco Shell je nedostupný stránka ukazuje přesný důvod pod polem.</translation>
     </message>
     <message>
@@ -3204,7 +3310,7 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Spustit diagnostiku pro tento rozsah odemknout uzavřené akce. Diagnostika je pouze pro čtení a jediný zdroj důkazů.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Spusťte diagnostiku pro vyhledávání, které konfigurační soubory jsou zaměřeny; o seznamu rozhoduje pouze sonda pomocníka.</translation>
     </message>
     <message>
@@ -3212,15 +3318,15 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
         <translation>Spustit na hostitele</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Spustit jeden opravárenský nástroj nebo použít plán plné opravy proti zvolené opravné mechanice. Vyberte si Host Údržba na systémech spustit stejné podporované, hlídané etapy proti chráněným Běžící hostitel. Zvolte fáze plné opravy v Nastavení. Povolené etapy běží v uvedeném pořadí. Každá konfigurovatelná etapa se také objevuje níže jako individuální nástroj; sloupec Full Opravy odráží aktuální stav nastavení. Nástroje pro bootování (konfigurace GRUB, sesouhlasení boot- stack a Make Default) jsou nezávislé: spusťte je v libovolném pořadí, a pozdější akce znovu ověřuje, co se změnilo a hlásí svůj vlastní výsledek. Aktivní rozsah je uveden vedle opravy: vybraný opravárenský pohon nebo údržba Běžící hostitel. Každá akce zůstává zakázána, dokud cached schopnosti linky říkají k dispozici a pomocník udržuje své runtime předlety. Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako "nezměněná", znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Spustit jeden opravárenský nástroj nebo použít plán plné opravy proti zvolené opravné mechanice. Vyberte si Host Údržba na systémech spustit stejné podporované, hlídané etapy proti chráněným Běžící hostitel. Zvolte fáze plné opravy v Nastavení. Povolené etapy běží v uvedeném pořadí. Každá konfigurovatelná etapa se také objevuje níže jako individuální nástroj; sloupec Full Opravy odráží aktuální stav nastavení. Nástroje pro bootování (konfigurace GRUB, sesouhlasení boot- stack a Make Default) jsou nezávislé: spusťte je v libovolném pořadí, a pozdější akce znovu ověřuje, co se změnilo a hlásí svůj vlastní výsledek. Aktivní rozsah je uveden vedle opravy: vybraný opravárenský pohon nebo údržba Běžící hostitel. Každá akce zůstává zakázána, dokud cached schopnosti linky říkají k dispozici a pomocník udržuje své runtime předlety. Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako &quot;nezměněná&quot;, znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Spusťte jeden zrevidovaný příkaz jako kořen uvnitř cílového chroot skrz pomocníkovo střežené sloveso.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Spusťte jeden přezkoumaný příkaz jako kořen na běžícím hostiteli přes pomocníkův chráněný hostitelský-shell sloveso.</translation>
     </message>
     <message>
@@ -3234,7 +3340,7 @@ Stiskněte autorizaci na záložce Systems or Opravy pro nastavení relace, nebo
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Spustit kompletní plán oprav?
@@ -3293,7 +3399,7 @@ Pomocník udržuje své runtime předlety; příkaz je předán jako jeden argum
     </message>
     <message>
         <source>Running kernel: %1.</source>
-        <translation type="unfinished" />
+        <translation>Běžící jádro: %1.</translation>
     </message>
     <message>
         <source>Running system protection unresolved</source>
@@ -3313,7 +3419,7 @@ Pomocník udržuje své runtime předlety; příkaz je předán jako jeden argum
     </message>
     <message>
         <source>Runs one read-only diagnostic for the selected scope through the helper (`diagnose &lt;key&gt;` / `host-diagnose &lt;key&gt;`); Run All is the combined report.</source>
-        <translation>Provede jednu diagnostiku pouze pro zvolený rozsah pomocí pomocníka ('diagnose &lt; key &gt;' / 'host- diagnose &lt; key &gt;'); Spustit vše je kombinovaná zpráva.</translation>
+        <translation>Provede jednu diagnostiku pouze pro zvolený rozsah pomocí pomocníka (&apos;diagnose &lt; key &gt;&apos; / &apos;host- diagnose &lt; key &gt;&apos;); Spustit vše je kombinovaná zpráva.</translation>
     </message>
     <message>
         <source>Runs the selected stages using the cached read-only diagnostic evidence after privilege confirmation.</source>
@@ -3384,7 +3490,7 @@ Pomocník udržuje své runtime předlety; příkaz je předán jako jeden argum
         <translation>Nejprve zvolte fyzickou mechaniku v seznamu dostupných opravných cílů v záložce Systems, nebo použijte Host Maintenance pro chráněný běžící hostitel.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Vyberte fyzický pohon; Boot Bitch automaticky vyřeší nejpravděpodobnější objem systému Linux. Běžící hostitel zůstává chráněn před běžnými opravami cíle, se samostatnou explicitní udržovací dráhou pro vlastní systém. Tlačítko Detaily zobrazuje údaje chráněného hostitele v panelu detailů; volba libovolného řádku mechaniky obnovuje panel per- drive.</translation>
     </message>
     <message>
@@ -3510,6 +3616,14 @@ Pomocník udržuje své runtime předlety; příkaz je předán jako jeden argum
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Zobrazovat zařízení bez identifikované instalace Linux</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Po vypnutí, skrývá read- pouze squashfs objem kontejneru (snap-style), který nemůže být Linux instalovat cíle.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Zobrazit zařízení s smyčkou squashfs</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3692,8 +3806,8 @@ Metoda: helper- potvrzené mapování z poslední diagnostiky pouze pro čtení.
         <translation>Zastavuji příkaz Shell... Záložka Záznamy vede kompletní přepis.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Navrhovaný balíček</translation>
+        <source>Packages</source>
+        <translation>Balení</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3754,8 +3868,8 @@ Běžící hostitel je nezávisle znovu kontrolován a zamítnut privilegovaným
         <translation>Plán Full Repair vede vybrané statické fáze v pořadí přes hlídaného pomocníka; jednotlivé nástroje běží po etapě. Každá akce zůstává zakázána, dokud cached schopnosti linky říkají k dispozici a pomocník udržuje své runtime předlety.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Plán Full Repair vede vybrané statické fáze v pořadí přes hlídaného pomocníka; jednotlivé nástroje běží po etapě. Každá akce zůstává zakázána, dokud cached schopnosti linky říkají k dispozici a pomocník udržuje své runtime předlety. Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako "nezměněná", znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Plán Full Repair vede vybrané statické fáze v pořadí přes hlídaného pomocníka; jednotlivé nástroje běží po etapě. Každá akce zůstává zakázána, dokud cached schopnosti linky říkají k dispozici a pomocník udržuje své runtime předlety. Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako &quot;nezměněná&quot;, znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3835,7 +3949,7 @@ Stiskněte Autorizaci na záložce Systémy nebo opravy pro obnovení relace a p
     </message>
     <message>
         <source>The read-only check found issues on %1 mounted filesystem(s) that have no safe repair mode from this environment. Unmount the filesystem and check again, or repair it from a live system that is not using it.</source>
-        <translation type="unfinished" />
+        <translation>Kontrola pouze pro čtení nalezla problémy na %1 připojeném(ch) souborovém(ch) systému(ech), které z tohoto prostředí nemají bezpečný režim opravy. Odpojte souborový systém a zkontrolujte jej znovu, nebo jej opravte ze živého systému, který jej nepoužívá.</translation>
     </message>
     <message>
         <source>The read-only file system check failed; review the helper output in Logs.</source>
@@ -3898,7 +4012,7 @@ Stiskněte Autorizaci na záložce Systémy nebo opravy pro obnovení relace a p
         <translation>Zvolený rozsah nemá žádnou vyřešenou kořenovou složku; použijte Refresh Devices a znovu odešlete cíl opravy.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Nelze vyřešit vybranou diskovou a kořenovou složku.</translation>
     </message>
     <message>
@@ -3914,8 +4028,8 @@ Stiskněte Autorizaci na záložce Systémy nebo opravy pro obnovení relace a p
         <translation>Tento šifrovaný disk zatím nemá žádný viditelný Linux souborový systém. Použijte Odemknout, obnovit zařízení, a vyberte cíl po jeho Linux root je detekován.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Tento odkaz ukazuje žádnou akci %1; pomocník hlásí schopnost, jak je k dispozici.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>K dispozici pouze jako diagnostika / schopnost - tento odkaz frontend neodhaluje žádnou akci opravy; provede interaktivní opravu z moderního GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4038,6 +4152,18 @@ Pomocník otevře dočasné mapování zařízení s kryptsetupem a udržuje ho 
         <translation>VAROVÁNÍ: uložený soubor s nastavením GUI %1 nelze číst; jeho možnosti jsou čteny jako jejich chyby, nikoli jako uložené hodnoty.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>VAROVÁNÍ: uložený soubor s nastavením GUI %1 nelze číst ani odstranit; jeho možnosti se čtou jako výchozí hodnoty. Odstraňte jej (nebo zpřístupněte ~/.qt pro zápis), aby uložená nastavení mohla být znovu ukládána.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Odstraněno %1 nečitelných zastaralých souborů nastavení: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Nelze odstranit nečitelné zastaralé soubory nastavení %1; výchozí hodnoty platí, dokud nebudou odstraněny.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Po vypnutí jsou disky se zašifrovaným zařízením skryty, dokud není hlasitost odemčena.</translation>
     </message>
@@ -4062,8 +4188,8 @@ Pomocník otevře dočasné mapování zařízení s kryptsetupem a udržuje ho 
         <translation>Zabalte dlouhé logové řádky</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako "nezměněná", znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Psaní akce požádat o potvrzení a pak spustit pomocník vlastní runtime předlety; GUI nikdy oslabuje je. Oprava, která se neprokáže jako &quot;nezměněná&quot;, znehodnocuje cached diagnostiku a vyřazuje uzavřené akce, dokud diagnostika znovu nezačne.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4098,8 +4224,8 @@ Pomocník otevře dočasné mapování zařízení s kryptsetupem a udržuje ho 
         <translation>autorizace správce</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>elevace vyžaduje interaktivní sudo heslo; spustit kouř jako root nebo po 'sudo -S -v' s --elevate 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>elevace vyžaduje interaktivní sudo heslo; spustit kouř jako root nebo po &apos;sudo -S -v&apos; s --elevate &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4178,7 +4304,7 @@ Příkaz nebyl zahájen.</translation>
         <translation>není k dispozici - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>nedostupný: viz soubor Legacy funkce pomocníka: důvod sondy výše</translation>
     </message>
     <message>
@@ -4189,5 +4315,409 @@ Příkaz nebyl zahájen.</translation>
         <source>your account</source>
         <translation>Váš účet</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Poslední úložiště kernel: %1 (novější než nainstalovaný nejnovější; %2).</translation></message><message><source>Try Again</source><translation>Zkus to znovu.</translation></message><message><source>Enter the note text</source><translation>Zadejte text poznámky</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Tato poznámka bude připojena k zvolenému protokolu sezení %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>POZNÁMKA k předchozímu protokolu sezení %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Zvolený záznam záznamu není platný záznam session; poznámka nebyla zapsána.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Zvolený záznam relace %1 není zapisovatelný; poznámka nebyla přidána.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Poslední úložiště kernel: %1 (novější než nainstalovaný nejnovější; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Zkus to znovu.</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Zadejte text poznámky</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Tato poznámka bude připojena k zvolenému protokolu sezení %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>POZNÁMKA k předchozímu protokolu sezení %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Zvolený záznam záznamu není platný záznam session; poznámka nebyla zapsána.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Zvolený záznam relace %1 není zapisovatelný; poznámka nebyla přidána.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Žádná cached running- host diagnostika; spustit read- pouze hostitelské diagnostiky v Host Údržba zalidnit tento řádek.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - přerušeno - zastaveno na vaši žádost</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 fáze/fází nahlásila změny před zastavením; tyto změny jsou použity a dotčená diagnostika byla znovu vytvořena</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>fáze ohlášená změna před zastavením; její změny lze již použít</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>nebyly provedeny žádné změny</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Instalováno</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Oprava zaváděcí cesty EFI / UKI pro systémy UEFI</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Opravy klávesnice, myši a touchpad pomocí interaktivního menu pomocníka</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Opravy sítě ovládané pomocí interaktivního menu pomocníka; změny živé konektivity se nikdy nedotýkají rozhraní držícího výchozí trasu</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Balíčky nejsou v úložištích tohoto systému k dispozici</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>Začátek firmwaru %1 načtený pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware záznam prohlížení je k dispozici. Načíst položky pro seznam záznamů UEFI pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Boot</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Obnovení záznamů bot odmítnuto: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Výsledek zápisu bota: během spuštění žádosti se rozsah změnil.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Boty</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Třída</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Třída: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Přímé (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Jeď.</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>Zadní položky EFI</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Fallback</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Záznamy o zavádění firmwaru nelze načíst. Podrobnosti viz Záznamy.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Zadávání firmwaru selhalo.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB menu</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Označení</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Označení: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Seznam zaváděcích položek firmwaru</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Uvedeno v BootOrder: ne (vynecháno firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Uvedeno v BootOrder: ano</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Načíst záznamy</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Načíst %1 zaváděcí položky firmwaru UEFI pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Načteno %1 %2 polož%3 zavádění firmwaru pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Loader</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Loader: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Načítání %1 zaváděcích položek firmwaru UEFI pouze pro čtení pro %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Síť</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Nebyly nalezeny žádné zápisy firmwaru UEFI - tento systém je BIOS / dědictví nebo chybí efibootmgr, takže není žádný příkaz firmware boot spravovat.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Nebyl vybrán žádný rozsah</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Ostatní</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Opravy cíle: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Opravy cíle: není připraven</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Repair- target</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Úloha: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Hostitel běhu: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Spouštěcí hostitel: nezvolen</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Running- host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Vyberte Host Údržba na spuštěném hostiteli, nebo opravit cíl v Systems, pro správu firmware boot položky.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Vyberte Host Údržba na spuštěném hostiteli, nebo opravit cíl v Systems, pro správu firmware boot položky. Záznamy o zatížení zobrazují aktuální položky programu UEFI pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>Záznamy o spuštění firmwaru UEFI (NVRAM) jsou uvedeny pouze zde. V Host Údržba vidíte vlastní položky hostujícího; s cílem opravy se zavázali, že uvidíte položky NVRAM, jejichž oddíl ukazuje na tento oddíl systému EFI. Tento pohled nikdy nezmění firmware; pouze BIOS- hostitel (Etch) nemá žádné zápisy firmwaru a žádné nevypisuje. Nabídkové menu GRUB (seznam jader uvnitř GRUB) je odděleno a regenerováno opravou GRUB nebo boot- stack.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Zadní položky firmwaru UEFI v BootOrder, uvedené pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Tato položka je v současné době aktivní (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Nelze smazat %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>Opravářské cíle</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>opravárenský cíl</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>spuštěné hostitelské</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>running- host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>Poznámky EFI</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Boot Menu</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Přepínač mezi položkami firmwaru UEFI a bootovacím menu pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Zápis nabídky</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Menu pouze pro read- boot (zápisy do jádra / OS v pořadí souboru).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>Zahajovací položky programu %1 načteny pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 prohlížení zaváděcí nabídky je k dispozici. Zvolte nabídku Boot pro seznam nabídky zavádění pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 prohlížení záznamu firmwaru je k dispozici. Vyberte položky EFI pro seznam záznamů UEFI pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Vyberte Host Údržba na spuštěném hostiteli, nebo opravárenský cíl v Systems, pro zobrazení zadních položek firmware. Zvolte EFI Entries nebo Boot Menu výše pro načtení položek aktuálního rozsahu pouze.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Nahrávání programu %1 boot read- only for %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Vypsat menu</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Obnovení nabídky bot odmítnuto: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Seznam nabídek boot selhal.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Náhradní nabídka zavádění odmítnuta: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Výsledek nabídky bota vyřazen: rozsah se změnil během spuštění požadavku.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Položka v nabídce: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>ID položky: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Tohle je podmenu.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Načítá konfiguraci: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Zahraniční: ukazuje na jiný disk nebo oddíl.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Výchozí položka: ano</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Výchozí údaj: ne</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Výchozí</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (podnabídka)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Načteno %1 polož%2 zaváděcí nabídky pouze pro čtení.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Žádný odkaz GRUB menu.lst na tomto rozsahu; vyzkoušet GRUB grub.cfg boot menu read- pouze.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Na tomto disku nebyla nalezena žádná konfigurace boot menu. Systém nemusí mít žádné menu GRUB, extlinux / syslinux nebo GRUB nebo jeho konfigurace žije jinde.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Konfigurace menu boot existuje, ale neobsahuje žádné položky.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Menu boot nelze načíst. Podrobnosti viz Záznamy.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>výchozí</translation>
+    </message>
+</context>
 </TS>

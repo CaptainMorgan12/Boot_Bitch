@@ -41,8 +41,8 @@
 # Section-key vocabulary (the runnable diagnostic sections plus the
 # capability pseudo-entry and the aggregate pseudo-keys):
 #   environment backend package boot boot-evidence kernel grub uki display
-#   gpu errors usage filesystem fstab btrfs mapper luks report capabilities
-#   all
+#   gpu input network errors usage filesystem fstab btrfs mapper luks report
+#   capabilities all
 # 'capabilities' is the dedicated capability cache entry (cleared directly,
 # never a runnable section); 'report' means the combined report; 'all' means
 # the complete set.
@@ -89,6 +89,12 @@ apt-upgrade	package	package backend usage capabilities
 # the package/usage/capability state).
 install-target-package	package	package backend usage capabilities display
 install-host-package	package	package backend usage capabilities display
+# Round 142/143: the snapshot-config Enable verbs create the initial Snapper
+# config, the .snapshots store, an fstab entry and (round 143) the FIRST
+# snapshot — and may install the missing snapper/btrfs-progs packages — so the
+# package/usage evidence, the btrfs evidence and the capability rows change.
+enable-snapshot-config	-	package backend usage btrfs capabilities
+enable-host-snapshot-config	-	package backend usage btrfs capabilities
 dkms	kernel	kernel
 display	display	display
 display-manager	display	display
@@ -99,6 +105,77 @@ gpu	gpu kernel	gpu display kernel boot boot-evidence grub uki package usage capa
 # blacklist-module, rebuild-dkms, rebuild-boot, remove-older-kernel,
 # replace-kernel): the documented fail-safe complete set (round 17 intent).
 gpu:*	gpu kernel	all
+# Round 85: the input-device and network interactive repairs (the gpu
+# pattern): the main rows consume the input/network evidence plus the kernel
+# inventory and invalidate the sections their actions change; the :* rows are
+# the fail-safe complete set for the sub-actions.
+# Round 87: the base rows' affected sets were narrowed to the requires sets
+# (input kernel / network kernel) and the include-initramfs sub-actions gained
+# exact rows with the same targeted set — the include-initramfs repair rebuilds
+# only the initrd/UKI images (the kernel section's initramfs evidence) and the
+# input/network inclusion lines, never grub/display/filesystem/boot.  A
+# completed interactive session's invalidation union (base key + sub-action
+# key + the initramfs key the rebuild emits) therefore stays targeted; the :*
+# rows remain the fail-safe complete set for every OTHER sub-action.
+# Round 88: the include-initramfs rows' affected sets gained `usage` — the
+# initramfs rebuild changes /boot contents, so the usage section's numbers
+# legitimately go stale; the union regenerates input kernel usage /
+# network kernel usage while the exact-row targeting stays (the user-approved
+# input+kernel / network sets plus usage).
+# Round 89 (ITEM 2, the stale-cache audit): every implemented interactive
+# sub-action now carries its own targeted exact row (the genuinely-affected
+# sections, the kernel/gpu consistency — the round-18/19 parity rule keeps
+# `package backend usage capabilities` on every package-mutating row):
+#   input load-module / load-controller -> input only (a live host modprobe
+#     persists nothing; the loaded-modules evidence is the tool's section);
+#   remove-blacklist / hid-fallback / quirk-fnmode -> input kernel (the
+#     modprobe.d/config evidence + the initramfs rebuild);
+#   install-package -> package backend usage capabilities input kernel (the
+#     guarded package install + the rebuild);
+#   network module-load / remove-blacklist -> network kernel;
+#   load-candidate -> network (a live host modprobe persists nothing — the
+#     input load-module pattern; round 91);
+#   firmware-install / driver-switch -> package backend usage capabilities
+#     network kernel.
+# Round 92 (ladder steps 3-4): reinstall -> package + kernel + the tool
+#   section + usage (the package reinstall and the module rebuild change
+#   /boot contents, the include-initramfs precedent);
+#   pin-version -> package + capabilities + the tool section (the downgrade
+#   install and the preferences.d pin; no /boot rebuild).
+# The :* rows now cover ONLY genuinely-unlisted future sub-actions.
+input-devices	input kernel	input kernel
+input-devices:include-initramfs	input kernel	input kernel usage
+input-devices:load-module	input kernel	input
+input-devices:load-controller	input kernel	input
+input-devices:remove-blacklist	input kernel	input kernel
+input-devices:install-package	input kernel	package backend usage capabilities input kernel
+input-devices:hid-fallback	input kernel	input kernel
+input-devices:quirk-fnmode	input kernel	input kernel
+input-devices:reinstall	input kernel	package backend usage capabilities input kernel usage
+input-devices:pin-version	input kernel	package backend usage capabilities input kernel
+input-devices:resolve-conflict	input kernel	input kernel
+input-devices:user-artifact	input kernel	package backend usage capabilities input kernel
+input-devices:*	input kernel	all
+network	network	network kernel
+network:include-initramfs	network	network kernel usage
+network:module-load	network	network kernel
+network:remove-blacklist	network	network kernel
+network:load-candidate	network	network
+network:firmware-install	network	package backend usage capabilities network kernel
+network:driver-switch	network	package backend usage capabilities network kernel
+network:reinstall	network	package backend usage capabilities network kernel usage
+network:pin-version	network	package backend usage capabilities network kernel
+network:resolve-conflict	network	network kernel
+network:user-artifact	network	package backend usage capabilities network kernel
+# Round 94 (P4, the connectivity actions 5-7): the DHCP renew / default-route /
+# DNS repairs change only the network section's evidence (the config backend,
+# the live route/DNS state and the lease evidence).  The target branches write
+# persistent config into the same evidence domain; no package or /boot change
+# occurs, so the rows stay config-only (the resolve-conflict pattern).
+network:dhcp-renew	network	network
+network:default-route	network	network
+network:dns-repair	network	network
+network:*	network	all
 # The one-boot nomodeset action belongs to the gpu sub-action family.
 nomodeset	gpu kernel	all
 initramfs	kernel	kernel
