@@ -4,10 +4,10 @@ Adds the semantic icon atlas, the read-only-first file system repair engine and 
 
 Released 2026-09-16.
 
-- Semantic icon atlas: the bundled icon set becomes the deterministic UI   source across desktop themes, with the Qt SVG runtime dependency added for   Arch and other minimal installations.
-- Read-only-first File system repair: the new tool and Full Repair stage   (ordered first) resolve the root, `/boot`, ESP and `/home` filesystems, run   the matching read-only check, and offer per-device repair only after issues   are found and the user confirms.
-- Distribution/boot backend profiler: read-only diagnostics pair kernels with   initramfs images and gate every repair tool and Full Repair stage on the   scope's read-only evidence, so unavailable actions disable with a reason.
-- UI polish and fixes: a busy indicator, one authorization request per scope,   section-scoped diagnostics refresh, a guarded Host Shell, `@section` log   search and responsive layouts; plus fixes from user testing (GRUB EFI   firmware-ID handling, PackageKit, apt metadata retry, uninstall cleanup).
+- Semantic icon atlas: the bundled icon set becomes the deterministic UI source across desktop themes, with the Qt SVG runtime dependency added for Arch and other minimal installations.
+- Read-only-first File system repair: the new tool and Full Repair stage (ordered first) resolve the root, `/boot`, ESP and `/home` filesystems, run the matching read-only check, and offer per-device repair only after issues are found and the user confirms.
+- Distribution/boot backend profiler: read-only diagnostics pair kernels with initramfs images and gate every repair tool and Full Repair stage on the scope's read-only evidence, so unavailable actions disable with a reason.
+- UI polish and fixes: a busy indicator, one authorization request per scope, section-scoped diagnostics refresh, a guarded Host Shell, `@section` log search and responsive layouts; plus fixes from user testing (GRUB EFI firmware-ID handling, PackageKit, apt metadata retry, uninstall cleanup).
 
 The Debian package and AppImage are built locally from the complete source tree.
 

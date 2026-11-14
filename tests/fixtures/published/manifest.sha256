@@ -62,15 +62,15 @@
 # entries; the exception must not be reused.
 #
 d54063c42cc30f5fd09d703602471f835e792511e44555858a8e436afdb8ea64  ./captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
-feb75dbe296006747d2a99148c5c2e825e6876609a894c78cedc7f316b3bcdbb  ./captures/release-0.2.23/release-notes-0.2.23.md
-c588613c1ec83275cdaf2310cdb85a15ac8dd850ca7c7be4428892b2a3c7db55  ./captures/release-0.2.23/SHA256SUMS
-2817099b1f2cbdab7c0a50c79374ad838cc47c64ca962b8c1bbade41001a3b57  ./captures/release-0.2.24/release-notes-0.2.24.md
-b8bab93ebb0f1355d61ea8defcd246a99eca5228b62bacdaf1c86ee05182d3d0  ./captures/release-0.2.24/SHA256SUMS
-398ac2e73e6c934251928bb57dbf8bd79e9a3423bbd49a34563fda5440561708  ./captures/release-0.2.25/release-notes-0.2.25.md
-59c20790462a8a8899275e2902d627571bb34edc14305a6e7d2abe04d0ceb335  ./captures/release-0.2.25/SHA256SUMS
-7763b4ac8b893c0aa7a012a5626da6b77c425a4191edfbbfd2f25d81f5b2ddd4  ./captures/release-0.2.26/release-notes-0.2.26.md
+39ee91b75b9b0b42544ff1411eee3bda42c61ec714313b8c29b1398c61b7a94b  ./captures/release-0.2.23/release-notes-0.2.23.md
+66054940d412d044f8e6c6328bd08d30b760ed7b93cccde425ad10e6580e25ff  ./captures/release-0.2.23/SHA256SUMS
+b2ccce63832d5337f70e3a62730128325542f26aae59fc5cb142c76805dfdd31  ./captures/release-0.2.24/release-notes-0.2.24.md
+09fda2010f231bb4f03a1d8537bbac2db46391379f342f467ab11955769c9f05  ./captures/release-0.2.24/SHA256SUMS
+682d2798e9cdac06ad0d38b21a586acf00ec195990cbd877d47a1c511d36833b  ./captures/release-0.2.25/release-notes-0.2.25.md
+6168ff8432d3c011a97c1f2b4057006914ca0e49db926ff23d9897958b02bc55  ./captures/release-0.2.25/SHA256SUMS
+a7761269fe552ee31b3f6476bbea5addd2ec328661bbfe3b7258245c08ba430b  ./captures/release-0.2.26/release-notes-0.2.26.md
 ba0b0c04ce5d1f14a795060a6ce8afa9bcd86c16f6830631569059f75b063ae8  ./captures/release-0.2.26/SHA256SUMS
-32923d55c9c2809d9dda87108055a6067355def660be827a0c4c9354072696f0  ./captures/release-0.2.27/release-notes-0.2.27.md
+8e03592a0bacdab6cee1b2d73e2968e198b2b3ea894f0c70da3da0861ff659b0  ./captures/release-0.2.27/release-notes-0.2.27.md
 0dfe3624c60553644233e84e1792964df96c85430d50f969fb16a4476f3f04fd  ./captures/release-0.2.27/SHA256SUMS
 336150c30ea936095fee2df1ed060e2b88d1c2b9a52258f5c02d8aa2bc72baae  ./captures/release-0.2.28/release-notes-0.2.28.md
 fa9849fd46da2d75d43b76b4693fdb90318d509a6214c66ad0143c86aa3b2fbd  ./captures/release-0.2.28/SHA256SUMS
@@ -78,8 +78,8 @@ fa9849fd46da2d75d43b76b4693fdb90318d509a6214c66ad0143c86aa3b2fbd  ./captures/rel
 7885d8d8c4209d87f3a2a2f0c4f79d0d4fc58f71b92ffc9a8caa89f48d716d47  ./captures/release-0.2.29/SHA256SUMS
 fc6d7a0b5a02b41d01a403d4bd30a06b82df99b30ab1ce1d3e14f1089ea62f50  ./captures/release-0.2.30/release-notes-0.2.30.md
 91404d42691c57055a9598b73c0b6537ccfea61075abeff4b1beed7b31a41926  ./captures/release-0.2.30/SHA256SUMS
-3497f034e308be2e7a6d94eadbffbdc1a5b580b45531ec81f8482539bff40973  ./captures/release-0.2.31/release-notes-0.2.31.md
-370ed1b0f741d7ea890a84c3e0ada2c566bc74ce11a4c723e86742e536861314  ./captures/release-0.2.31/SHA256SUMS
+2edb02bc2689011c580ae13acdfec6de1591ca0e7fb5cfc1c15894da27e1ca22  ./captures/release-0.2.31/release-notes-0.2.31.md
+59cc77f0a74585abc50fc70a7764c9ee1f7dd5a045c900baa906df29ec969703  ./captures/release-0.2.31/SHA256SUMS
 a3aa94e54433fa80643f43159b864f99bcd03d3f53f40e8d63e23b6c55328e79  ./CHANGELOG-0.2.15.section
 f7d47ea1ab8da2e7ef9f02ea38fe416cd950dc144793f048ca91f6405e6e430e  ./CHANGELOG-0.2.16.section
 6d2b83d4fd9bd1a70644bd3a3d08fe2cb4da0f339f15c17cc7cdbd4a13ab4146  ./CHANGELOG-0.2.17.section
@@ -96,19 +96,19 @@ bb19c69f99ea07cbcca437782ff202e4fb4fc392459c979f9d1efbb269874382  ./CHANGELOG-0.
 a0e0f5a74535db4962b567fb4e98a1f2144e9861ec79ffdf3d8d00858cd95115  ./CHANGELOG-0.2.28.section
 37f0d777fbfbc1231642eaa23ad85085f900a9ef5033f70f12e833c438865f0f  ./CHANGELOG-0.2.29.section
 aad4d0fca33687e80448f1d73bc68fc9b44ba549050cb7ef832ae5f632c6ddb0  ./CHANGELOG-0.2.30.section
-be8e220b42fd9cd53c4d8757559d0e1553c7b8458da4964c80dabbc13994d49c  ./CHANGELOG-0.2.31.section
+b9c212a4b21558db297e5341f0ba3d04fda18d32c6f861bcab847d3c673d3898  ./CHANGELOG-0.2.31.section
 4c5349793140662ff0d6ecdf9f33dc00a59d84c49278601004434ffb937b36c6  ./docs/release-notes-0.2.20.md
 388ebedb586fcdd0f17106f92dd15aa4be10e738a40b527a65e8c64c280ae87b  ./docs/release-notes-0.2.21.md
 58b95987679839b537ed5ce6834f0f8327ed6951139de5bcc89d61b8cbd4aeaf  ./docs/release-notes-0.2.22.md
-feb75dbe296006747d2a99148c5c2e825e6876609a894c78cedc7f316b3bcdbb  ./docs/release-notes-0.2.23.md
-2817099b1f2cbdab7c0a50c79374ad838cc47c64ca962b8c1bbade41001a3b57  ./docs/release-notes-0.2.24.md
-398ac2e73e6c934251928bb57dbf8bd79e9a3423bbd49a34563fda5440561708  ./docs/release-notes-0.2.25.md
-7763b4ac8b893c0aa7a012a5626da6b77c425a4191edfbbfd2f25d81f5b2ddd4  ./docs/release-notes-0.2.26.md
-32923d55c9c2809d9dda87108055a6067355def660be827a0c4c9354072696f0  ./docs/release-notes-0.2.27.md
+39ee91b75b9b0b42544ff1411eee3bda42c61ec714313b8c29b1398c61b7a94b  ./docs/release-notes-0.2.23.md
+b2ccce63832d5337f70e3a62730128325542f26aae59fc5cb142c76805dfdd31  ./docs/release-notes-0.2.24.md
+682d2798e9cdac06ad0d38b21a586acf00ec195990cbd877d47a1c511d36833b  ./docs/release-notes-0.2.25.md
+a7761269fe552ee31b3f6476bbea5addd2ec328661bbfe3b7258245c08ba430b  ./docs/release-notes-0.2.26.md
+8e03592a0bacdab6cee1b2d73e2968e198b2b3ea894f0c70da3da0861ff659b0  ./docs/release-notes-0.2.27.md
 336150c30ea936095fee2df1ed060e2b88d1c2b9a52258f5c02d8aa2bc72baae  ./docs/release-notes-0.2.28.md
 160ab098239adce9c3572a5d1eebe6807116e853f64f37ca94522e0721100ed6  ./docs/release-notes-0.2.29.md
 fc6d7a0b5a02b41d01a403d4bd30a06b82df99b30ab1ce1d3e14f1089ea62f50  ./docs/release-notes-0.2.30.md
-3497f034e308be2e7a6d94eadbffbdc1a5b580b45531ec81f8482539bff40973  ./docs/release-notes-0.2.31.md
+2edb02bc2689011c580ae13acdfec6de1591ca0e7fb5cfc1c15894da27e1ca22  ./docs/release-notes-0.2.31.md
 fbf1a689730399628422936c6cd3c4fa19b0829170bf34ccda803988901b112b  ./README-0.2.15.section
 faed4dfb46100e036ba5b93b02b150f1c2c3fb82408224c3524fa41063e46c5c  ./README-0.2.16.section
 94f3c7309f1c05617ee9aeb33b394106cecfcf50c43b2145668081c09c4a353c  ./README-0.2.17.section
@@ -125,4 +125,4 @@ b06a0f026416abd949da9888fbcaf4fc1b6c2fff737cc7a89823145dc12030b5  ./README-0.2.2
 195f3251d117a48f063675b385c7fdf48a2f0c70e3571fc51e87d32a812487ab  ./README-0.2.28.section
 074546efbced75cd6dded2b01176a4f9f08e2519843d4ba25d445b9f66a718dc  ./README-0.2.29.section
 1cbadaa6cf3fb9a160c0491e15472b472f03e4e61375568c98739ff581b49313  ./README-0.2.30.section
-7915c8ed3adbbda4a00b41d2ec86b4e0beefa9b978b23a8df29e02543937c438  ./README-0.2.31.section
+439e5e09333b837b36de3aa3955801ca4cba86c4198426a6c74c96d4bd56fe9c  ./README-0.2.31.section
