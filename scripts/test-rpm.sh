@@ -42,7 +42,7 @@ fi
 }
 
 RPM="$(realpath "$RPM")"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-rpm-test.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-rpm-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 fail()
@@ -94,25 +94,25 @@ assert_listed()
     grep -Fqx "$path" <<<"$file_list" || fail "$description is missing from the package file list: $path"
 }
 
-assert_listed /usr/bin/boot-repair "application binary"
-assert_listed /usr/share/applications/org.bootrepair.BootRepair.desktop "desktop entry"
-assert_listed /usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml "AppStream metadata"
-assert_listed /usr/libexec/boot-repair/boot-repair-helper "privileged repair helper"
-assert_listed /usr/libexec/boot-repair/boot-repair-efi-label.py "EFI label updater"
+assert_listed /usr/bin/boot-bitch "application binary"
+assert_listed /usr/share/applications/org.bootbitch.BootBitch.desktop "desktop entry"
+assert_listed /usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml "AppStream metadata"
+assert_listed /usr/libexec/boot-bitch/boot-bitch-helper "privileged repair helper"
+assert_listed /usr/libexec/boot-bitch/boot-bitch-efi-label.py "EFI label updater"
 
-[[ -x "$TMP/root/usr/bin/boot-repair" ]] || \
+[[ -x "$TMP/root/usr/bin/boot-bitch" ]] || \
     fail "application binary is not executable in the extracted package."
-[[ -f "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop" ]] || \
+[[ -f "$TMP/root/usr/share/applications/org.bootbitch.BootBitch.desktop" ]] || \
     fail "desktop entry is missing from the extracted package."
-[[ -f "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" ]] || \
+[[ -f "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" ]] || \
     fail "AppStream metadata is missing from the extracted package."
-[[ -x "$TMP/root/usr/libexec/boot-repair/boot-repair-helper" ]] || \
+[[ -x "$TMP/root/usr/libexec/boot-bitch/boot-bitch-helper" ]] || \
     fail "privileged repair helper is missing from the extracted package."
-[[ -x "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py" ]] || \
+[[ -x "$TMP/root/usr/libexec/boot-bitch/boot-bitch-efi-label.py" ]] || \
     fail "EFI label updater is missing from the extracted package."
 
 for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
-    icon_path="/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootrepair.BootRepair.png"
+    icon_path="/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootbitch.BootBitch.png"
     assert_listed "$icon_path" "${icon_size}px application icon"
     [[ -f "$TMP/root$icon_path" ]] || \
         fail "${icon_size}px application icon is missing from the extracted package."
@@ -122,42 +122,42 @@ done
 # the GUI localizes instead of falling back to English-only. The exact shipped
 # set is the curated 23-catalog list (round 112: id/sk/vi are unshipped —
 # no Argos model exists for them; their .qm catalogs must not appear).
-translations_dir="$TMP/root/usr/share/boot-repair/translations"
+translations_dir="$TMP/root/usr/share/boot-bitch/translations"
 [[ -d "$translations_dir" ]] || \
-    fail "translation catalog directory is missing from the package: usr/share/boot-repair/translations"
+    fail "translation catalog directory is missing from the package: usr/share/boot-bitch/translations"
 find "$translations_dir" -name '*.qm' -print | grep -q . || \
     fail "the translation catalog directory carries no compiled .qm catalogs"
 shipped_catalogs='ar cs da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh'
 for lang in $shipped_catalogs; do
-    [[ -f "$translations_dir/boot-repair_${lang}.qm" ]] || \
-        fail "shipped translation catalog missing from the package: boot-repair_${lang}.qm"
+    [[ -f "$translations_dir/boot-bitch_${lang}.qm" ]] || \
+        fail "shipped translation catalog missing from the package: boot-bitch_${lang}.qm"
 done
 extra_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' \
-    | grep -vE '^boot-repair_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
+    | grep -vE '^boot-bitch_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
 [[ -z "$extra_catalogs" ]] || \
     fail "unexpected catalogs shipped in the package (unshipped languages must not ship): $extra_catalogs"
 
-grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootrepair.BootRepair.png$' \
-    "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop" || \
+grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootbitch.BootBitch.png$' \
+    "$TMP/root/usr/share/applications/org.bootbitch.BootBitch.desktop" || \
     fail "desktop entry does not reference the installed icon path."
 
-grep -q '<id>org.bootrepair.BootRepair</id>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || \
+grep -q '<id>org.bootbitch.BootBitch</id>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || \
     fail "AppStream metadata has the wrong component ID."
-grep -q '<launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || \
+grep -q '<launchable type="desktop-id">org.bootbitch.BootBitch.desktop</launchable>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || \
     fail "AppStream metadata does not link the desktop entry."
-grep -q '<binary>boot-repair</binary>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || \
+grep -q '<binary>boot-bitch</binary>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || \
     fail "AppStream metadata does not advertise the installed binary."
 
-bash -n "$TMP/root/usr/libexec/boot-repair/boot-repair-helper" || \
+bash -n "$TMP/root/usr/libexec/boot-bitch/boot-bitch-helper" || \
     fail "privileged repair helper is not valid Bash."
-python3 -m py_compile "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py" || \
+python3 -m py_compile "$TMP/root/usr/libexec/boot-bitch/boot-bitch-efi-label.py" || \
     fail "EFI label updater is not valid Python."
 
 rpm_name="$(rpm -qp --qf '%{NAME}' "$RPM")"
-[[ "$rpm_name" == "boot-repair" ]] || \
+[[ "$rpm_name" == "boot-bitch" ]] || \
     fail "unexpected RPM package name: $rpm_name"
 rpm_license="$(rpm -qp --qf '%{LICENSE}' "$RPM")"
 [[ "$rpm_license" == "MIT" ]] || \

@@ -41,7 +41,7 @@ for file in "$MODERN" "$LEGACY" "$ALLOWLIST"; do
     [[ -f "$file" ]] || { printf 'FAIL: missing input file: %s\n' "${file#"$ROOT_DIR"/}" >&2; exit 1; }
 done
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-ui-parity.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-ui-parity.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # --- the extractor -----------------------------------------------------------

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BootRepair
-    VERSION 0.2.30
+project(BootBitch
+    VERSION 0.2.31
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -45,17 +45,17 @@ find_package(KF6Auth QUIET NO_MODULE)
 # startup). Without QtDBus the deferred platform re-check still runs.
 find_package(Qt6 QUIET COMPONENTS DBus)
 if(TARGET Qt6::DBus)
-    set(BOOT_REPAIR_QT_DBUS_LIBRARY Qt6::DBus)
-    set(BOOT_REPAIR_QT_DBUS_DEFINITIONS BOOT_REPAIR_HAVE_DBUS=1)
+    set(BOOT_BITCH_QT_DBUS_LIBRARY Qt6::DBus)
+    set(BOOT_BITCH_QT_DBUS_DEFINITIONS BOOT_BITCH_HAVE_DBUS=1)
 else()
-    set(BOOT_REPAIR_QT_DBUS_LIBRARY)
-    set(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
+    set(BOOT_BITCH_QT_DBUS_LIBRARY)
+    set(BOOT_BITCH_QT_DBUS_DEFINITIONS)
 endif()
 
 # -----------------------------------------------------------------------------
 # Application target
 # -----------------------------------------------------------------------------
-add_executable(boot-repair
+add_executable(boot-bitch
     src/main.cpp
     src/MainWindow.cpp
     src/MainWindow.h
@@ -63,46 +63,46 @@ add_executable(boot-repair
     src/SystemScanner.h
     src/CapabilityChecker.cpp
     src/CapabilityChecker.h
-    resources/boot-repair.qrc
+    resources/boot-bitch.qrc
 )
 
-target_link_libraries(boot-repair
+target_link_libraries(boot-bitch
     PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
-        ${BOOT_REPAIR_QT_DBUS_LIBRARY}
+        ${BOOT_BITCH_QT_DBUS_LIBRARY}
 )
 
-if(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
-    target_compile_definitions(boot-repair PRIVATE ${BOOT_REPAIR_QT_DBUS_DEFINITIONS})
+if(BOOT_BITCH_QT_DBUS_DEFINITIONS)
+    target_compile_definitions(boot-bitch PRIVATE ${BOOT_BITCH_QT_DBUS_DEFINITIONS})
 endif()
 
 if(KF6Auth_FOUND)
-    target_link_libraries(boot-repair PRIVATE KF6::AuthCore)
-    target_compile_definitions(boot-repair PRIVATE BOOT_REPAIR_HAVE_KAUTH=1)
+    target_link_libraries(boot-bitch PRIVATE KF6::AuthCore)
+    target_compile_definitions(boot-bitch PRIVATE BOOT_BITCH_HAVE_KAUTH=1)
 else()
     message(STATUS "KF6Auth not found: building without KDE privilege integration")
 endif()
 
-target_compile_definitions(boot-repair
+target_compile_definitions(boot-bitch
     PRIVATE
-        BOOT_REPAIR_VERSION="${PROJECT_VERSION}"
-        BOOT_REPAIR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        BOOT_BITCH_VERSION="${PROJECT_VERSION}"
+        BOOT_BITCH_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(boot-repair PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(boot-bitch PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 # -----------------------------------------------------------------------------
 # Install rules
 # -----------------------------------------------------------------------------
-install(TARGETS boot-repair
+install(TARGETS boot-bitch
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES data/org.bootrepair.BootRepair.desktop
+install(FILES data/org.bootbitch.BootBitch.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
 )
 
@@ -110,44 +110,44 @@ install(FILES data/org.bootrepair.BootRepair.desktop
 # centers associate the desktop launcher with the installed Debian package.
 # Those centers can then expose their normal uninstall workflow from the
 # application entry/context menu.
-install(FILES data/org.bootrepair.BootRepair.metainfo.xml
+install(FILES data/org.bootbitch.BootBitch.metainfo.xml
     DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
 )
 
-set(BOOT_REPAIR_ICON_NAME "org.bootrepair.BootRepair")
-set(BOOT_REPAIR_ICON_SIZES 16 22 24 32 48 64 128 256 512 1024)
-foreach(icon_size IN LISTS BOOT_REPAIR_ICON_SIZES)
+set(BOOT_BITCH_ICON_NAME "org.bootbitch.BootBitch")
+set(BOOT_BITCH_ICON_SIZES 16 22 24 32 48 64 128 256 512 1024)
+foreach(icon_size IN LISTS BOOT_BITCH_ICON_SIZES)
     install(FILES
-        data/icons/hicolor/${icon_size}x${icon_size}/apps/${BOOT_REPAIR_ICON_NAME}.png
+        data/icons/hicolor/${icon_size}x${icon_size}/apps/${BOOT_BITCH_ICON_NAME}.png
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps
     )
 endforeach()
 
-install(PROGRAMS scripts/boot-repair-helper.sh
-    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-repair
-    RENAME boot-repair-helper
+install(PROGRAMS scripts/boot-bitch-helper.sh
+    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-bitch
+    RENAME boot-bitch-helper
 )
 
-install(PROGRAMS scripts/boot-repair-efi-label.py
-    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-repair
-    RENAME boot-repair-efi-label.py
+install(PROGRAMS scripts/boot-bitch-efi-label.py
+    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-bitch
+    RENAME boot-bitch-efi-label.py
 )
 
 # Install Debian-compatible package copyright metadata. The full upstream MIT
 # license remains in LICENSE at the source-tree root.
 install(FILES data/copyright
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-repair
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-bitch
 )
 
 # Committed Qt UI translations. The .qm catalogs are generated from the
 # committed .ts sources with lrelease and installed so the application can load
-# them at runtime from ${CMAKE_INSTALL_DATADIR}/boot-repair/translations.  Every
+# them at runtime from ${CMAKE_INSTALL_DATADIR}/boot-bitch/translations.  Every
 # .qm under translations/ is installed; the .ts sources are not.  The shipped
 # set is the curated 23-catalog list below (round 112: id/sk/vi dropped —
 # unshipped .ts sources only, no .qm present); the rpm/apk guards assert the
 # exact set.
 install(DIRECTORY translations/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/boot-repair/translations
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/boot-bitch/translations
     FILES_MATCHING PATTERN "*.qm"
 )
 
@@ -155,7 +155,7 @@ install(DIRECTORY translations/
 # org.freedesktop.policykit.exec.path annotation inside the file maps the
 # installed helper path to a dedicated action whose <message> is shown in the
 # pkexec/Polkit prompt instead of the raw command line.
-install(FILES data/org.bootrepair.BootRepair.policy
+install(FILES data/org.bootbitch.BootBitch.policy
     DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions
 )
 
@@ -173,15 +173,15 @@ if(GZIP_EXECUTABLE)
         COMMAND_ERROR_IS_FATAL ANY
     )
     execute_process(
-        COMMAND ${GZIP_EXECUTABLE} -9 -n -c ${CMAKE_CURRENT_SOURCE_DIR}/data/boot-repair.1
-        OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/boot-repair.1.gz
+        COMMAND ${GZIP_EXECUTABLE} -9 -n -c ${CMAKE_CURRENT_SOURCE_DIR}/data/boot-bitch.1
+        OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/boot-bitch.1.gz
         COMMAND_ERROR_IS_FATAL ANY
     )
 
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/changelog.gz
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-repair
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-bitch
     )
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/boot-repair.1.gz
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/boot-bitch.1.gz
         DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
     )
 else()
@@ -194,16 +194,24 @@ endif()
 # Normal source installs still honor CMAKE_INSTALL_PREFIX (default /usr/local).
 # The generated Debian package uses standard /usr paths regardless of that
 # local-install prefix.
-set(CPACK_PACKAGE_NAME "boot-repair")
+set(CPACK_PACKAGE_NAME "boot-bitch")
 set(CPACK_PACKAGE_VENDOR "CaptainMorgan12")
 set(CPACK_PACKAGE_CONTACT "CaptainMorgan12 <captainmorgan12@users.noreply.github.com>")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Linux recovery and boot-repair utility")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Linux recovery and boot recovery utility")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Boot Bitch")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# The package/identity rename (round A, 0.2.31): the new package identity is
+# fully independent — NO Conflicts/Replaces/Obsoletes relationship to the
+# OLD boot-repair name is declared in EITHER direction. The rename alone is
+# the collision fix (a differently-named package is never touched by an apt
+# upgrade), the two packages share no file paths so they can coexist, and
+# installing the upstream boot-repair tool never removes this package (nor
+# does installing this package remove the old one — the transition is a
+# manual uninstall of the pre-rename package).
 # Optional platform-theme integrations make Qt controls and dialogs blend
 # into GNOME without overriding KDE's native Qt theme.
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-platformtheme, qgnomeplatform-qt6")
@@ -218,7 +226,7 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, e2fsprogs, d
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "exfatprogs, ntfs-3g, f2fs-tools, jfsutils, reiserfsprogs, zfsutils-linux")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family maintenance and repair-system recovery, plus guarded\n Arch package, initramfs, GRUB and conventional EFI stages after their\n transaction-specific preflights. It also provides LUKS unlock and verified\n bidirectional file recovery/copy.")
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot recovery utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family maintenance and repair-system recovery, plus guarded\n Arch package, initramfs, GRUB and conventional EFI stages after their\n transaction-specific preflights. It also provides LUKS unlock and verified\n bidirectional file recovery/copy.")
 # Software centers import the desktop entry into their AppStream view. The
 # packaged entry references the installed icon by absolute path so AppStream
 # records a local icon: Discover 6.7.x on KIconThemes 6.28 cannot resolve stock
@@ -244,15 +252,18 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/post
 # package names differ per RPM family; the Debian Recommends and the Arch/
 # Alpine optdepends carry the optional contract instead.
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CaptainMorgan12/Boot_Bitch")
-set(CPACK_RPM_PACKAGE_NAME "boot-repair")
+set(CPACK_RPM_PACKAGE_NAME "boot-bitch")
 set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_RPM_PACKAGE_RELEASE "1")
+# The package/identity rename (round A, 0.2.31): fully independent identity —
+# no Conflicts/Obsoletes against the old boot-repair name (see the deb-side
+# comment: the rename alone is the collision fix, the transition is manual).
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_SUMMARY "${PROJECT_DESCRIPTION}")
 # Same paragraph as the Debian description, without Debian's leading-space
 # continuation markers (RPM keeps the newlines as written).
-set(CPACK_RPM_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\nIt provides protected discovery and read-only diagnostics for the running\nhost or a selected repair system. The privileged backend supports guarded\nDebian/Ubuntu-family maintenance and repair-system recovery, plus guarded\nArch package, initramfs, GRUB and conventional EFI stages after their\ntransaction-specific preflights. It also provides LUKS unlock and verified\nbidirectional file recovery/copy.")
+set(CPACK_RPM_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot recovery utility.\nIt provides protected discovery and read-only diagnostics for the running\nhost or a selected repair system. The privileged backend supports guarded\nDebian/Ubuntu-family maintenance and repair-system recovery, plus guarded\nArch package, initramfs, GRUB and conventional EFI stages after their\ntransaction-specific preflights. It also provides LUKS unlock and verified\nbidirectional file recovery/copy.")
 set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, hicolor-icon-theme")
 # Installed files (privileged helper, desktop entry, AppStream metadata) embed
 # absolute /usr paths, so both package formats stay non-relocatable.
@@ -260,9 +271,9 @@ set(CPACK_PACKAGE_RELOCATABLE FALSE)
 set(CPACK_RPM_PACKAGE_RELOCATABLE FALSE)
 # rpmbuild requires a %changelog section. Generate it at configure time from
 # the project version so a version bump cannot leave a stale entry behind.
-string(TIMESTAMP BOOT_REPAIR_RPM_CHANGELOG_DATE "%a %b %d %Y" UTC)
+string(TIMESTAMP BOOT_BITCH_RPM_CHANGELOG_DATE "%a %b %d %Y" UTC)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rpm-changelog"
-    "* ${BOOT_REPAIR_RPM_CHANGELOG_DATE} ${CPACK_PACKAGE_CONTACT} - ${PROJECT_VERSION}-${CPACK_RPM_PACKAGE_RELEASE}\n"
+    "* ${BOOT_BITCH_RPM_CHANGELOG_DATE} ${CPACK_PACKAGE_CONTACT} - ${PROJECT_VERSION}-${CPACK_RPM_PACKAGE_RELEASE}\n"
     "- Boot Bitch ${PROJECT_VERSION} release\n"
 )
 set(CPACK_RPM_CHANGELOG_FILE "${CMAKE_CURRENT_BINARY_DIR}/rpm-changelog")
@@ -288,11 +299,11 @@ include(CPack)
 # is split into several translation units (MainWindowUiTest.cpp plus the
 # MainWindowUiTest_<feature>.cpp files) that compile in parallel.  They share
 # one QTest class (tests/MainWindowUiTest.h) and one fixture/helper header
-# (tests/UiTestHelpers.h); the single registered test boot-repair-ui-read-only
+# (tests/UiTestHelpers.h); the single registered test boot-bitch-ui-read-only
 # is unchanged.
 enable_testing()
 
-add_executable(boot-repair-ui-tests
+add_executable(boot-bitch-ui-tests
     tests/MainWindowUiTest.cpp
     tests/MainWindowUiTest.h
     tests/MainWindowUiTest_Logs.cpp
@@ -309,94 +320,96 @@ add_executable(boot-repair-ui-tests
     src/SystemScanner.h
     src/CapabilityChecker.cpp
     src/CapabilityChecker.h
-    resources/boot-repair.qrc
+    resources/boot-bitch.qrc
 )
 
-target_link_libraries(boot-repair-ui-tests
+target_link_libraries(boot-bitch-ui-tests
     PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
         Qt6::Test
-        ${BOOT_REPAIR_QT_DBUS_LIBRARY}
+        ${BOOT_BITCH_QT_DBUS_LIBRARY}
 )
 
-if(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
-    target_compile_definitions(boot-repair-ui-tests PRIVATE ${BOOT_REPAIR_QT_DBUS_DEFINITIONS})
+if(BOOT_BITCH_QT_DBUS_DEFINITIONS)
+    target_compile_definitions(boot-bitch-ui-tests PRIVATE ${BOOT_BITCH_QT_DBUS_DEFINITIONS})
 endif()
 
-target_include_directories(boot-repair-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(boot-bitch-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_compile_definitions(boot-repair-ui-tests
+target_compile_definitions(boot-bitch-ui-tests
     PRIVATE
-        BOOT_REPAIR_VERSION="${PROJECT_VERSION}"
-        BOOT_REPAIR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        BOOT_BITCH_VERSION="${PROJECT_VERSION}"
+        BOOT_BITCH_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         # Host diagnostics normally use the interactive Polkit-backed helper.
         # The UI regression test must stay deterministic in headless CI, so
         # MainWindow uses its read-only in-process diagnostic implementation
         # for this test target only.
-        BOOT_REPAIR_UI_TEST=1
+        BOOT_BITCH_UI_TEST=1
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(boot-repair-ui-tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(boot-bitch-ui-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_test(NAME boot-repair-ui-read-only COMMAND boot-repair-ui-tests)
+add_test(NAME boot-bitch-ui-read-only COMMAND boot-bitch-ui-tests)
 # Fast-tier unit tests for the three boot-menu protocol parsers (efi-list,
 # grub-list and grub-legacy-list): run the parser slots of the shared UI-test
 # binary in one ctest case (no window, no privileged helper).
-add_test(NAME boot-repair-boot-menu-parsers
-    COMMAND boot-repair-ui-tests bootEntriesParserParsesProtocol grubMenuParserParsesProtocol grubLegacyParserParsesProtocol)
-add_test(NAME boot-repair-chroot-shell-contract
+add_test(NAME boot-bitch-boot-menu-parsers
+    COMMAND boot-bitch-ui-tests bootEntriesParserParsesProtocol grubMenuParserParsesProtocol grubLegacyParserParsesProtocol)
+add_test(NAME boot-bitch-chroot-shell-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-chroot-shell-contract.sh)
-add_test(NAME boot-repair-display-manager-contract
+add_test(NAME boot-bitch-display-manager-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-manager-contract.sh)
-add_test(NAME boot-repair-backend-profile-contract
+add_test(NAME boot-bitch-backend-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-backend-profile-contract.sh)
-add_test(NAME boot-repair-filesystem-repair-contract
+add_test(NAME boot-bitch-filesystem-repair-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-filesystem-repair-contract.sh)
-add_test(NAME boot-repair-host-snapshot-contract
+add_test(NAME boot-bitch-host-snapshot-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-snapshot-contract.sh)
-add_test(NAME boot-repair-host-default-contract
+add_test(NAME boot-bitch-host-default-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-default-contract.sh)
-add_test(NAME boot-repair-reason-key-registry-contract
+add_test(NAME boot-bitch-reason-key-registry-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-reason-key-registry-contract.sh)
-add_test(NAME boot-repair-msg-key-registry-contract
+add_test(NAME boot-bitch-msg-key-registry-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-msg-key-registry-contract.sh)
-add_test(NAME boot-repair-kernels-cleanup-contract
+add_test(NAME boot-bitch-kernels-cleanup-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-kernels-cleanup-contract.sh)
-add_test(NAME boot-repair-gpu-contract
+add_test(NAME boot-bitch-gpu-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-gpu-contract.sh)
-add_test(NAME boot-repair-baseline-contract
+add_test(NAME boot-bitch-baseline-contract
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-baseline-contract.sh)
-add_test(NAME boot-repair-boot-errors-contract
+add_test(NAME boot-bitch-boot-errors-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-boot-errors-contract.sh)
-add_test(NAME boot-repair-efi-entry-policy-contract
+add_test(NAME boot-bitch-efi-entry-policy-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-efi-entry-policy-contract.sh)
-add_test(NAME boot-repair-repair-log-filter-contract
+add_test(NAME boot-bitch-repair-log-filter-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-repair-log-filter-contract.sh)
-add_test(NAME boot-repair-packaging-profile-contract
+add_test(NAME boot-bitch-network-conflict-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-network-conflict-contract.sh)
+add_test(NAME boot-bitch-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
-add_test(NAME boot-repair-icon-atlas-contract
+add_test(NAME boot-bitch-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
-add_test(NAME boot-repair-appimage-contract
+add_test(NAME boot-bitch-appimage-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-appimage-contract.sh)
 # Legacy (Debian Etch / bash 3.1) helper port: test-registration-only edit.
 # The legacy tree is generated from the modern helper by legacy/port.sh; these
 # tests keep the port deterministic and the modern helper untouched.
-add_test(NAME boot-repair-legacy-port-contract
+add_test(NAME boot-bitch-legacy-port-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-port-contract.sh)
-add_test(NAME boot-repair-legacy-smoke
+add_test(NAME boot-bitch-legacy-smoke
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-smoke.sh)
-add_test(NAME boot-repair-legacy-package-contract
+add_test(NAME boot-bitch-legacy-package-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-legacy-package-contract.sh)
-add_test(NAME boot-repair-legacy-gui-contract
+add_test(NAME boot-bitch-legacy-gui-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-gui-contract.sh)
-add_test(NAME boot-repair-legacy-kernel-parity-contract
+add_test(NAME boot-bitch-legacy-kernel-parity-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-kernel-parity-contract.sh)
 
-add_test(NAME boot-repair-efi-label-update
+add_test(NAME boot-bitch-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
 
 # -----------------------------------------------------------------------------
@@ -414,55 +427,57 @@ add_test(NAME boot-repair-efi-label-update
 # published-immutability and agent-safety) moved with the maintainer tooling
 # to Development/scripts/ (never published); Development/scripts/dev-check.sh
 # runs them on every tier.
-set_tests_properties(boot-repair-chroot-shell-contract
+set_tests_properties(boot-bitch-chroot-shell-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-display-manager-contract
+set_tests_properties(boot-bitch-display-manager-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-filesystem-repair-contract
+set_tests_properties(boot-bitch-filesystem-repair-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-host-snapshot-contract
+set_tests_properties(boot-bitch-host-snapshot-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-host-default-contract
+set_tests_properties(boot-bitch-host-default-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-reason-key-registry-contract
+set_tests_properties(boot-bitch-reason-key-registry-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-msg-key-registry-contract
+set_tests_properties(boot-bitch-msg-key-registry-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-kernels-cleanup-contract
+set_tests_properties(boot-bitch-kernels-cleanup-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-gpu-contract
+set_tests_properties(boot-bitch-gpu-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-baseline-contract
+set_tests_properties(boot-bitch-baseline-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-boot-errors-contract
+set_tests_properties(boot-bitch-boot-errors-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-efi-entry-policy-contract
+set_tests_properties(boot-bitch-efi-entry-policy-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-repair-log-filter-contract
+set_tests_properties(boot-bitch-repair-log-filter-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-icon-atlas-contract
+set_tests_properties(boot-bitch-network-conflict-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-appimage-contract
+set_tests_properties(boot-bitch-icon-atlas-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-legacy-package-contract
+set_tests_properties(boot-bitch-appimage-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-legacy-gui-contract
+set_tests_properties(boot-bitch-legacy-package-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-efi-label-update
+set_tests_properties(boot-bitch-legacy-gui-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-legacy-port-contract
+set_tests_properties(boot-bitch-efi-label-update
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-legacy-smoke
+set_tests_properties(boot-bitch-legacy-port-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-legacy-kernel-parity-contract
+set_tests_properties(boot-bitch-legacy-smoke
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-backend-profile-contract
+set_tests_properties(boot-bitch-legacy-kernel-parity-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-bitch-backend-profile-contract
     PROPERTIES LABELS "slow")
-set_tests_properties(boot-repair-ui-read-only
+set_tests_properties(boot-bitch-ui-read-only
     PROPERTIES LABELS "ui")
-set_tests_properties(boot-repair-boot-menu-parsers
+set_tests_properties(boot-bitch-boot-menu-parsers
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-packaging-profile-contract
+set_tests_properties(boot-bitch-packaging-profile-contract
     PROPERTIES LABELS "packaging")
 
 # -----------------------------------------------------------------------------
@@ -475,35 +490,39 @@ set_tests_properties(boot-repair-packaging-profile-contract
 # not part of ALL, so it runs only when explicitly requested. The Qt6 tool
 # locations are searched first because distro /usr/bin wrappers (qtchooser) can
 # resolve to an absent Qt5 tool on a Qt6-only host.
-find_program(BOOT_REPAIR_LUPDATE_EXECUTABLE lupdate
+find_program(BOOT_BITCH_LUPDATE_EXECUTABLE lupdate
     HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
-find_program(BOOT_REPAIR_LRELEASE_EXECUTABLE lrelease
+find_program(BOOT_BITCH_LRELEASE_EXECUTABLE lrelease
     HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
 
-if(BOOT_REPAIR_LUPDATE_EXECUTABLE AND BOOT_REPAIR_LRELEASE_EXECUTABLE)
+if(BOOT_BITCH_LUPDATE_EXECUTABLE AND BOOT_BITCH_LRELEASE_EXECUTABLE)
     # The full shipped language set (23 catalogs since round 112; bare Qt
     # locale codes; "no" is Norwegian Bokmål, which Argos packages as "nb").
     # The id/sk/vi .ts sources stay in translations/ but are UNSHIPPED
     # (round 112 decision — no Argos model exists; their .qm catalogs are not
     # built and the install rule below picks up only the shipped .qm set).
-    # Keep this in sync with the translations/ directory and SUPPORTED_TARGETS
-    # in tools/translate_ts.py.
-    set(BOOT_REPAIR_TRANSLATION_TS)
+    # Keep this in sync with the packaging guards (scripts/test-rpm.sh /
+    # scripts/test-apk.sh) and the catalog-inventory table in
+    # Development/docs/translation.md. Deliberately NOT identical to
+    # SUPPORTED_TARGETS in tools/translate_ts.py: that tuple additionally
+    # accepts vi (unshipped, no Argos model) and lacks id/sk (frozen
+    # unshipped .ts sources the tool refuses as --target).
+    set(BOOT_BITCH_TRANSLATION_TS)
     foreach(lang IN ITEMS de fr es it pt nl pl ru zh ja ko sv da fi no nb
                           cs hu ro tr el ar uk)
-        list(APPEND BOOT_REPAIR_TRANSLATION_TS
-            ${CMAKE_CURRENT_SOURCE_DIR}/translations/boot-repair_${lang}.ts)
+        list(APPEND BOOT_BITCH_TRANSLATION_TS
+            ${CMAKE_CURRENT_SOURCE_DIR}/translations/boot-bitch_${lang}.ts)
     endforeach()
 
     add_custom_target(update_translations
-        COMMAND ${BOOT_REPAIR_LUPDATE_EXECUTABLE}
+        COMMAND ${BOOT_BITCH_LUPDATE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/MainWindow.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/MainWindow.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
             -ts
-            ${BOOT_REPAIR_TRANSLATION_TS}
-        COMMAND ${BOOT_REPAIR_LRELEASE_EXECUTABLE}
-            ${BOOT_REPAIR_TRANSLATION_TS}
+            ${BOOT_BITCH_TRANSLATION_TS}
+        COMMAND ${BOOT_BITCH_LRELEASE_EXECUTABLE}
+            ${BOOT_BITCH_TRANSLATION_TS}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/translations
         COMMENT "Updating Boot Bitch UI translation sources (.ts) and compiling catalogs (.qm)"
         VERBATIM

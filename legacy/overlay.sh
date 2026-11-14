@@ -6,7 +6,7 @@
 # are consumed by the modern helper body this overlay is appended to, so
 # ShellCheck cannot see their readers when the overlay is checked standalone.
 #
-# Appended verbatim to the generated legacy helper (legacy/boot-repair-helper.sh)
+# Appended verbatim to the generated legacy helper (legacy/boot-bitch-helper.sh)
 # just before `main "$@"`, after the transformed modern body.  It must stay
 # bash 3.1-parseable (it is not passed through the syntax transform) and must
 # only use functions/variables the generated helper defines.
@@ -15,15 +15,15 @@
 # whenever the modern prerequisite is present (read_target_os_modern,
 # grub_unavailable_reason_modern, adaptive_grub_repair_modern,
 # diagnostic_repair_capabilities_modern, mount_special_modern, ..._modern).
-# The modern helper (scripts/boot-repair-helper.sh) is never modified.
+# The modern helper (scripts/boot-bitch-helper.sh) is never modified.
 
 # State root: /run does not exist on Debian Etch; fall back to /var/run.
-if [[ -n "${BOOT_REPAIR_STATE_ROOT:-}" ]]; then
-    STATE_ROOT="$BOOT_REPAIR_STATE_ROOT"
+if [[ -n "${BOOT_BITCH_STATE_ROOT:-}" ]]; then
+    STATE_ROOT="$BOOT_BITCH_STATE_ROOT"
 elif [[ -d /run ]]; then
-    STATE_ROOT=/run/boot-repair
+    STATE_ROOT=/run/boot-bitch
 else
-    STATE_ROOT=/var/run/boot-repair
+    STATE_ROOT=/var/run/boot-bitch
 fi
 
 # A10-05 cancel surface.  The Qt3 GUI passes --cancel-file <path> (parsed by
@@ -59,7 +59,7 @@ TARGET_OS_LEGACY=0
 
 # A12-02: the helper runs with whatever PATH its launcher inherited.  sudo's
 # secure_path normally carries the sbin directories, but a root-launched GUI
-# (`sudo env ...`), `--no-elevate` or the BOOT_REPAIR_LEGACY_ELEVATE escape
+# (`sudo env ...`), `--no-elevate` or the BOOT_BITCH_LEGACY_ELEVATE escape
 # hatch can start the helper with a desktop PATH that lacks them, and on Etch
 # cryptsetup (plus tune2fs, dmsetup, update-grub and the LVM tooling) lives
 # in /sbin and /usr/sbin.  The standard system directories are prepended when
@@ -862,7 +862,7 @@ repair_boot_stack()
 
 legacy_host_has_efi_firmware()
 {
-    case "${BOOT_REPAIR_LEGACY_HOST_EFI:-auto}" in
+    case "${BOOT_BITCH_LEGACY_HOST_EFI:-auto}" in
         yes) return 0 ;;
         no) return 1 ;;
         *) [[ -d /sys/firmware/efi ]] ;;
@@ -1022,8 +1022,8 @@ legacy_require_feature()
 #   --menu-answer-file <path>    the GUI mode-600 raw-answer file
 # main() records them; legacy_session_apply validates both and only then
 # exports the three variables the rest of the helper reads
-# (BOOT_REPAIR_SESSION_PROTOCOL, BOOT_REPAIR_SESSION_REQUEST and
-# BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE).  A run without either option is
+# (BOOT_BITCH_LEGACY_SESSION_PROTOCOL, BOOT_BITCH_LEGACY_SESSION_REQUEST and
+# BOOT_BITCH_LEGACY_MENU_ANSWER_FILE).  A run without either option is
 # unchanged.  A malformed, half-given or repeated session option refuses before
 # any command runs; nothing here is interpreted or executed.
 legacy_session_apply()
@@ -1034,11 +1034,11 @@ legacy_session_apply()
         # DR-1: the answer-file path is filled only from the validated
         # --menu-answer-file option.  A caller-supplied environment value
         # must never name the file the poll loop reads and truncates, so a
-        # direct root invocation with BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE
+        # direct root invocation with BOOT_BITCH_LEGACY_MENU_ANSWER_FILE
         # pre-set is refused here exactly like the parser refuses a repeated
         # option.
-        [[ -z "${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}" ]] \
-            || fail "--menu-answer-file was not given; refusing the BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE environment value."
+        [[ -z "${BOOT_BITCH_LEGACY_MENU_ANSWER_FILE:-}" ]] \
+            || fail "--menu-answer-file was not given; refusing the BOOT_BITCH_LEGACY_MENU_ANSWER_FILE environment value."
         return 0
     fi
     [[ -n "$LEGACY_SESSION_REQUEST_SEEN" && -n "$LEGACY_MENU_ANSWER_FILE_SEEN" ]] \
@@ -1068,9 +1068,9 @@ legacy_session_apply()
     [[ ! -L "$answer" ]] || fail "--menu-answer-file must not be a symbolic link."
     [[ -f "$answer" ]] || fail "--menu-answer-file must name an existing regular file."
 
-    export BOOT_REPAIR_SESSION_PROTOCOL=1
-    export BOOT_REPAIR_SESSION_REQUEST="$request"
-    export BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE="$answer"
+    export BOOT_BITCH_LEGACY_SESSION_PROTOCOL=1
+    export BOOT_BITCH_LEGACY_SESSION_REQUEST="$request"
+    export BOOT_BITCH_LEGACY_MENU_ANSWER_FILE="$answer"
 }
 
 # ---------------------------------------------------------------------------
@@ -2442,7 +2442,7 @@ unlock_target()
 
     # Debian/TUXEDO crypttab convention uses luks-<UUID>; opening with the
     # installed-system style name from the beginning prevents a repair chroot
-    # from later seeing a stale boot-repair-* mount source.
+    # from later seeing a stale boot-bitch-* mount source.
     mapper_name="luks-$uuid"
     mapper_path="/dev/mapper/$mapper_name"
 
@@ -3355,7 +3355,7 @@ populate_writable_dev_filtered()
 # override exists for the same reason), so the legacy override emits ONE
 # PROMPT<TAB><id><TAB><base64> control line and reads the RAW answer text (no
 # ANSWER<TAB><id><TAB><base64> framing, no PUMP token) from a mode-600 file the
-# GUI writes, whose path arrives in BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.  The
+# GUI writes, whose path arrives in BOOT_BITCH_LEGACY_MENU_ANSWER_FILE.  The
 # MENU_ANSWER_WINDOW_SECONDS window and the fail-closed empty answer stay
 # unchanged: an empty input (cancel) is a lone newline and fails closed.
 #
@@ -3369,10 +3369,10 @@ populate_writable_dev_filtered()
 # The modern helper's 600 s menu-answer window (MENU_ANSWER_WINDOW_SECONDS=600)
 # is too long for the maintainer's testing loop: a wedged prompt holds the
 # session for ten minutes.  The legacy build shortens the default to 120 s and
-# honors BOOT_REPAIR_LEGACY_MENU_ANSWER_WINDOW_SECONDS so a test can drive it
+# honors BOOT_BITCH_LEGACY_MENU_ANSWER_WINDOW_SECONDS so a test can drive it
 # lower without editing the helper.  The window semantics are unchanged: read
 # exactly one raw answer line, fail closed on an empty or absent answer.
-MENU_ANSWER_WINDOW_SECONDS="${BOOT_REPAIR_LEGACY_MENU_ANSWER_WINDOW_SECONDS:-120}"
+MENU_ANSWER_WINDOW_SECONDS="${BOOT_BITCH_LEGACY_MENU_ANSWER_WINDOW_SECONDS:-120}"
 
 # Read one complete RAW answer line from the GUI's menu-answer file.  Returns 0
 # (with the raw answer in LEGACY_ANSWER_RAW) when a complete newline-terminated
@@ -3386,7 +3386,7 @@ MENU_ANSWER_WINDOW_SECONDS="${BOOT_REPAIR_LEGACY_MENU_ANSWER_WINDOW_SECONDS:-120
 # still returned as a complete record and fails closed in the caller.
 legacy_answer_file_read_record()
 {
-    local answer_file="${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}" last="" line=""
+    local answer_file="${BOOT_BITCH_LEGACY_MENU_ANSWER_FILE:-}" last="" line=""
     LEGACY_ANSWER_RAW=""
     [[ -n "$answer_file" && -f "$answer_file" ]] || return 1
     last="$(tail -c 1 "$answer_file" 2>/dev/null || true)"
@@ -3406,7 +3406,7 @@ function helper_menu_prompt {
     legacy_b64_available || return 1
     command -v tr >/dev/null 2>&1 || return 1
     encoded="$(printf '%s' "$prompt_text" | legacy_b64e | tr -d '\n')"
-    printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
+    printf 'PROMPT\t%s\t%s\n' "${BOOT_BITCH_LEGACY_SESSION_REQUEST:-0}" "$encoded"
 
     # Read the RAW answer from the GUI's answer file instead of the protocol
     # pipe.  The GUI writes the raw answer text plus a single newline on Send
@@ -3415,7 +3415,7 @@ function helper_menu_prompt {
     # the two-level kernel menu's next prompt starts from an empty file.  The
     # record reader is shared with the shell pump
     # (legacy_answer_file_read_record below).
-    answer_file="${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}"
+    answer_file="${BOOT_BITCH_LEGACY_MENU_ANSWER_FILE:-}"
     if [[ -n "$answer_file" ]]; then
         deadline=$(( $(shell_now_epoch) + MENU_ANSWER_WINDOW_SECONDS ))
         while :; do
@@ -3450,7 +3450,7 @@ function helper_menu_prompt {
 # session-protocol pipe (stdin).  Qt 3.3.7's QProcess cannot deliver stdin (the
 # unlock --key-file and menu-answer overrides exist for the same reason), so the
 # legacy override consumes the RAW answer from the GUI's mode-600 menu-answer
-# file (BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE) instead -- the same
+# file (BOOT_BITCH_LEGACY_MENU_ANSWER_FILE) instead -- the same
 # legacy_answer_file_read_record helper the menu override uses.  There is no
 # PUMP registration and no ANSWER<TAB><id><TAB><base64> framing: the pump emits
 # ONE PROMPT<TAB><id><TAB><base64> control line per detected question and the
@@ -3714,7 +3714,7 @@ sys.exit(0)'
                 encoded="$(printf '%s' "$bytes" | legacy_b64e | tr -d '\n')"
                 # No pump token: the PROMPT is a single 3-field control line
                 # (id + base64 payload) the GUI matches by id.
-                printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
+                printf 'PROMPT\t%s\t%s\n' "${BOOT_BITCH_LEGACY_SESSION_REQUEST:-0}" "$encoded"
                 paused_at=$now
                 encoded=""
                 wait_rc=1

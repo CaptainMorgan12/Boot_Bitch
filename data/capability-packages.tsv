@@ -3,9 +3,9 @@
 # THE SINGLE SOURCE OF TRUTH for the Boot capabilities table's Packages
 # column, consumed by BOTH GUIs:
 #   - the modern Qt6 GUI (src/CapabilityChecker.cpp; embedded at build time
-#     via resources/boot-repair.qrc as ":/data/capability-packages.tsv"),
+#     via resources/boot-bitch.qrc as ":/data/capability-packages.tsv"),
 #   - the legacy Qt3 GUI (legacy/gui/src/LegacyMainWindow.cpp; staged into
-#     the Etch package at /usr/share/boot-repair-legacy/capability-packages.tsv
+#     the Etch package at /usr/share/boot-bitch-legacy/capability-packages.tsv
 #     by scripts/package-legacy.sh).
 # The column's rule is shared: the PROBE-DERIVED package (the helper's proven
 # installable side-channel, e.g. display-installable) wins when one exists for

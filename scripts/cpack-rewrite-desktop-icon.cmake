@@ -12,8 +12,8 @@ if(NOT CPACK_PACKAGING_INSTALL_PREFIX)
     set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 endif()
 
-set(_icon_path "${CPACK_PACKAGING_INSTALL_PREFIX}/share/icons/hicolor/512x512/apps/org.bootrepair.BootRepair.png")
-set(_desktop_file "${CPACK_TEMPORARY_DIRECTORY}${CPACK_PACKAGING_INSTALL_PREFIX}/share/applications/org.bootrepair.BootRepair.desktop")
+set(_icon_path "${CPACK_PACKAGING_INSTALL_PREFIX}/share/icons/hicolor/512x512/apps/org.bootbitch.BootBitch.png")
+set(_desktop_file "${CPACK_TEMPORARY_DIRECTORY}${CPACK_PACKAGING_INSTALL_PREFIX}/share/applications/org.bootbitch.BootBitch.desktop")
 
 if(NOT EXISTS "${_desktop_file}")
     message(WARNING "Desktop entry not found for packaged icon rewrite: ${_desktop_file}")
@@ -22,7 +22,7 @@ endif()
 
 file(READ "${_desktop_file}" _desktop)
 string(REPLACE
-    "Icon=org.bootrepair.BootRepair\n"
+    "Icon=org.bootbitch.BootBitch\n"
     "Icon=${_icon_path}\n"
     _desktop "${_desktop}")
 file(WRITE "${_desktop_file}" "${_desktop}")

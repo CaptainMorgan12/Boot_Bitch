@@ -81,7 +81,7 @@ else
         || fail "CPack package version is no longer tied to PROJECT_VERSION"
 
     metainfo_version="$(sed -n 's/.*<release version="\([0-9][0-9.]*\)".*/\1/p' \
-        "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml" | head -1)"
+        "$ROOT_DIR/data/org.bootbitch.BootBitch.metainfo.xml" | head -1)"
     [[ "$metainfo_version" == "$version" ]] \
         || fail "AppStream newest release is '$metainfo_version', expected '$version'"
 
@@ -96,14 +96,14 @@ else
     grep -qF "# Boot Bitch $version" "$ROOT_DIR/README.md" \
         || fail "README.md title does not reference $version"
 
-    grep -qF 'set(CPACK_PACKAGE_NAME "boot-repair")' "$ROOT_DIR/CMakeLists.txt" \
-        || fail "the Debian package name is no longer boot-repair"
-    grep -qF 'set(CPACK_RPM_PACKAGE_NAME "boot-repair")' "$ROOT_DIR/CMakeLists.txt" \
-        || fail "the RPM package name is no longer boot-repair"
-    grep -q '^pkgname=boot-repair$' "$ROOT_DIR/scripts/package-arch.sh" \
-        || fail "the Arch package name is no longer boot-repair"
-    grep -q '^pkgname=boot-repair$' "$ROOT_DIR/scripts/package-alpine.sh" \
-        || fail "the Alpine package name is no longer boot-repair"
+    grep -qF 'set(CPACK_PACKAGE_NAME "boot-bitch")' "$ROOT_DIR/CMakeLists.txt" \
+        || fail "the Debian package name is no longer boot-bitch"
+    grep -qF 'set(CPACK_RPM_PACKAGE_NAME "boot-bitch")' "$ROOT_DIR/CMakeLists.txt" \
+        || fail "the RPM package name is no longer boot-bitch"
+    grep -q '^pkgname=boot-bitch$' "$ROOT_DIR/scripts/package-arch.sh" \
+        || fail "the Arch package name is no longer boot-bitch"
+    grep -q '^pkgname=boot-bitch$' "$ROOT_DIR/scripts/package-alpine.sh" \
+        || fail "the Alpine package name is no longer boot-bitch"
 fi
 
 if (( failures > 0 )); then

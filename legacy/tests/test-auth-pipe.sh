@@ -3,7 +3,7 @@
 # the cached-session expiry probe.
 #
 # A fake `sudo` is registered through the documented test seam
-# BOOT_REPAIR_LEGACY_FAKE_SUDO (the runner resolves elevation tools from the
+# BOOT_BITCH_LEGACY_FAKE_SUDO (the runner resolves elevation tools from the
 # fixed trusted system locations, so a PATH fake would never be seen; the seam
 # is test/development only and cannot elevate - the fake sudo runs as the
 # invoking user and the helper still requires root):
@@ -39,7 +39,7 @@ fi
 
 [[ -f "$PRO" && -f "$SOURCE" ]] || { printf 'FAIL: auth-pipe harness files missing\n' >&2; exit 1; }
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-auth-pipe.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-legacy-auth-pipe.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 FAKE_SUDO_DIR="$TMP/bin"

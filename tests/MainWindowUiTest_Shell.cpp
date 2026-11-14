@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: shell, sortable tables, host default and low-level policies.
+// Part of the boot-bitch-ui-tests read-only regression suite: shell, sortable tables, host default and low-level policies.
 // The class declaration lives in MainWindowUiTest.h and the shared
 // fixtures/helpers in UiTestHelpers.h; this file holds the shell, sortable tables, host default and low-level policies test
 // implementations so the suite compiles as parallel translation units.

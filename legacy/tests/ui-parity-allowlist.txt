@@ -64,6 +64,7 @@ Restore the display manager detected from the running host or selected repair sy
 A blank boot entry label is not allowed. The previous label was kept.
 A failed install restores the ESP backup; decoded entries keep their distribution/vendor label and drive model, and unrelated entries on other disks are never removed.
 A running-host rollback to %1 is already staged and takes effect on the next reboot.
+Snapshot %1 is already staged for rollback — no action or change is necessary.
 Apply all pending firmware boot entry changes?
 Apply pending reorder, delete and rename changes.
 Available — KF6 KAuth linked
@@ -702,7 +703,6 @@ The last registered console is already tty0 (the visible virtual terminal); no c
 /etc/crypttab: %1
 /etc/fstab: %1
 ========================================
-A Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported.
 A package manager or package-manager lock is active.
 A sysvinit display-manager script was detected; offline repair is not implemented for sysvinit.
 APT package lists are byte-identical and no repository index was fetched.
@@ -1925,7 +1925,7 @@ Make Default refused: %1
 Preparing read-only running-host rollback plan for snapshot %1.
 Preparing read-only transactional rollback plan for Btrfs snapshot %1.
 Previous running-host rollback took effect at boot %1; the reboot reminder was cleared.
-Requesting an explicit running-host reboot after the second confirmation.
+Requesting an explicit running-host reboot.
 Running-host reboot cancelled at the second confirmation; the staged rollback remains in effect.
 Running-host reboot scheduled by the privileged helper.
 Running-host reboot was not scheduled; the staged rollback and its reminder remain in effect.
@@ -2118,6 +2118,38 @@ The running-host rollback was stopped at your request after the mutation began; 
 The running-host rollback was stopped at your request before any change was made. Nothing was modified; the snapshot inventory and the cached host diagnostics remain valid.
 The snapshot rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically. Review the Snapshots output and Logs.
 The snapshot rollback was stopped at your request before any change was made. Nothing was modified; the snapshot inventory and the cached diagnostics remain valid.
+# --- [feature] round-220 snapshot-deletion wording (the legacy GUI has no
+# Snapshots tab/delete flow — the round-104/134/135 N-A precedent; the delete
+# button, the per-selection hint, the CONFIRM rendering and the outcome
+# wording never occur there) ---
+Delete %1 snapshot(s)…
+Delete Btrfs snapshots
+Delete running-host Btrfs snapshots
+Delete the selected Snapper snapshots after the confirmation prompt.
+Deleted: %1 · Already gone: %2 · Failed: %3
+Deleting %1 Btrfs snapshot(s) for the repair target: %2.
+Deleting %1 running-host Btrfs snapshot(s): %2.
+Deleting running-host snapshots
+Deleting snapshots
+Failed: %1
+Rollback undo points are recovery artifacts and cannot be deleted.
+Select one or more snapshots first.
+Select one or more snapshots first; rollback undo points cannot be deleted.
+Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was cancelled before any change; nothing was modified.
+Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was stopped at your request after the first deletion; the affected cached diagnostics were invalidated and the snapshot inventory is reloaded.
+Snapshot deletion complete: %1\n\n%2\n\n%3
+Snapshot deletion failed
+Snapshot deletion failed: %1\n\n%2
+Snapshot deletion partially completed: %1
+Snapshot deletion partially completed: %1\n\n%2\n\n%3\n\n%4
+Snapshot deletion skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.
+Snapshot deletion unavailable
+The snapshot deletion completed (%1); the snapshot inventory is reloaded in the background.
+The snapshot deletion did not complete. Review the Snapshots details pane and Logs.
+The snapshot deletion failed.
+The snapshot deletion partially completed: %1. Review the per-id outcomes in the Snapshots details pane and Logs.
+The snapshot deletion was declined at the confirmation prompt; nothing was changed.
+%1 (%2)
 # --- [feature] round-34 pkexec/Polkit lines (Etch elevates via sudo) ---
 The privileged Boot Bitch helper could not be prepared for pkexec: %1
 pkexec/Polkit is required to authorize privileged Boot Bitch operations.
@@ -2401,6 +2433,7 @@ Preflight for the user-supplied driver package: %1.
 Runtime swap: unloading the conflicting input module %1 and loading %2.
 Runtime swap: unloading the conflicting network module %1 and loading %2.
 The package manager does not report the user-supplied package %1 as installed after the apply; the install is not claimed.
+The simulated preflight refused the user-supplied package %1 (%2); no install was attempted.
 The user-supplied file %1 is not a provable driver package; no install was attempted.
 The user-supplied path %1 does not exist or is not a readable regular file; no install was attempted.
 This package backend has no guarded local-package install verb; the user-supplied driver package is not offered.
@@ -2514,6 +2547,64 @@ The snapshot configuration was declined; nothing was changed on the running host
 # localisations, the same [helper] bucket as the block above.
 Creating the missing .snapshots snapshot store (the Snapper root configuration already exists).
 The .snapshots snapshot store was created on %1 (the Snapper root configuration already existed).
+# --- Round 192 (the running-host DM evidence + the timeshift-btrfs probe): the
+# round-192 helper msg-key localisation.  The legacy GUI shows the ported
+# helper's msg lines verbatim — [helper] bucket.  (The timeshift probe fix
+# changed no localized string; the reason wording stayed as it was until the
+# round-193 DECISION (b) implementation: the timeshift-present refusal became
+# the helper plan note, so the reason string and its allowlist entry above are
+# removed — the [helper]-bucket line "A Timeshift btrfs snapshot inventory is
+# present; Snapper @ rollback is not supported." is gone from both surfaces.)
+# ---
+The running host's active display manager is %1; the display-manager.service alias still points to %2, so the evidence follows the active manager.
+# --- Round 193 (the display-manager walk-through): the round-193 helper
+# msg-key localisations + the display-aborted reason + the modern session
+# chrome.  The helper prose is [helper] bucket (the legacy GUI shows the
+# ported helper's msg lines verbatim); the reason + session strings are
+# [feature]/[status] — the legacy GUI keeps its own automated
+# display-manager stage (round-104 D2 family: no new legacy affordances). ---
+Autologin for %1 was migrated into the %2 configuration.
+Autologin migration for %1 is not supported; re-configure it manually if needed.
+Installing the missing %1 display manager before the switch.
+No vendor default display manager could be derived from installed package evidence; restoring the configured manager %1.
+Pre-seeded the target's debconf default display manager: %1.
+Switching the graphical login manager from %1 to %2.
+Template display-manager switch: enabling the %2 instance of %1 (display TTY %3).
+Vendor default display manager: %1 (derived from %2).
+%1 ships only the template unit %2; the switch uses the template-instantiation flow.
+The graphical login walk-through was cancelled; no changes were made.
+Graphical login repair refused: run the %1 diagnostic first (no cached display evidence).
+Graphical login repair unavailable
+Run the %1 diagnostic before starting the graphical login repair.
+Walk an evidence-driven interactive session to repair the graphical login: restore the default graphical login manager (derived from the installed desktop packages' own dependency evidence, never a hardcoded map) or switch to another installed or installable manager behind a confirmation that names the switch, each step re-verified in this window. When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.
+With OpenRC the walk-through restores the manager's default runlevel symlink without starting it.
+# --- Round 200 (the walk-through Fedora hardening): the alias-replacement
+# enable dance, the honest no-change restore/switch verdict, and the
+# at-marker scoped regeneration.  Buckets (the round-193 precedent): the
+# reason/msg-key localisations are [helper] (the legacy GUI renders the
+# ported helper's tokens verbatim); the mid-run regeneration log line is
+# [status] (the legacy GUI keeps its own automated display-manager stage —
+# the round-104 D2 family: no new legacy affordances). ---
+%1 is already the configured display manager; nothing to change.
+Already the configured display manager; nothing to change.
+Removed the stale display-manager.service alias symlink so the enable can re-create it for the target manager.
+Refreshing the affected diagnostic sections (display, packages, backend, usage) from the changed state…
+Affected diagnostic sections refreshed; the walk-through stays open.
+Display walk-through: the affected diagnostic sections were regenerated in place (%1).
+# --- Round 211 (the interactive-repair alignment): the generic
+# in-terminal scoped-regen markers + the kernel/input/network commit
+# wording.  [helper]/[status] buckets (the legacy GUI has no walk-through
+# session; the round-104 D2 family). ---
+Refreshing the affected diagnostic sections from the changed state…
+Affected diagnostic sections refreshed; the menu stays open.
+Interactive repair session: the affected diagnostic sections were regenerated in place (%1).
+# --- Round 201 (the walk-through outcome feedback + the ly->X exit-1 fix):
+# the explicit per-action outcome msg-key localisations (the switch names
+# both ends, the restore states its result).  [helper] bucket (the legacy
+# GUI renders the ported helper's tokens verbatim; the round-104 D2 family —
+# no new legacy affordances). ---
+Display manager switched: %1 → %2.
+Display manager restored: %1.
 # --- Round 143 (the LAYOUT EXTENSION + the FULL-ENABLE Install action): the
 # name-agnostic root wording and the full-enablement completion strings.
 # The reason/msg-key localisations are [helper] bucket (the legacy GUI shows
@@ -2594,6 +2685,30 @@ The manual snapshot was created on %1.\n\nThe snapshot list is refreshed.
 The manual snapshot was created; the snapshot inventory is reloaded.
 MANUAL SNAPSHOT SKIPPED: the confirmation prompt was declined or expired; no changes were made.
 Manual snapshot created on %1: one single-type 'Boot Bitch manual snapshot' was added to the snapshot store.
+# --- Round 220 (the snapshot-deletion batch): the helper msg-key + reason-key
+# localisations for the delete verb.  [helper] bucket: the legacy GUI shows
+# the ported helper's msg:/reason: lines verbatim (the port carries the
+# identical delete verb — Etch has no btrfs/snapper GUI, the
+# round-104/134/135/146/147 N-A precedent).
+SNAPSHOT DELETE SKIPPED: the confirmation prompt was declined or expired; no changes were made.
+Snapshot %1 deleted.
+Snapshot %1 was already gone; nothing was deleted.
+Snapshot %1 could not be deleted: snapper refused it (exit code %2).
+Snapshot %1: snapper reported success but the snapshot is still in the store; the outcome is recorded as a failure.
+Snapshot deletion complete: %1 deleted, %2 already gone, %3 failed.
+Snapshot deletion partially completed: %1 deleted, %2 already gone, %3 failed.
+Only numeric Snapper snapshot ids can be deleted; %1 is not one (rollback undo points are recovery artifacts and are never deleted).
+snapper refused the deletion (exit code %1).
+snapper reported success but the snapshot is still in the store.
+# --- Round 227 (the staged-source snapshot delete guard): the helper
+# msg-key + reason-key localisations for the guard.  [helper] bucket: the
+# legacy GUI shows the ported helper's msg:/reason: lines verbatim (the port
+# carries the identical guard — Etch has no btrfs/snapper GUI, the
+# round-104/134/135/146/147/220 N-A precedent).
+Snapshot %1 cannot be deleted: it is the actively staged rollback snapshot — cancel the staged rollback first.
+A staged rollback state exists but its source snapshot id could not be resolved; the staged snapshot is not protected from this deletion.
+The staged rollback completed but its source snapshot record could not be persisted; the staged snapshot is not protected from deletion until the record is written.
+it is the actively staged rollback snapshot — cancel the staged rollback first.
 # --- Round 149/150 (the /boot capture + the target /home opt-in): the
 # helper msg-key localisations for the round-149 /boot capture expansion
 # (boot-capture-* / boot-restore-* / the separate-boot bounded-capture
@@ -2633,3 +2748,178 @@ The /home subvolume %N now rolls back with the promoted root (full-restore opt-i
 # legacy GUI exposes no input/network repair action, display-only mirror
 # rows), so the localised string exists only in the modern GUI's kMsgSpecs.
 The input module %N is not shipped by any kernel of this system and cannot be included in an initramfs image; every includable module was verified in the rebuilt image.
+# --- Round 151–153 (the host-rollback staged-state strings): the PORT backlog
+# carried since the round-152.3 chained-replacement rollback (reported round
+# 155).  Bucket evaluation (the round-146/147/149/150 precedent): the two
+# GUI-composed detail/status lines are the [status] bucket — the legacy GUI
+# has no Snapshots tab and no running-host rollback flow, and renders its own
+# ASCII status/wording (the round-104/134/135/146 N-A precedent; Etch has no
+# btrfs/snapper, and the D2 decision bars new Install actions there); the
+# third is the [helper] bucket — the kMsgSpecs localisation of the ported
+# helper's msg:host-rollback-chained-preserve line, which the legacy GUI
+# shows verbatim from the ported helper (the port carries the identical key
+# and the chained re-preserve verb).
+Running-host rollback staged: %1\n\n%2\n\nThe snapshot catalogue stays listed — the snapshots were preserved with the promoted root. Cached running-host diagnostics were cleared because the next boot will start the promoted root. Reboot when ready; the reboot is never automatic.
+running-host snapshot %1 rollback staged the promoted root for the next reboot; cached host diagnostics were invalidated. The snapshot catalogue is kept (the snapshots are preserved with the promoted root) and another snapshot can replace this staged rollback. The running host keeps the current root until reboot.
+Staged state: re-preserving the running %1 root as %2 and moving the earlier staged root aside (it stays on disk, no longer the recorded undo point).
+# --- Round 171 (the target-rollback keep-catalogue regression fix): the
+# target success branch mirrors the round-152.3 host staged wording.  Bucket
+# evaluation (the round-146/147/152.3 precedent): the GUI-composed
+# detail/status/log lines and the dialog titles are the [status]/[feature]
+# buckets — the legacy GUI has no Snapshots tab and no rollback flow (the
+# round-104/134/135/146 N-A precedent; Etch has no btrfs/snapper), so these
+# modern-only strings need no legacy port.  The fix is GENERIC (every Btrfs
+# target scope, no per-system wording).  Round 174 (ITEM 1) aligned the
+# popup wording to the host's "staged as the next root" claim and made it
+# name-agnostic (no @-layout hardcode), and added the target-side
+# below-title staged banner (the host banner's presentation minus the
+# reboot affordance) — both stay [status]-bucket modern-only strings.
+Snapshot rollback staged: %1\n\n%2\n\nThe snapshot catalogue stays listed — the snapshots were preserved with the promoted root. Cached target diagnostics were cleared because the promoted root takes effect when the repair target next boots.
+snapshot %1 rollback staged the promoted root for the repair target's next boot; cached target diagnostics were invalidated. The snapshot catalogue is kept (the snapshots are preserved with the promoted root).
+Snapshot rollback staged. Review the output, then close this window.
+Snapshot rollback staged
+Snapshot %1 is staged as the repair target's next root.\n\nThe previous root was retained as a timestamped rollback undo point and the boot stack passed reconciliation. The promoted root takes effect when the repair target next boots — reboot the target normally when ready (the recovery host never reboots it).
+Snapshot rollback staged — the repair target will start snapshot %1 when it next boots. The previous root is preserved as a timestamped rollback undo point; reboot the target normally when ready (the recovery host never reboots it).
+# --- Round 185 (the host staged-rollback Cancel affordance): the helper
+# host-snapshots cancel verb + the banner Cancel button.  Bucket evaluation
+# (the round-171/174 precedent): the [helper] bucket carries the new msg-key
+# registry prose (the legacy GUI renders helper msg: tokens verbatim), and
+# the [feature] bucket carries the GUI-composed detail/status/log/dialog
+# strings — the legacy GUI has no Snapshots tab and no rollback flow (the
+# round-104/134/135/146 N-A precedent; Etch has no btrfs/snapper).  No
+# legacy GUI affordance is added (the round-104 D2 family); the ported
+# helper carries the verb for parity only.
+HOST ROLLBACK CANCEL RECOVERY: re-promoting the staged root.
+HOST ROLLBACK CANCEL: restoring the preserved pre-rollback root as the default.
+PASS: the preserved pre-rollback root and its boot stack were restored; the staged rollback is cancelled. Staged root retained as %1.
+PASS: the staged %1 root was re-promoted as the default; the staged rollback remains in effect.
+RUNNING-HOST ROLLBACK CANCEL COMPLETE: the staged %1 root was un-staged; the next reboot starts the original root.
+RUNNING-HOST ROLLBACK CANCEL SKIPPED: the confirmation prompt was declined or expired; the staged rollback remains in effect.
+No staged running-host rollback was detected; nothing was changed.
+Running-host rollback cancel plan: the preserved %1 root will be restored as the default %2 root; the staged root is retained under a timestamped -failed- staging name.
+CRITICAL: could not re-prove the staged state after a failed un-stage.
+CRITICAL: the re-staged root's boot-stack reconciliation also failed. Manual boot repair may be required before reboot.
+The un-stage failed; automatically re-promoting the staged root.
+Cancel the staged running-host rollback
+Cancelling the staged running-host rollback
+No staged rollback detected
+Requesting the staged running-host rollback to be un-staged: the preserved pre-rollback root is restored as the default root and the boot stack is re-reconciled.
+Rollback cancel failed
+Running-host rollback cancel failed: %1\n\n%2\n\nThe snapshot inventory was reloaded. Review the Snapshots output and Logs before rebooting.
+Running-host rollback cancel: %1\n\n%2\n\nNo staged rollback could be resolved; the stale reboot reminder was cleared. Review the Snapshots output and Logs.
+Running-host rollback cancel skipped: %1\n\n%2\n\nThe un-stage confirmation was declined or expired; the staged rollback remains in effect.
+Running-host rollback cancel stopped at your request.
+Running-host rollback cancel stopped: %1\n\n%2\n\nThe un-stage was stopped at your request after the mutation began; the snapshot inventory was reloaded.
+Running-host rollback cancel stopped: %1\n\n%2\n\nThe un-stage was stopped at your request before any change; the staged rollback remains in effect.
+Running-host rollback cancelled: %1\n\n%2\n\nThe preserved pre-rollback root was restored as the default root and the boot stack passed reconciliation. The next reboot starts the original root; the staged root was retained on disk under a timestamped name.
+Staged rollback cancelled
+Staged running-host rollback cancelled; the next reboot starts the original root.
+The helper found no resolvable staged running-host rollback; the stale reboot reminder and its banner were cleared. Review the Snapshots output and Logs.
+The privileged helper found no staged running-host rollback to cancel.\n\nNothing was changed, and the stale reboot reminder and its banner were cleared. Review the Snapshots output and Logs.
+The running-host rollback cancel was declined at the confirmation prompt; the staged rollback remains in effect.
+The running-host rollback cancel was stopped at your request after the mutation began; the snapshot inventory was reloaded.
+The running-host rollback cancel was stopped at your request before any change; the staged rollback remains in effect.
+The staged running-host rollback could not be cancelled and automatic recovery could not be proven. DO NOT REBOOT until you review the Snapshots output and Logs, and repair the boot stack from another system if needed.\n\nThe helper output carries HOST_ROLLBACK_CANCEL_RECOVERY and any CRITICAL lines verbatim.
+The staged running-host rollback could not be cancelled. The helper reports the staged root was re-promoted automatically; the staged rollback remains in effect. Review the Snapshots output and Logs.
+The staged running-host rollback could not be cancelled; the snapshot inventory was reloaded. Review the operation output before the next repair or reboot.
+The staged running-host rollback was un-staged.\n\nThe preserved pre-rollback root was restored as the default root and its boot stack passed reconciliation; the next reboot starts the ORIGINAL root. The staged snapshot root stays on disk under a timestamped name.
+The staged running-host rollback was un-staged: the preserved pre-rollback root is the default root again, the reboot reminder was cleared and the snapshot inventory was reloaded.
+Un-stage the pending rollback: the preserved pre-rollback root is restored as the default root, so the next reboot starts the original system.
+# --- Round 189 (the robust host-rollback cancel): the already-un-staged
+# idempotent outcome + the stale-record cross-check.  Bucket evaluation (the
+# round-185 precedent): the [helper] bucket carries the new msg-key registry
+# prose (the legacy GUI renders helper msg: tokens verbatim from the ported
+# helper), the [feature]/[status] buckets carry the GUI-composed banner/
+# detail/status/log/dialog strings — the legacy GUI has no Snapshots tab and
+# no rollback flow (the round-104/134/135/146 N-A precedent; Etch has no
+# btrfs/snapper).  No legacy GUI affordance is added (the round-104 D2
+# family); the ported helper carries the verb for parity only.
+RUNNING-HOST ROLLBACK CANCEL: the staged rollback was already un-staged — the running %1 root is the Btrfs default root again; nothing was pending and nothing was changed.
+Staged rollback already reversed — the running root is the Btrfs default root again, so nothing is pending. Cancel clears this stale reminder.
+Running-host rollback cancel: %1\n\n%2\n\nThe staged rollback was already reversed — the running root is the Btrfs default root again, so nothing was pending and nothing was changed. The stale reboot reminder was cleared.
+The staged running-host rollback was already un-staged: the running root is the Btrfs default root again. Nothing was changed and the stale reboot reminder was cleared.
+Staged running-host rollback was already un-staged; the stale reboot reminder was cleared.
+Staged rollback already un-staged
+The staged running-host rollback was already reversed — the running root is the Btrfs default root again.\n\nNothing was pending and nothing was changed. The stale reboot reminder and its banner were cleared.
+# --- Round 222 (plan §1 item 16, the TARGET-scope staged-rollback Cancel
+# button): the snapshots cancel verb + the target banner's Cancel button —
+# the round-189 host cancel machinery extended to the target scope.  Bucket
+# evaluation (the round-185/189 precedent): the [helper] bucket carries the
+# new msg-key registry prose (the legacy GUI renders helper msg: tokens
+# verbatim from the ported helper — the port carries the target cancel verb
+# for parity only), and the [feature]/[status] buckets carry the
+# GUI-composed banner/detail/status/log/dialog strings — the legacy GUI has
+# no Snapshots tab and no rollback flow (the round-104/134/135/146 N-A
+# precedent; Etch has no btrfs/snapper).  No legacy GUI affordance is added
+# (the round-104 D2 family); the Reboot Now/Later affordances stay HOST-only
+# on the modern side too (the round-171/174 ruling).
+TARGET ROLLBACK CANCEL RECOVERY: re-promoting the staged root.
+TARGET ROLLBACK CANCEL: restoring the preserved pre-rollback root as the default.
+TARGET ROLLBACK CANCEL COMPLETE: the staged %1 root was un-staged; the repair target starts the original root the next time it boots.
+TARGET ROLLBACK CANCEL SKIPPED: the confirmation prompt was declined or expired; the staged rollback remains in effect.
+No staged repair-target rollback was detected; nothing was changed.
+Repair-target rollback cancel plan: the preserved %1 root will be restored as the default %2 root; the staged root is retained under a timestamped -failed- staging name.
+CRITICAL: the re-staged root's boot-stack reconciliation also failed. Manual boot repair may be required before the target next boots.
+The un-stage failed; automatically re-promoting the staged root.
+Cancel the staged target rollback
+Cancelling the staged target rollback
+Requesting the staged repair-target rollback to be un-staged: the preserved pre-rollback root is restored as the default root and the boot stack is re-reconciled.
+Target rollback cancel failed: %1\n\n%2\n\nThe snapshot inventory was reloaded. Review the Snapshots output and Logs before the target next boots.
+Target rollback cancel: %1\n\n%2\n\nNo staged rollback could be resolved; the stale staged banner was cleared. Review the Snapshots output and Logs.
+Target rollback cancel skipped: %1\n\n%2\n\nThe un-stage confirmation was declined or expired; the staged rollback remains in effect.
+Target rollback cancel stopped at your request.
+Target rollback cancel stopped: %1\n\n%2\n\nThe un-stage was stopped at your request after the mutation began; the snapshot inventory was reloaded.
+Target rollback cancel stopped: %1\n\n%2\n\nThe un-stage was stopped at your request before any change; the staged rollback remains in effect.
+Target rollback cancelled: %1\n\n%2\n\nThe preserved pre-rollback root was restored as the default root and the boot stack passed reconciliation. The repair target starts the original root the next time it boots; the staged root was retained on disk under a timestamped name.
+Staged target rollback cancelled; the target starts the original root the next time it boots.
+The helper found no resolvable staged repair-target rollback; the stale staged banner was cleared. Review the Snapshots output and Logs.
+The privileged helper found no staged repair-target rollback to cancel.\n\nNothing was changed, and the stale staged banner was cleared. Review the Snapshots output and Logs.
+The repair-target rollback cancel was declined at the confirmation prompt; the staged rollback remains in effect.
+The repair-target rollback cancel was stopped at your request after the mutation began; the snapshot inventory was reloaded.
+The repair-target rollback cancel was stopped at your request before any change; the staged rollback remains in effect.
+The staged repair-target rollback could not be cancelled and automatic recovery could not be proven. Review the Snapshots output and Logs, and repair the boot stack from another system if needed.\n\nThe helper output carries ROLLBACK_CANCEL_RECOVERY and any CRITICAL lines verbatim.
+The staged repair-target rollback could not be cancelled. The helper reports the staged root was re-promoted automatically; the staged rollback remains in effect. Review the Snapshots output and Logs.
+The staged repair-target rollback could not be cancelled; the snapshot inventory was reloaded. Review the operation output before the next repair.
+The staged repair-target rollback was un-staged.\n\nThe preserved pre-rollback root was restored as the default root and its boot stack passed reconciliation; the repair target starts the ORIGINAL root the next time it boots. The staged snapshot root stays on disk under a timestamped name.
+The staged repair-target rollback was un-staged: the preserved pre-rollback root is the default root again and the snapshot inventory was reloaded.
+Un-stage the pending target rollback: the preserved pre-rollback root is restored as the default root, so the repair target starts the original system the next time it boots.
+TARGET ROLLBACK CANCEL: the staged rollback was already un-staged — the restored original %1 root is the Btrfs default root again; nothing was pending and nothing was changed.
+Target rollback cancel: %1\n\n%2\n\nThe staged rollback was already reversed — the restored original root is the Btrfs default root again, so nothing was pending and nothing was changed. The stale staged banner was cleared.
+The staged repair-target rollback was already un-staged: the restored original root is the Btrfs default root again. Nothing was changed and the stale staged banner was cleared.
+Staged target rollback was already un-staged; the stale banner was cleared.
+The staged repair-target rollback was already reversed — the restored original root is the Btrfs default root again.\n\nNothing was pending and nothing was changed. The stale staged banner was cleared.
+# --- Round 224 (adjacent-findings plan A2, the /home opt-in swap undo): the
+# target cancel restores the swapped /home with the root (the round-150
+# swap-restore branch) and the plan/completion name it.  Bucket [helper] —
+# msg-key registry prose the legacy GUI renders verbatim from the ported
+# helper (the port carries the target cancel verb for parity only); no
+# legacy GUI affordance is added (the round-185/189/222 precedent).
+Repair-target rollback cancel plan: the /home opt-in swap will be restored with the root — the swapped /home subvolume %1 is removed and the preserved /home undo point %2 returns as the /home subvolume.
+WARN: the /home swap could not be restored during the un-stage; the preserved /home undo point %1 remains on disk and /home stays swapped. The preserved undo point keeps the original /home recoverable.
+PASS: the /home opt-in swap was restored — the swapped /home subvolume %1 was removed and the preserved %2 undo point returns as the /home subvolume.
+# --- Round 228 (ITEM 1 + ITEM 2): the fail-closed /home swap-restore + the
+# staged-state re-entry probe.  Bucket [helper] — the new msg-key registry
+# prose the legacy GUI renders verbatim from the ported helper (the port
+# carries the identical restore/probe lines for parity only); bucket
+# [status] — the GUI-composed probe title/log lines, which the legacy GUI
+# has no Snapshots tab to compose (the round-104/134/135/146/222 N-A
+# precedent; no legacy GUI affordance is added).
+CRITICAL: could not restore the /home opt-in swap during the preserved-root restore; the preserved /home undo point %N remains on disk and /home stays swapped.
+Resolve the staged target rollback state
+Re-resolved the staged repair-target rollback for %N: snapshot %N is staged as the next root and the preserved undo point is %N. The staged banner and Cancel are restored.
+# --- Round 208 (ITEM C, the walk-through activity-indicator refinement): the
+# temporary "Refreshing diagnostics…" activity text shown while the
+# walk-through's scoped regeneration runs.  Bucket [status] — a GUI-composed
+# status/activity line: the legacy GUI renders its own status wording and has
+# no round-206 terminal-render suppression path (its walk-through pane shows
+# the helper transcript verbatim), so the modern-only string needs no legacy
+# port.
+# Removed round 210 (ITEM 1): the refresh window now reuses the existing
+# generic diagnostic-run activity labels ("Running Host/Target diagnostics"),
+# so the bespoke string no longer exists.
+# --- Round 232 (the DM-switch X11-registry reconciliation): the new
+# msg-key localisation for the repaired stale X11 registry.  Bucket [helper]
+# — the legacy GUI renders the ported helper's tokens verbatim (the port
+# carries the identical reconcile flow; the round-104 D2 family — no new
+# legacy GUI affordance, the legacy display stage stays automated). ---
+Corrected the stale X11 display-manager registry (it named %2) to the configured %1 binary.

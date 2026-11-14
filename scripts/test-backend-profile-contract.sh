@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -359,7 +359,7 @@ if pacman_tmp_refusal="$( (
 fi
 grep -Fq 'Refusing the Arch pacman sandbox: the target /tmp is a symlink.' <<<"$pacman_tmp_refusal" \
     || { echo 'FAIL: the symlinked /tmp pacman refusal reason is missing' >&2; printf '%s\n' "$pacman_tmp_refusal" >&2; exit 1; }
-[[ ! -e "$pacman_tmp_link_root/host-tmp/boot-repair-pacman-session" ]] \
+[[ ! -e "$pacman_tmp_link_root/host-tmp/boot-bitch-pacman-session" ]] \
     || { echo 'FAIL: the refused pacman sandbox wrote through the target /tmp symlink' >&2; exit 1; }
 
 grep -q 'diagnostic_repair_capabilities$' "$HELPER"
@@ -1474,7 +1474,7 @@ fi
 [[ ! -e "$pair_root/f;" ]] \
     || { echo 'FAIL: the hostile suffix left an injection side effect' >&2; exit 1; }
 grep -Fq 'alpine_kernel_pairs' "$HELPER"
-grep -Fq 'sim_path="/tmp/boot-repair-initramfs-preflight-${kver}"' "$HELPER" \
+grep -Fq 'sim_path="/tmp/boot-bitch-initramfs-preflight-${kver}"' "$HELPER" \
     || { echo 'FAIL: mkinitfs trial output path is not wired' >&2; exit 1; }
 grep -Fq 'mkinitfs -o "$sim_path" "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs trial build is not wired' >&2; exit 1; }
@@ -2449,8 +2449,8 @@ APT
 apt_update_allow_release_info_retry
 [[ "$(wc -l < "$apt_retry_calls")" -eq 2 ]] \
     || { echo 'FAIL: release-info failure did not produce exactly one retry' >&2; exit 1; }
-sed -n '1p' "$apt_retry_calls" | grep -Eq 'apt-get update$' \
-    || { echo 'FAIL: initial apt-get update unexpectedly carried the release-info option' >&2; exit 1; }
+sed -n '1p' "$apt_retry_calls" | grep -Fq 'apt-get update -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Acquire::AllowReleaseInfoChange::Origin=true -o Acquire::AllowReleaseInfoChange::Label=true' \
+    || { echo 'FAIL: initial apt-get update did not carry the round-196 per-field never-prompt options' >&2; exit 1; }
 sed -n '2p' "$apt_retry_calls" | grep -Fq 'apt-get update -o Acquire::AllowReleaseInfoChange=true' \
     || { echo 'FAIL: retry did not use Acquire::AllowReleaseInfoChange=true' >&2; exit 1; }
 grep -Fq "msg:apt-update-refused-release-change|param:https://txos.tuxedocomputers.com/debian-cache testing InRelease, https://txos.tuxedocomputers.com/debian-security testing InRelease" "$SESSION_LOG" \
@@ -2560,6 +2560,18 @@ verify_tuxedo_uki_root_binding() { printf 'verify-uki\n' >> "$bootstack_calls"; 
 reinstall_efi_bootloader() { printf 'reinstall-efi\n' >> "$bootstack_calls"; }
 adaptive_grub_repair() { printf 'grub\n' >> "$bootstack_calls"; }
 is_tuxedo_uki_layout() { return 0; }
+# Round 224 (adjacent-findings plan A1, the round-222 environmental failure):
+# the round-63 post-efi reconcile ran the REAL firmware maintenance on the
+# host's efivarfs whenever uefi_nvram_writable + efibootmgr resolved for real
+# (the round-222 run died on "Could not set BootOrder: Permission denied").
+# Stub the whole reconcile so the section never touches the host firmware
+# (the same stubbing pattern the Alpine EFI sections use below).
+uefi_nvram_writable() { return 0; }
+efibootmgr() { printf 'efibootmgr\n' >> "$bootstack_calls"; }
+efi_annotate_selected_entries() { printf 'annotate\n' >> "$bootstack_calls"; }
+efi_prune_selected_duplicate_destinations() { printf 'prune\n' >> "$bootstack_calls"; }
+efi_group_firmware_boot_order() { printf 'group\n' >> "$bootstack_calls"; }
+efi_verify_selected_model_labels() { printf 'verify-model\n' >> "$bootstack_calls"; }
 SESSION_LOG="$bootstack_stage_log"
 
 : > "$bootstack_calls"
@@ -3004,10 +3016,17 @@ grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" "Upgrade ins
     }
     apt_mode_assert_apply()
     {
+        # Round 224 (adjacent-findings plan A1, the deliberate re-baseline):
+        # the round-196/197 never-prompt guard splices APT_NEVER_PROMPT_OPTIONS
+        # after `apt-get -y` in the real apply (the INTENDED helper behavior;
+        # the apt-update section of this contract was already re-baselined for
+        # the same options).  The expected apply form is the guarded one,
+        # never the bare `apt-get -y <mode>`.
         local expected="$1" output="$2" actual
+        local never_prompt_apply='-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Acquire::AllowReleaseInfoChange::Origin=true -o Acquire::AllowReleaseInfoChange::Label=true'
         actual="$(cat "$apt_mode_apply_file")"
-        [[ "$actual" == "apt-get -y $expected" ]] \
-            || { echo "FAIL: adaptive_apt_upgrade applied '$actual' instead of 'apt-get -y $expected'" >&2; printf '%s\n' "$output" >&2; exit 1; }
+        [[ "$actual" == "apt-get -y $never_prompt_apply $expected" ]] \
+            || { echo "FAIL: adaptive_apt_upgrade applied '$actual' instead of 'apt-get -y $never_prompt_apply $expected'" >&2; printf '%s\n' "$output" >&2; exit 1; }
     }
 
     # Standard upgrade with pending packages: full-upgrade is simulated and
@@ -3077,7 +3096,7 @@ grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" "Upgrade ins
 # helper_menu_prompt (the kernel/GPU menu channel), proceeds only on an
 # explicit yes, and reports `skipped|reason:user-declined` on a declined or
 # unanswered prompt while the plan continues with the remaining stages.  The
-# channel-less path (no BOOT_REPAIR_SESSION_PROTOCOL — the contracts) proceeds
+# channel-less path (no BOOT_BITCH_SESSION_PROTOCOL — the contracts) proceeds
 # without any prompt: the upfront plan confirmation is the gate there.
 (
     reset_helper_state
@@ -3091,8 +3110,8 @@ grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" "Upgrade ins
     SESSION_LOG="$confirm_root/session.log"
     : > "$SESSION_LOG"
     RUNNING_HOST_MODE=0
-    BOOT_REPAIR_SESSION_PROTOCOL=1
-    BOOT_REPAIR_SESSION_REQUEST=42
+    BOOT_BITCH_SESSION_PROTOCOL=1
+    BOOT_BITCH_SESSION_REQUEST=42
     confirm_prompt_file="$confirm_root/prompt.txt"
     confirm_apply_file="$confirm_root/apply-call"
     : > "$confirm_prompt_file"
@@ -3174,7 +3193,7 @@ grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" "Upgrade ins
     # Channel-less (no session protocol): proceed without any prompt.
     : > "$confirm_prompt_file"
     : > "$confirm_apply_file"
-    BOOT_REPAIR_SESSION_PROTOCOL=0
+    BOOT_BITCH_SESSION_PROTOCOL=0
     confirm_out="$(adaptive_apt_upgrade)"
     [[ -z "$(cat "$confirm_prompt_file")" ]] \
         || { echo 'FAIL: the channel-less upgrade must not prompt' >&2; exit 1; }
@@ -4171,7 +4190,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
     : > "$SESSION_LOG"
     dracut_image="$TARGET_ROOT/boot/initramfs-6.19.10-300.fc44.x86_64.img"
     dracut_kver=6.19.10-300.fc44.x86_64
-    dracut_build_dir="$TARGET_ROOT/run/boot-repair-initramfs"
+    dracut_build_dir="$TARGET_ROOT/run/boot-bitch-initramfs"
     dracut_build_image="$dracut_build_dir/initramfs-$dracut_kver.img"
     # The build count is tracked through a file: adaptive_initramfs_repair runs
     # inside a command substitution, so a plain variable increment would be
@@ -4198,7 +4217,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
     {
         local image="$1"
         [[ -n "$image" ]] || return 1
-        if [[ "$dracut_mode" == verify-fail && "$image" != /run/boot-repair-initramfs/* ]]; then
+        if [[ "$dracut_mode" == verify-fail && "$image" != /run/boot-bitch-initramfs/* ]]; then
             return 1
         fi
         run_selected_chroot /usr/bin/env \
@@ -4213,7 +4232,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
             *'dracut -f --no-hostonly --kver'*)
                 local last="${!#}"
                 printf '%s\n' "$(( $(dracut_builds) + 1 ))" > "$dracut_build_count_file"
-                [[ "$last" == /run/boot-repair-initramfs/* ]] \
+                [[ "$last" == /run/boot-bitch-initramfs/* ]] \
                     || { echo "FAIL: dracut was asked to build outside the session temp dir: $last" >&2; exit 1; }
                 if [[ "$dracut_mode" == touches-boot ]]; then
                     printf 'tampered\n' > "$dracut_image"
@@ -4347,7 +4366,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
         || { echo 'FAIL: two-kernel repair did not install the changed image' >&2; exit 1; }
     [[ "$(cat "$dracut_image")" == original ]] \
         || { echo 'FAIL: two-kernel repair replaced the byte-identical image' >&2; exit 1; }
-    [[ ! -e "$TARGET_ROOT/run/boot-repair-initramfs/initramfs-5.14.0-200.fc40.x86_64.img" \
+    [[ ! -e "$TARGET_ROOT/run/boot-bitch-initramfs/initramfs-5.14.0-200.fc40.x86_64.img" \
         && ! -e "$dracut_build_image" ]] \
         || { echo 'FAIL: two-kernel repair left a temporary build behind' >&2; exit 1; }
 ) || exit 1

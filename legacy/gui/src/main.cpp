@@ -1,16 +1,16 @@
-// boot-repair-legacy-gui - Qt3 frontend entry point.
+// boot-bitch-legacy-gui - Qt3 frontend entry point.
 //
 // CLI (kept usable without X for --help/--version/--print-config):
-//   boot-repair-legacy-gui [--helper PATH] [--elevate PREFIX|none]
+//   boot-bitch-legacy-gui [--helper PATH] [--elevate PREFIX|none]
 //                          [--no-elevate] [--host-disk PATH] [--host-root PATH]
 //                          [--log-dir DIR] [--smoke-test]
-//   boot-repair-legacy-gui --help | --version | --print-config
+//   boot-bitch-legacy-gui --help | --version | --print-config
 //
-// The helper path discovery mirrors the boot-repair-legacy launcher:
-// --helper, the test-only BOOT_REPAIR_LEGACY_HELPER seam (compiled out of
+// The helper path discovery mirrors the boot-bitch-legacy launcher:
+// --helper, the test-only BOOT_BITCH_LEGACY_HELPER seam (compiled out of
 // production builds; never honoured by root),
-// /usr/sbin/boot-repair-legacy-helper,
-// /usr/libexec/boot-repair/boot-repair-helper-legacy, source-tree paths.
+// /usr/sbin/boot-bitch-legacy-helper,
+// /usr/libexec/boot-bitch/boot-bitch-helper-legacy, source-tree paths.
 #include <qapplication.h>
 #include <qfile.h>
 #include <qobject.h>
@@ -43,7 +43,7 @@ void printUsage(FILE *out, const char *program)
         "whose cached 'Repair tool' capability line says available.\n"
         "\n"
         "Options:\n"
-        "  --helper PATH        helper to run (default /usr/sbin/boot-repair-legacy-helper)\n"
+        "  --helper PATH        helper to run (default /usr/sbin/boot-bitch-legacy-helper)\n"
         "  --elevate PREFIX     elevation prefix, e.g. 'sudo -n' or 'gksu --sudo-mode';\n"
         "                       'none' runs the helper directly\n"
         "  --no-elevate         do not elevate (must already be root)\n"
@@ -78,20 +78,20 @@ QString discoverHelper(const QString &override, const QString &argv0)
     if (!override.isEmpty()) {
         return override;
     }
-#ifdef BOOT_REPAIR_LEGACY_TEST_SEAMS
-    // Test seam (ENV-1): BOOT_REPAIR_LEGACY_HELPER is honoured only by
+#ifdef BOOT_BITCH_LEGACY_TEST_SEAMS
+    // Test seam (ENV-1): BOOT_BITCH_LEGACY_HELPER is honoured only by
     // non-root test/development builds (the auth-pipe harness). It is
     // compiled out of production builds and root never honours it.
     if (::geteuid() != 0) {
-        const char *env = ::getenv("BOOT_REPAIR_LEGACY_HELPER");
+        const char *env = ::getenv("BOOT_BITCH_LEGACY_HELPER");
         if (env && *env) {
             return QString::fromLocal8Bit(env);
         }
     }
 #endif
     static const char *const installed[] = {
-        "/usr/sbin/boot-repair-legacy-helper",
-        "/usr/libexec/boot-repair/boot-repair-helper-legacy",
+        "/usr/sbin/boot-bitch-legacy-helper",
+        "/usr/libexec/boot-bitch/boot-bitch-helper-legacy",
         0
     };
     for (int i = 0; installed[i]; ++i) {
@@ -107,10 +107,10 @@ QString discoverHelper(const QString &override, const QString &argv0)
         selfDir = argv0.left(slash);
     }
     static const char *const relative[] = {
-        "/boot-repair-legacy-helper",
-        "/../legacy/boot-repair-helper.sh",
-        "/../boot-repair-helper.sh",
-        "/../../legacy/boot-repair-helper.sh",
+        "/boot-bitch-legacy-helper",
+        "/../legacy/boot-bitch-helper.sh",
+        "/../boot-bitch-helper.sh",
+        "/../../legacy/boot-bitch-helper.sh",
         0
     };
     for (int i = 0; relative[i]; ++i) {
@@ -119,7 +119,7 @@ QString discoverHelper(const QString &override, const QString &argv0)
             return candidate;
         }
     }
-    return QString::fromLatin1("/usr/sbin/boot-repair-legacy-helper");
+    return QString::fromLatin1("/usr/sbin/boot-bitch-legacy-helper");
 }
 
 // The Boot Bitch legacy UI translator. It must outlive the QApplication (the
@@ -163,7 +163,7 @@ QString legacyUiLanguage()
 // Installs the best-matching Boot Bitch legacy UI translation for the current
 // desktop locale, falling back to English (no translator) when none is found.
 // Mirrors src/main.cpp installUiTranslator(): installed packages ship catalogs
-// under <prefix>/share/boot-repair-legacy/translations, source-tree runs
+// under <prefix>/share/boot-bitch-legacy/translations, source-tree runs
 // resolve them from a translations/ directory beside the executable. The
 // helper and the application log stay English (the backend's LC_ALL=C
 // machine-readable contract); this only translates the Qt3 GUI chrome.
@@ -171,7 +171,7 @@ bool installLegacyUiTranslator(QApplication *application)
 {
     QStringList dirs;
     dirs.append(application->applicationDirPath()
-        + QString::fromLatin1("/../share/boot-repair-legacy/translations"));
+        + QString::fromLatin1("/../share/boot-bitch-legacy/translations"));
     dirs.append(application->applicationDirPath()
         + QString::fromLatin1("/translations"));
     const QString language = legacyUiLanguage();
@@ -180,7 +180,7 @@ bool installLegacyUiTranslator(QApplication *application)
     }
     QTranslator &translator = legacyUiTranslator();
     const QString fileName =
-        QString::fromLatin1("boot-repair-legacy_%1.qm").arg(language);
+        QString::fromLatin1("boot-bitch-legacy_%1.qm").arg(language);
     for (QStringList::ConstIterator it = dirs.begin(); it != dirs.end(); ++it) {
         if (translator.load(fileName, *it)) {
             application->installTranslator(&translator);
@@ -241,7 +241,7 @@ int main(int argc, char **argv)
             printUsage(stdout, argv[0]);
             return 0;
         } else if (arg == QString::fromLatin1("-V") || arg == QString::fromLatin1("--version")) {
-            std::printf("boot-repair-legacy-gui %s\n", LEGACY_VERSION);
+            std::printf("boot-bitch-legacy-gui %s\n", LEGACY_VERSION);
             return 0;
         } else if (arg == QString::fromLatin1("--helper")) {
             ++it;
@@ -301,7 +301,7 @@ int main(int argc, char **argv)
         }
     }
 
-    // A10-03: BOOT_REPAIR_LEGACY_ELEVATE stays an explicit escape hatch for
+    // A10-03: BOOT_BITCH_LEGACY_ELEVATE stays an explicit escape hatch for
     // the elevation prefix.  The resolved tool is still verified against the
     // fixed trusted system locations (an absolute-path override is verified
     // as-is); a bare name must resolve to one of those locations.  ENV-1:
@@ -309,7 +309,7 @@ int main(int argc, char **argv)
     // holds the privilege the prefix would grant); the explicit --elevate
     // option stays available to every caller.
     if (elevationOverride.isEmpty() && ::geteuid() != 0) {
-        const char *envElevate = ::getenv("BOOT_REPAIR_LEGACY_ELEVATE");
+        const char *envElevate = ::getenv("BOOT_BITCH_LEGACY_ELEVATE");
         if (envElevate && *envElevate) {
             elevationOverride = QString::fromLocal8Bit(envElevate);
         }
@@ -318,7 +318,7 @@ int main(int argc, char **argv)
     const QString helper = discoverHelper(helperOverride, QString::fromLocal8Bit(argv[0]));
 
     if (printConfig) {
-        std::printf("boot-repair-legacy-gui %s\n", LEGACY_VERSION);
+        std::printf("boot-bitch-legacy-gui %s\n", LEGACY_VERSION);
         std::printf("helper: %s (%s)\n", helper.latin1(),
                     isExecutable(helper) ? "executable" : "missing or not executable");
         // A10-04: the helper verification result used by the elevated path
@@ -365,7 +365,7 @@ int main(int argc, char **argv)
     }
 
     QApplication application(argc, argv);
-    application.setName(QString::fromLatin1("boot-repair-legacy-gui"));
+    application.setName(QString::fromLatin1("boot-bitch-legacy-gui"));
     // Install the Boot Bitch legacy UI translation before any widget is
     // constructed, so every tr() call in LegacyMainWindow resolves against the
     // installed catalog. The smoke test asserts English control strings, so it

@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: core layout and diagnostics.
+// Part of the boot-bitch-ui-tests read-only regression suite: core layout and diagnostics.
 // The class declaration lives in MainWindowUiTest.h and the shared
 // fixtures/helpers in UiTestHelpers.h; this file holds the core layout and diagnostics test
 // implementations so the suite compiles as parallel translation units.
@@ -9,12 +9,12 @@ using namespace UiTestDetail;
 
 void MainWindowUiTest::initTestCase()
 {
-    QCoreApplication::setOrganizationName(QStringLiteral("BootRepair"));
+    QCoreApplication::setOrganizationName(QStringLiteral("BootBitch"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("bootrepair.org"));
-    QCoreApplication::setApplicationName(QStringLiteral("BootRepairUiTests"));
-    QCoreApplication::setApplicationVersion(QStringLiteral(BOOT_REPAIR_VERSION));
+    QCoreApplication::setApplicationName(QStringLiteral("BootBitchUiTests"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(BOOT_BITCH_VERSION));
 
-    QSettings settings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings settings(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     settings.clear();
     settings.sync();
 }
@@ -667,7 +667,7 @@ int main(int argc, char **argv)
         return 2;
     }
     qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
-    qputenv("BOOT_REPAIR_LOG_DIR", sessionLogs.path().toUtf8());
+    qputenv("BOOT_BITCH_LOG_DIR", sessionLogs.path().toUtf8());
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication application(argc, argv);
     MainWindowUiTest test;

@@ -6,7 +6,7 @@
 #   - the staged GUI/helper/desktop-entry modes stay user-accessible (0755
 #     binary in PATH, 0644 readable system-wide desktop entry) so the
 #     unprivileged guest user can launch the GUI from the KDE menu and a shell
-#   - the shell-only boot-repair-legacy TUI launcher (and its desktop entry
+#   - the shell-only boot-bitch-legacy TUI launcher (and its desktop entry
 #     and man page) is deliberately NOT shipped: the GUI is the entry point
 #   - the generated-helper drift gate: advisory on --dry-run (NOTE-skip for an
 #     override or a missing port tool), mandatory on a real build (a missing
@@ -27,8 +27,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$ROOT_DIR/scripts/package-legacy.sh"
 CONTROL_IN="$ROOT_DIR/legacy/packaging/control.in"
 GUI_PRO="$ROOT_DIR/legacy/gui/boot-bitch-legacy.pro"
-GUI_DESKTOP="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
-GUI_ICON="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-48x48.png"
+GUI_DESKTOP="$ROOT_DIR/legacy/gui/data/boot-bitch-legacy-gui.desktop"
+GUI_ICON="$ROOT_DIR/legacy/gui/data/boot-bitch-legacy-48x48.png"
 
 fail()
 {
@@ -39,8 +39,8 @@ fail()
 [[ -x "$PKG" ]] || fail "scripts/package-legacy.sh is missing or not executable"
 [[ -f "$CONTROL_IN" ]] || fail "legacy/packaging/control.in is missing"
 [[ -f "$GUI_PRO" ]] || fail "legacy/gui/boot-bitch-legacy.pro is missing"
-[[ -f "$GUI_DESKTOP" ]] || fail "legacy/gui/data/boot-repair-legacy-gui.desktop is missing"
-[[ -f "$GUI_ICON" ]] || fail "legacy/gui/data/boot-repair-legacy-48x48.png is missing"
+[[ -f "$GUI_DESKTOP" ]] || fail "legacy/gui/data/boot-bitch-legacy-gui.desktop is missing"
+[[ -f "$GUI_ICON" ]] || fail "legacy/gui/data/boot-bitch-legacy-48x48.png is missing"
 
 # Qt3-only: no kdelibs, no Qt4/5/6 modules.
 grep -q '^CONFIG  += qt' "$GUI_PRO" || fail "GUI project does not enable Qt"
@@ -76,7 +76,7 @@ VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/
 [[ -n "$VERSION" ]] || fail "cannot parse the project version from CMakeLists.txt"
 
 # --- Dry-run staging --------------------------------------------------------
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-contract.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-legacy-contract.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 FIXTURE_HELPER="$TMP/fixture-helper.sh"
@@ -104,34 +104,34 @@ grep -q 'NOTE: LEGACY_HELPER_SRC override set; skipping the generated-helper dri
 
 for path in \
     "$STAGE/DEBIAN/control" \
-    "$STAGE/usr/sbin/boot-repair-legacy-helper" \
-    "$STAGE/usr/bin/boot-repair-legacy-gui" \
-    "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" \
-    "$STAGE/usr/share/icons/hicolor/16x16/apps/boot-repair-legacy.png" \
-    "$STAGE/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png" \
-    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png" \
-    "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
-    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png" \
-    "$STAGE/usr/share/doc/boot-repair-legacy/copyright" \
-    "$STAGE/usr/share/doc/boot-repair-legacy/changelog.Debian.gz"
+    "$STAGE/usr/sbin/boot-bitch-legacy-helper" \
+    "$STAGE/usr/bin/boot-bitch-legacy-gui" \
+    "$STAGE/usr/share/applications/boot-bitch-legacy-gui.desktop" \
+    "$STAGE/usr/share/icons/hicolor/16x16/apps/boot-bitch-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/22x22/apps/boot-bitch-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-bitch-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png" \
+    "$STAGE/usr/share/doc/boot-bitch-legacy/copyright" \
+    "$STAGE/usr/share/doc/boot-bitch-legacy/changelog.Debian.gz"
 do
     [[ -f "$path" ]] || fail "staged layout missing: ${path#"$TMP"/}"
 done
-[[ -x "$STAGE/usr/sbin/boot-repair-legacy-helper" ]] \
+[[ -x "$STAGE/usr/sbin/boot-bitch-legacy-helper" ]] \
     || fail "staged helper is not executable"
-[[ -x "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
+[[ -x "$STAGE/usr/bin/boot-bitch-legacy-gui" ]] \
     || fail "staged GUI binary is not executable"
-[[ -s "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
+[[ -s "$STAGE/usr/bin/boot-bitch-legacy-gui" ]] \
     || fail "staged GUI binary is empty"
-cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
+cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-bitch-legacy-helper" \
     || fail "staged helper does not match its source"
 
 # Qt3 i18n: the staging tree must carry the compiled translation catalogs. A
 # host --dry-run without Qt3 lrelease stages a placeholder .qm; a real Etch
 # build stages the lrelease-compiled .qm for every .ts source.
-[[ -d "$STAGE/usr/share/boot-repair-legacy/translations" ]] \
-    || fail "staged tree is missing the boot-repair-legacy translations directory"
-if ! find "$STAGE/usr/share/boot-repair-legacy/translations" -name '*.qm' -print | grep -q .; then
+[[ -d "$STAGE/usr/share/boot-bitch-legacy/translations" ]] \
+    || fail "staged tree is missing the boot-bitch-legacy translations directory"
+if ! find "$STAGE/usr/share/boot-bitch-legacy/translations" -name '*.qm' -print | grep -q .; then
     fail "staged translations directory carries no .qm catalog"
 fi
 
@@ -139,10 +139,10 @@ fi
 # byte-identical copy of the canonical data file both GUIs consume, installed
 # where the legacy GUI resolves it at runtime.
 MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
-STAGED_MAP="$STAGE/usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+STAGED_MAP="$STAGE/usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv"
 [[ -f "$MAP_FILE" ]] || fail "canonical repair-diagnostic-map.tsv is missing"
 [[ -f "$STAGED_MAP" ]] \
-    || fail "staged tree is missing usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+    || fail "staged tree is missing usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv"
 cmp -s "$MAP_FILE" "$STAGED_MAP" \
     || fail "staged repair-diagnostic-map.tsv differs from the canonical data file"
 [[ "$(stat -c %a "$STAGED_MAP")" == '644' ]] \
@@ -152,10 +152,10 @@ cmp -s "$MAP_FILE" "$STAGED_MAP" \
 # table — the byte-identical copy of the canonical data file both GUIs
 # consume, installed where the legacy GUI resolves it at runtime.
 CPKG_FILE="$ROOT_DIR/data/capability-packages.tsv"
-STAGED_CPKG="$STAGE/usr/share/boot-repair-legacy/capability-packages.tsv"
+STAGED_CPKG="$STAGE/usr/share/boot-bitch-legacy/capability-packages.tsv"
 [[ -f "$CPKG_FILE" ]] || fail "canonical capability-packages.tsv is missing"
 [[ -f "$STAGED_CPKG" ]] \
-    || fail "staged tree is missing usr/share/boot-repair-legacy/capability-packages.tsv"
+    || fail "staged tree is missing usr/share/boot-bitch-legacy/capability-packages.tsv"
 cmp -s "$CPKG_FILE" "$STAGED_CPKG" \
     || fail "staged capability-packages.tsv differs from the canonical data file"
 [[ "$(stat -c %a "$STAGED_CPKG")" == '644' ]] \
@@ -164,33 +164,33 @@ cmp -s "$CPKG_FILE" "$STAGED_CPKG" \
 # User access: the system-wide desktop entry and the GUI binary must be
 # readable/executable by every user (the guest's unprivileged user launches
 # the GUI from the KDE menu and a shell; the menu resolves Exec through PATH).
-[[ "$(stat -c %a "$STAGE/usr/bin/boot-repair-legacy-gui")" == '755' ]] \
+[[ "$(stat -c %a "$STAGE/usr/bin/boot-bitch-legacy-gui")" == '755' ]] \
     || fail "staged GUI binary mode is not 0755"
-[[ "$(stat -c %a "$STAGE/usr/sbin/boot-repair-legacy-helper")" == '755' ]] \
+[[ "$(stat -c %a "$STAGE/usr/sbin/boot-bitch-legacy-helper")" == '755' ]] \
     || fail "staged helper mode is not 0755"
-[[ "$(stat -c %a "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop")" == '644' ]] \
+[[ "$(stat -c %a "$STAGE/usr/share/applications/boot-bitch-legacy-gui.desktop")" == '644' ]] \
     || fail "staged desktop entry mode is not 0644"
-[[ -r "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" ]] \
+[[ -r "$STAGE/usr/share/applications/boot-bitch-legacy-gui.desktop" ]] \
     || fail "staged desktop entry is not readable"
 for _size in 16 22 32 48; do
-    [[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-repair-legacy.png")" == '644' ]] \
+    [[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-bitch-legacy.png")" == '644' ]] \
         || fail "staged ${_size}x${_size} icon mode is not 0644"
 done
-[[ "$(stat -c %a "$STAGE/usr/share/doc/boot-repair-legacy/copyright")" == '644' ]] \
+[[ "$(stat -c %a "$STAGE/usr/share/doc/boot-bitch-legacy/copyright")" == '644' ]] \
     || fail "staged copyright mode is not 0644"
 
 # The shell-only TUI launcher, its desktop entry and its man page are gone.
 for path in \
-    "$STAGE/usr/bin/boot-repair-legacy" \
-    "$STAGE/usr/share/applications/boot-repair-legacy.desktop" \
-    "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz"
+    "$STAGE/usr/bin/boot-bitch-legacy" \
+    "$STAGE/usr/share/applications/boot-bitch-legacy.desktop" \
+    "$STAGE/usr/share/man/man1/boot-bitch-legacy.1.gz"
 do
     [[ ! -e "$path" ]] || fail "staged tree still ships the removed launcher path: ${path#"$TMP"/}"
 done
 
 # --- Control metadata -------------------------------------------------------
 CONTROL="$STAGE/DEBIAN/control"
-grep -qx 'Package: boot-repair-legacy' "$CONTROL" || fail "control Package field is wrong"
+grep -qx 'Package: boot-bitch-legacy' "$CONTROL" || fail "control Package field is wrong"
 grep -qx "Version: $VERSION-etch1" "$CONTROL" || fail "control Version field is wrong"
 grep -qx 'Architecture: amd64' "$CONTROL" || fail "control Architecture field is wrong"
 grep -qx 'Section: admin' "$CONTROL" || fail "control Section field is wrong"
@@ -230,16 +230,19 @@ cp "$ROOT_DIR/legacy/packaging/"* "$TREE/legacy/packaging/"
 cp -a "$ROOT_DIR/legacy/gui" "$TREE/legacy/gui"
 cp "$ROOT_DIR/data/repair-diagnostic-map.tsv" "$TREE/data/repair-diagnostic-map.tsv"
 cp "$ROOT_DIR/data/capability-packages.tsv" "$TREE/data/capability-packages.tsv"
-printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.txt"
-cp "$FIXTURE_HELPER" "$TREE/legacy/boot-repair-helper.sh"
+printf 'project(BootBitch
+    VERSION %s
+)
+' "$VERSION" > "$TREE/CMakeLists.txt"
+cp "$FIXTURE_HELPER" "$TREE/legacy/boot-bitch-helper.sh"
 printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"
 
 # Dry run: default discovery finds the tree helper and the drift gate runs.
 "$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-out/stage" --output "$TMP/tree-out" \
     > "$TMP/tree-ok.log" 2>&1 || { cat "$TMP/tree-ok.log" >&2; fail "default helper discovery failed"; }
 grep -q 'legacy/port.sh --check' "$TMP/tree-ok.log" || fail "drift gate did not run"
-grep -q "$TREE/legacy/boot-repair-helper.sh" "$TMP/tree-ok.log" \
-    || fail "default helper discovery did not find legacy/boot-repair-helper.sh"
+grep -q "$TREE/legacy/boot-bitch-helper.sh" "$TMP/tree-ok.log" \
+    || fail "default helper discovery did not find legacy/boot-bitch-helper.sh"
 
 # Dry run: a failing port.sh --check aborts.
 printf '#!/bin/bash\nexit 1\n' > "$TREE/legacy/port.sh"
@@ -287,7 +290,7 @@ grep -q 'not byte-identical to the generated' "$TMP/tree-real-override.log" \
 
 # ...but a byte-identical override passes the gate and reaches the off-Etch
 # refusal (the drift gate still runs).
-cp "$TREE/legacy/boot-repair-helper.sh" "$TMP/identical-helper.sh"
+cp "$TREE/legacy/boot-bitch-helper.sh" "$TMP/identical-helper.sh"
 if LEGACY_HELPER_SRC="$TMP/identical-helper.sh" "$TREE/scripts/package-legacy.sh" \
         --stage-dir "$TMP/tree-out7/stage" --output "$TMP/tree-out7" \
         > "$TMP/tree-real-identical.log" 2>&1; then
@@ -303,27 +306,27 @@ fi
 
 # --- GUI desktop entry ------------------------------------------------------
 grep -qx 'Type=Application' "$GUI_DESKTOP" || fail "GUI desktop entry Type is wrong"
-grep -qx 'Exec=boot-repair-legacy-gui' "$GUI_DESKTOP" || fail "GUI desktop entry Exec is wrong"
-grep -qx 'Icon=boot-repair-legacy' "$GUI_DESKTOP" || fail "GUI desktop entry Icon is wrong"
+grep -qx 'Exec=boot-bitch-legacy-gui' "$GUI_DESKTOP" || fail "GUI desktop entry Exec is wrong"
+grep -qx 'Icon=boot-bitch-legacy' "$GUI_DESKTOP" || fail "GUI desktop entry Icon is wrong"
 grep -qx 'Terminal=false' "$GUI_DESKTOP" || fail "GUI desktop entry Terminal is wrong"
 grep -qx 'Categories=System;' "$GUI_DESKTOP" || fail "GUI desktop entry Categories is wrong"
-cmp -s "$GUI_DESKTOP" "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" \
+cmp -s "$GUI_DESKTOP" "$STAGE/usr/share/applications/boot-bitch-legacy-gui.desktop" \
     || fail "staged GUI desktop entry differs from its source"
-cmp -s "$GUI_ICON" "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
+cmp -s "$GUI_ICON" "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-bitch-legacy.png" \
     || fail "staged 48x48 icon differs from its source"
 # Round 70 (E2): the shield badge stages byte-identical to its generated source.
-SHIELD_ICON="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-shield-32x32.png"
-[[ -f "$SHIELD_ICON" ]] || fail "legacy/gui/data/boot-repair-legacy-shield-32x32.png is missing"
-cmp -s "$SHIELD_ICON" "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png" \
+SHIELD_ICON="$ROOT_DIR/legacy/gui/data/boot-bitch-legacy-shield-32x32.png"
+[[ -f "$SHIELD_ICON" ]] || fail "legacy/gui/data/boot-bitch-legacy-shield-32x32.png is missing"
+cmp -s "$SHIELD_ICON" "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png" \
     || fail "staged shield badge differs from its generated source"
-[[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png")" == '644' ]] \
+[[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png")" == '644' ]] \
     || fail "staged shield badge mode is not 0644"
 
 # --- Dry-run never builds, off-Etch build refuses, missing helper fails -----
 if find "$OUT" -name '*.deb' -print | grep -q .; then
     fail "--dry-run produced a .deb"
 fi
-grep -q "boot-repair-legacy_${VERSION}-etch1_amd64.deb" "$TMP/dry-run.log" \
+grep -q "boot-bitch-legacy_${VERSION}-etch1_amd64.deb" "$TMP/dry-run.log" \
     || fail "dry-run did not report the expected artifact name"
 
 # Off-Etch real builds use the default (generated) helper so the mandatory

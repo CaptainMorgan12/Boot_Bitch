@@ -99,8 +99,8 @@ bool changeStatusIsUnchanged(const std::string &status);
 // ===== The shared repair -> diagnostic invalidation map (round 30) ==========
 // The canonical data file data/repair-diagnostic-map.tsv (the round-19/20
 // table serialized) is consumed by BOTH GUIs: the modern Qt6 GUI embeds it at
-// build time (resources/boot-repair.qrc) and the legacy GUI loads the staged
-// copy at /usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
+// build time (resources/boot-bitch.qrc) and the legacy GUI loads the staged
+// copy at /usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv
 // (scripts/package-legacy.sh). The parity contract
 // (legacy/tests/test-ui-parity-qt3.sh) locks the row set + a golden checksum
 // so the two GUIs can never diverge by a one-sided edit. This loader is

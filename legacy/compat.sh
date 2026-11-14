@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 #
 # This file is embedded verbatim into the generated legacy helper
-# (legacy/boot-repair-helper.sh) by legacy/port.sh and is also sourced directly
+# (legacy/boot-bitch-helper.sh) by legacy/port.sh and is also sourced directly
 # by the legacy contract tests.  It must stay bash 3.1-parseable and must never
 # use bash 4 syntax: the array-read builtin, associative arrays, case-conversion
 # expansions, job-control wait, namerefs, printf -v or append redirection.
@@ -13,7 +13,7 @@
 #                       delegate to the real binary when it exists and fall
 #                       back to /sys + /proc + blkid + coreutils otherwise.
 #
-# BOOT_REPAIR_LEGACY_SHIMS=auto|force forces the fallback path even when the
+# BOOT_BITCH_LEGACY_SHIMS=auto|force forces the fallback path even when the
 # real tool is installed (test/development only; the installed helper never
 # sets it).  All probes fail closed: an option set the fallback cannot prove
 # returns nonzero instead of printing a guessed answer.
@@ -259,15 +259,15 @@ legacy_real_tool_path()
 # /sbin/cryptsetup while the desktop user PATH has no /sbin, so the plain
 # `command -v` lookups reported it missing on launch paths without the sbin
 # directories; this probe is the fail-closed lookup every legacy cryptsetup
-# gate uses.  BOOT_REPAIR_LEGACY_TOOL_DIRS overrides the probed directory
-# list (test/development only, same convention as BOOT_REPAIR_LEGACY_SHIMS;
+# gate uses.  BOOT_BITCH_LEGACY_TOOL_DIRS overrides the probed directory
+# list (test/development only, same convention as BOOT_BITCH_LEGACY_SHIMS;
 # the installed helper never sets it).
 legacy_standard_tool_path()
 {
     local name="$1" candidate="" dirs=""
     [[ -n "$name" && "$name" != */* ]] || return 1
-    if [[ -n "${BOOT_REPAIR_LEGACY_TOOL_DIRS:-}" ]]; then
-        dirs="$BOOT_REPAIR_LEGACY_TOOL_DIRS"
+    if [[ -n "${BOOT_BITCH_LEGACY_TOOL_DIRS:-}" ]]; then
+        dirs="$BOOT_BITCH_LEGACY_TOOL_DIRS"
     else
         dirs="/sbin /usr/sbin"
     fi
@@ -282,7 +282,7 @@ legacy_standard_tool_path()
 
 legacy_force_shims()
 {
-    [[ "${BOOT_REPAIR_LEGACY_SHIMS:-auto}" == force ]]
+    [[ "${BOOT_BITCH_LEGACY_SHIMS:-auto}" == force ]]
 }
 
 # ---------------------------------------------------------------------------

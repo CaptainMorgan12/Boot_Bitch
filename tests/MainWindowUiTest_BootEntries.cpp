@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: the running-host
+// Part of the boot-bitch-ui-tests read-only regression suite: the running-host
 // UEFI firmware boot-entry manager (Boot entries tab). The class declaration
 // lives in MainWindowUiTest.h and the shared fixtures/helpers in
 // UiTestHelpers.h; this file holds the efi-list parser unit test and the page's
@@ -13,7 +13,7 @@
 
 using namespace UiTestDetail;
 
-// Test seam compiled into boot-repair-ui-tests only (see MainWindow.cpp).
+// Test seam compiled into boot-bitch-ui-tests only (see MainWindow.cpp).
 BootEntriesInventory parseBootEntriesOutputForTest(const QString &output);
 GrubMenuInventory parseGrubMenuOutputForTest(const QString &output);
 ExtlinuxInventory parseExtlinuxOutputForTest(const QString &output);

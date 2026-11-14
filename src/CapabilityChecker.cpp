@@ -94,14 +94,14 @@ private:
     int m_linesRead = 0;
 };
 
-// The running host's os-release. BOOT_REPAIR_OS_RELEASE is a read-only test
+// The running host's os-release. BOOT_BITCH_OS_RELEASE is a read-only test
 // seam used by the UI regression test to simulate another distribution; it is
-// compiled out of production builds (BOOT_REPAIR_UI_TEST) and normal launches
+// compiled out of production builds (BOOT_BITCH_UI_TEST) and normal launches
 // always read /etc/os-release.
 QString osReleasePath()
 {
-#ifdef BOOT_REPAIR_UI_TEST
-    const QByteArray overridePath = qgetenv("BOOT_REPAIR_OS_RELEASE");
+#ifdef BOOT_BITCH_UI_TEST
+    const QByteArray overridePath = qgetenv("BOOT_BITCH_OS_RELEASE");
     if (!overridePath.isEmpty()) {
         return QString::fromLocal8Bit(overridePath);
     }
@@ -533,32 +533,35 @@ static QString moduleBuildFeatureTitle(const QString &moduleBuild)
 // plus the package/tool info).  Round 105 (ITEM 3): these strings are SHARED
 // with the legacy GUI (legacy/gui/src/LegacyMainWindow.cpp capabilitySpecs +
 // capabilityNoteSpecs); the ui-parity-qt3 capability-notes block locks the two
-// sources, so a wording change must touch both.
+// sources, so a wording change must touch both.  Round 221 (plan §1 item
+// 13a): the notes are shortened to at most two wrapped rows in the
+// Anmerkungen column at the default width (one row where possible), never
+// truncated.
 static QString capabilityNoteForTool(const QString &key)
 {
-    if (key == QStringLiteral("validate")) return QCoreApplication::translate("CapabilityChecker", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair");
-    if (key == QStringLiteral("filesystem")) return QCoreApplication::translate("CapabilityChecker", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors");
-    if (key == QStringLiteral("dpkg")) return QCoreApplication::translate("CapabilityChecker", "Completes interrupted dpkg package configuration in the selected repair system");
-    if (key == QStringLiteral("fixbroken")) return QCoreApplication::translate("CapabilityChecker", "Repairs broken package dependencies after the simulation-first safety preflight");
-    if (key == QStringLiteral("aptupdate")) return QCoreApplication::translate("CapabilityChecker", "Refreshes APT metadata without upgrading installed packages");
-    if (key == QStringLiteral("upgrade")) return QCoreApplication::translate("CapabilityChecker", "Simulates the APT transaction, then applies a safe upgrade");
-    if (key == QStringLiteral("kernels")) return QCoreApplication::translate("CapabilityChecker", "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it");
-    if (key == QStringLiteral("dkms")) return QCoreApplication::translate("CapabilityChecker", "Rebuilds out-of-tree kernel modules; required only when the system uses a module build system");
+    if (key == QStringLiteral("validate")) return QCoreApplication::translate("CapabilityChecker", "Read-only preflight: mounts, filesystems, boot files");
+    if (key == QStringLiteral("filesystem")) return QCoreApplication::translate("CapabilityChecker", "Checks root and /boot read-only; repairs only devices with errors");
+    if (key == QStringLiteral("dpkg")) return QCoreApplication::translate("CapabilityChecker", "Completes interrupted dpkg package configuration");
+    if (key == QStringLiteral("fixbroken")) return QCoreApplication::translate("CapabilityChecker", "Repairs broken package dependencies (simulation-first)");
+    if (key == QStringLiteral("aptupdate")) return QCoreApplication::translate("CapabilityChecker", "Refreshes APT metadata without upgrades");
+    if (key == QStringLiteral("upgrade")) return QCoreApplication::translate("CapabilityChecker", "Simulation-first safe package upgrade");
+    if (key == QStringLiteral("kernels")) return QCoreApplication::translate("CapabilityChecker", "Kernel removal, cleanup and install via the interactive menu");
+    if (key == QStringLiteral("dkms")) return QCoreApplication::translate("CapabilityChecker", "Rebuilds out-of-tree kernel modules");
     if (key == QStringLiteral("initramfs")) return QCoreApplication::translate("CapabilityChecker", "Rebuilds the initramfs images for the installed kernels");
-    if (key == QStringLiteral("display")) return QCoreApplication::translate("CapabilityChecker", "Restores the configured display manager and its startup link without starting the GUI");
-    if (key == QStringLiteral("gpu")) return QCoreApplication::translate("CapabilityChecker", "Evidence-driven GPU driver repair through the helper's interactive menu");
-    if (key == QStringLiteral("input-devices")) return QCoreApplication::translate("CapabilityChecker", "Evidence-driven keyboard, mouse and touchpad repair through the helper's interactive menu");
-    if (key == QStringLiteral("network")) return QCoreApplication::translate("CapabilityChecker", "Evidence-driven network repair through the helper's interactive menu; live connectivity changes never touch the interface holding the default route");
+    if (key == QStringLiteral("display")) return QCoreApplication::translate("CapabilityChecker", "Restores the display manager and startup link without starting the GUI");
+    if (key == QStringLiteral("gpu")) return QCoreApplication::translate("CapabilityChecker", "Evidence-driven GPU driver repair via the interactive menu");
+    if (key == QStringLiteral("input-devices")) return QCoreApplication::translate("CapabilityChecker", "Repairs keyboard, mouse and touchpad through the interactive menu");
+    if (key == QStringLiteral("network")) return QCoreApplication::translate("CapabilityChecker", "Network repair via the interactive menu; the default route stays untouched");
     if (key == QStringLiteral("efi")) return QCoreApplication::translate("CapabilityChecker", "Repairs the EFI / UKI boot path for UEFI systems");
-    if (key == QStringLiteral("grub")) return QCoreApplication::translate("CapabilityChecker", "Regenerates the GRUB configuration (backed up, every entry preserved)");
-    if (key == QStringLiteral("extlinux")) return QCoreApplication::translate("CapabilityChecker", "Alternative bootloader; on this system extlinux is not part of the default boot path");
-    if (key == QStringLiteral("bootstack")) return QCoreApplication::translate("CapabilityChecker", "One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration");
+    if (key == QStringLiteral("grub")) return QCoreApplication::translate("CapabilityChecker", "Regenerates the GRUB configuration (backed up, all entries kept)");
+    if (key == QStringLiteral("extlinux")) return QCoreApplication::translate("CapabilityChecker", "Alternative bootloader; not the standard");
+    if (key == QStringLiteral("bootstack")) return QCoreApplication::translate("CapabilityChecker", "One guarded pass: mapper/crypttab, initramfs and bootloader");
     return QString();
 }
 
 // ===== The shared capability -> package table (round 106) ==================
 // Loads data/capability-packages.tsv (embedded at build time via
-// resources/boot-repair.qrc as ":/data/capability-packages.tsv", with the
+// resources/boot-bitch.qrc as ":/data/capability-packages.tsv", with the
 // source-tree file fallback for dev/test runs).  The SAME file backs the
 // legacy Qt3 GUI (staged into the Etch package); the parity contract
 // (legacy/tests/test-ui-parity-qt3.sh) locks the row set + a golden checksum.

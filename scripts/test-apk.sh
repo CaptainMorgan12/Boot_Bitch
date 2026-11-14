@@ -35,7 +35,7 @@ fi
 }
 
 APK="$(realpath "$APK")"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-apk-test.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-apk-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # GNU tar emits APK-TOOLS extended-header warnings for some .apk archives
@@ -66,8 +66,8 @@ echo "=== PACKAGE METADATA ==="
 tar -xOf "$APK" .PKGINFO 2> >(tar_filter_stderr >&2) | tee "$TMP/.PKGINFO"
 echo
 
-grep -q '^pkgname = boot-repair$' "$TMP/.PKGINFO" || {
-    echo "FAIL: .PKGINFO pkgname is not boot-repair." >&2
+grep -q '^pkgname = boot-bitch$' "$TMP/.PKGINFO" || {
+    echo "FAIL: .PKGINFO pkgname is not boot-bitch." >&2
     exit 1
 }
 
@@ -143,23 +143,23 @@ echo "=== EXTRACT WITHOUT INSTALLING ==="
 mkdir -p "$TMP/root"
 tar -xzf "$APK" -C "$TMP/root" 2> >(tar_filter_stderr >&2)
 
-[[ -x "$TMP/root/usr/bin/boot-repair" ]] || {
-    echo "FAIL: /usr/bin/boot-repair missing from extracted package." >&2
+[[ -x "$TMP/root/usr/bin/boot-bitch" ]] || {
+    echo "FAIL: /usr/bin/boot-bitch missing from extracted package." >&2
     exit 1
 }
 
-[[ -f "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop" ]] || {
+[[ -f "$TMP/root/usr/share/applications/org.bootbitch.BootBitch.desktop" ]] || {
     echo "FAIL: desktop entry missing from extracted package." >&2
     exit 1
 }
 
-[[ -f "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" ]] || {
+[[ -f "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" ]] || {
     echo "FAIL: AppStream metadata missing from extracted package." >&2
     exit 1
 }
 
 for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
-    icon="$TMP/root/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootrepair.BootRepair.png"
+    icon="$TMP/root/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootbitch.BootBitch.png"
     [[ -f "$icon" ]] || {
         echo "FAIL: application icon missing from extracted package: $icon" >&2
         exit 1
@@ -170,9 +170,9 @@ done
 # the GUI localizes instead of falling back to English-only. The exact shipped
 # set is the curated 23-catalog list (round 112: id/sk/vi are unshipped —
 # no Argos model exists for them; their .qm catalogs must not appear).
-translations_dir="$TMP/root/usr/share/boot-repair/translations"
+translations_dir="$TMP/root/usr/share/boot-bitch/translations"
 [[ -d "$translations_dir" ]] || {
-    echo "FAIL: translation catalog directory is missing from the package: usr/share/boot-repair/translations" >&2
+    echo "FAIL: translation catalog directory is missing from the package: usr/share/boot-bitch/translations" >&2
     exit 1
 }
 find "$translations_dir" -name '*.qm' -print | grep -q . || {
@@ -181,46 +181,46 @@ find "$translations_dir" -name '*.qm' -print | grep -q . || {
 }
 shipped_catalogs='ar cs da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh'
 for lang in $shipped_catalogs; do
-    [[ -f "$translations_dir/boot-repair_${lang}.qm" ]] || {
-        echo "FAIL: shipped translation catalog missing from the package: boot-repair_${lang}.qm" >&2
+    [[ -f "$translations_dir/boot-bitch_${lang}.qm" ]] || {
+        echo "FAIL: shipped translation catalog missing from the package: boot-bitch_${lang}.qm" >&2
         exit 1
     }
 done
 extra_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' \
-    | grep -vE '^boot-repair_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
+    | grep -vE '^boot-bitch_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
 [[ -z "$extra_catalogs" ]] || {
     echo "FAIL: unexpected catalogs shipped in the package (unshipped languages must not ship): $extra_catalogs" >&2
     exit 1
 }
 
-grep -q '<id>org.bootrepair.BootRepair</id>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || {
+grep -q '<id>org.bootbitch.BootBitch</id>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || {
     echo "FAIL: AppStream metadata has the wrong component ID." >&2
     exit 1
 }
-grep -q '<launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || {
+grep -q '<launchable type="desktop-id">org.bootbitch.BootBitch.desktop</launchable>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || {
     echo "FAIL: AppStream metadata does not link the desktop entry." >&2
     exit 1
 }
-grep -q '<binary>boot-repair</binary>' \
-    "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || {
+grep -q '<binary>boot-bitch</binary>' \
+    "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || {
     echo "FAIL: AppStream metadata does not advertise the installed binary." >&2
     exit 1
 }
 
-[[ -x "$TMP/root/usr/libexec/boot-repair/boot-repair-helper" ]] || {
+[[ -x "$TMP/root/usr/libexec/boot-bitch/boot-bitch-helper" ]] || {
     echo "FAIL: privileged repair helper missing from extracted package." >&2
     exit 1
 }
 
-[[ -x "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py" ]] || {
+[[ -x "$TMP/root/usr/libexec/boot-bitch/boot-bitch-efi-label.py" ]] || {
     echo "FAIL: EFI label updater missing from extracted package." >&2
     exit 1
 }
 
-bash -n "$TMP/root/usr/libexec/boot-repair/boot-repair-helper"
-python3 -m py_compile "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py"
+bash -n "$TMP/root/usr/libexec/boot-bitch/boot-bitch-helper"
+python3 -m py_compile "$TMP/root/usr/libexec/boot-bitch/boot-bitch-efi-label.py"
 
 echo "PASS: executable, desktop entry, application icons and privileged helper are present."
 
@@ -228,7 +228,7 @@ echo
 echo "=== DESKTOP ENTRY ==="
 if command -v desktop-file-validate >/dev/null 2>&1
 then
-    desktop-file-validate "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop"
+    desktop-file-validate "$TMP/root/usr/share/applications/org.bootbitch.BootBitch.desktop"
     echo "PASS: desktop entry validation completed."
 else
     echo "SKIP: desktop-file-validate not installed (optional: desktop-file-utils)."
@@ -239,7 +239,7 @@ echo "=== APPSTREAM METADATA ==="
 if command -v xmllint >/dev/null 2>&1
 then
     xmllint --noout \
-        "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml"
+        "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml"
     echo "PASS: AppStream metadata is well-formed XML."
 else
     echo "SKIP: xmllint not installed (optional XML QA tool)."
@@ -249,7 +249,7 @@ echo
 echo "=== DYNAMIC LIBRARIES ==="
 if command -v ldd >/dev/null 2>&1
 then
-    ldd "$TMP/root/usr/bin/boot-repair" || true
+    ldd "$TMP/root/usr/bin/boot-bitch" || true
 else
     echo "SKIP: ldd not installed."
 fi

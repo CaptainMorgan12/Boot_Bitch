@@ -7,8 +7,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
-LEGACY_HELPER="$ROOT_DIR/legacy/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
+LEGACY_HELPER="$ROOT_DIR/legacy/boot-bitch-helper.sh"
 GUI_SRC="$ROOT_DIR/src/MainWindow.cpp"
 
 [[ -f "$HELPER" ]] || { echo 'FAIL: modern helper is missing' >&2; exit 1; }

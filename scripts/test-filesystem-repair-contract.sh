@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 UI_SOURCE="$ROOT_DIR/src/MainWindow.cpp"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
@@ -755,7 +755,7 @@ eval "\${HARNESS_CODE:?missing HARNESS_CODE}"
 HARNESS
 
 run_harness() {
-    PATH="$sandbox/mockbin:$PATH" HARNESS_CODE="$1" BOOT_REPAIR_STATE_ROOT="$sandbox/state" \
+    PATH="$sandbox/mockbin:$PATH" HARNESS_CODE="$1" BOOT_BITCH_STATE_ROOT="$sandbox/state" \
         bash --noprofile --norc "$sandbox/harness.sh"
 }
 
@@ -1447,7 +1447,7 @@ TARGET_OS_ID=arch
 TARGET_OS_LIKE=""
 TARGET_DISTRO_FAMILY=arch
 TARGET_ROOT=""
-BOOT_REPAIR_FS_TOOL_TIMEOUT=123
+BOOT_BITCH_FS_TOOL_TIMEOUT=123
 fs_inspect /dev/test-disk /dev/test-root
 ' 2>&1 || true)"
 grep -Fq 'TIMEOUT[--foreground 123]' "$FAKE_TOOL_LOG" \

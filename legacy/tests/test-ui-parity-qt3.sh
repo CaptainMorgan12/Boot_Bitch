@@ -64,7 +64,7 @@
 #   - the exact data-row content matches the golden row list (readable
 #     failure, the row set itself is locked);
 #   - BOTH GUIs reference the file (the modern src/MainWindow.cpp +
-#     resources/boot-repair.qrc, the legacy GUI sources +
+#     resources/boot-bitch.qrc, the legacy GUI sources +
 #     scripts/package-legacy.sh), and the removed hardcoded tables cannot
 #     come back (the modern repairDiagnosticSectionSpecs removal lock).
 # Round 32 addition: the TOOLTIP-PARITY block locks the legacy per-repair
@@ -105,7 +105,7 @@ command -v grep >/dev/null 2>&1 || fail "grep is required"
 SOURCES="$(printf '%s\n' "$GUI_DIR"/*.cpp "$GUI_DIR"/*.h | LC_ALL=C sort)"
 [[ -n "$SOURCES" ]] || fail "no legacy GUI sources under $GUI_DIR"
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-qt3-contract.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-qt3-contract.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # --- strip comments, keep "file:line:" prefixes for reporting -----------------
@@ -224,7 +224,7 @@ fi
 
 # ===== map-parity block (round 30): the shared repair->diagnostic map ========
 # The single data file both GUIs consume (the modern GUI embeds it through
-# resources/boot-repair.qrc; the legacy GUI loads the staged package copy).
+# resources/boot-bitch.qrc; the legacy GUI loads the staged package copy).
 # A one-sided edit anywhere fails here.
 MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
 [[ -f "$MAP_FILE" ]] || fail "canonical map missing: data/repair-diagnostic-map.tsv"
@@ -232,14 +232,14 @@ MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
 # (1) Golden full-file checksum: a map edit must deliberately re-baseline this
 # contract (the "checksum/content assertion" lock).
 MAP_SHA="$(sha256sum "$MAP_FILE" | awk '{print $1}')"
-[[ "$MAP_SHA" == '423e4039f87cc15fe443d567b3afd3e8b0998de0ecedfcd26c174dce1df89e16' ]] \
+[[ "$MAP_SHA" == '74c4c8fec4428e716b99da56a1c263995d71d95f35528471512347ca74e7e834' ]] \
     || fail "repair-diagnostic-map.tsv sha256 $MAP_SHA != the golden checksum (a map change must update the parity contract)"
 
 # (2) Golden data-row content: every row key in the locked order (the row
 # content is asserted row-by-row below so a drift names the exact row).
 MAP_ROWS="$(grep -vE '^#|^[[:space:]]*$' "$MAP_FILE")"
 [[ -n "$MAP_ROWS" ]] || fail "repair-diagnostic-map.tsv carries no data rows"
-GOLDEN_ROW_COUNT=74
+GOLDEN_ROW_COUNT=77
 [[ "$(printf '%s\n' "$MAP_ROWS" | wc -l)" -eq "$GOLDEN_ROW_COUNT" ]] \
     || fail "repair-diagnostic-map.tsv row count changed (expected $GOLDEN_ROW_COUNT)"
 
@@ -262,6 +262,7 @@ enable-host-snapshot-config	-	package backend usage btrfs capabilities
 dkms	kernel	kernel
 display	display	display
 display-manager	display	display
+display-switch	display	package backend usage capabilities display
 gpu	gpu kernel	gpu display kernel boot boot-evidence grub uki package usage capabilities
 gpu:*	gpu kernel	all
 input-devices	input kernel	input kernel
@@ -310,6 +311,8 @@ shell:no-op	-	-
 snapshot-load	-	-
 snapshot-inspect	-	-
 snapshot-rollback	-	all
+snapshot-delete	-	btrfs usage capabilities
+snapshots-create	-	btrfs usage capabilities
 file-copy	-	all
 plan	union	union
 cancelled-repair-with-change	-	union
@@ -330,8 +333,8 @@ fi
 # in the Qt3 sources and the package stages a copy.
 grep -q 'repair-diagnostic-map.tsv' "$ROOT_DIR/src/MainWindow.cpp" \
     || fail "src/MainWindow.cpp no longer references repair-diagnostic-map.tsv"
-grep -q 'repair-diagnostic-map.tsv' "$ROOT_DIR/resources/boot-repair.qrc" \
-    || fail "resources/boot-repair.qrc no longer embeds repair-diagnostic-map.tsv"
+grep -q 'repair-diagnostic-map.tsv' "$ROOT_DIR/resources/boot-bitch.qrc" \
+    || fail "resources/boot-bitch.qrc no longer embeds repair-diagnostic-map.tsv"
 grep -q 'repair-diagnostic-map.tsv' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp" \
     || fail "the legacy GUI no longer references repair-diagnostic-map.tsv"
 grep -q 'repair-diagnostic-map.tsv' "$ROOT_DIR/legacy/gui/src/EvidenceParser.cpp" \
@@ -534,23 +537,23 @@ check_cnote_pair()
     fi
     printf '    %s: identical\n' "$key"
 }
-check_cnote_pair 'validate' 'Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair'
-check_cnote_pair 'filesystem' "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors"
-check_cnote_pair 'dpkg' 'Completes interrupted dpkg package configuration in the selected repair system'
-check_cnote_pair 'fixbroken' 'Repairs broken package dependencies after the simulation-first safety preflight'
-check_cnote_pair 'aptupdate' 'Refreshes APT metadata without upgrading installed packages'
-check_cnote_pair 'upgrade' 'Simulates the APT transaction, then applies a safe upgrade'
-check_cnote_pair 'kernels' "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it"
-check_cnote_pair 'dkms' 'Rebuilds out-of-tree kernel modules; required only when the system uses a module build system'
+check_cnote_pair 'validate' 'Read-only preflight: mounts, filesystems, boot files'
+check_cnote_pair 'filesystem' "Checks root and /boot read-only; repairs only devices with errors"
+check_cnote_pair 'dpkg' 'Completes interrupted dpkg package configuration'
+check_cnote_pair 'fixbroken' 'Repairs broken package dependencies (simulation-first)'
+check_cnote_pair 'aptupdate' 'Refreshes APT metadata without upgrades'
+check_cnote_pair 'upgrade' 'Simulation-first safe package upgrade'
+check_cnote_pair 'kernels' "Kernel removal, cleanup and install via the interactive menu"
+check_cnote_pair 'dkms' 'Rebuilds out-of-tree kernel modules'
 check_cnote_pair 'initramfs' 'Rebuilds the initramfs images for the installed kernels'
-check_cnote_pair 'display' 'Restores the configured display manager and its startup link without starting the GUI'
-check_cnote_pair 'gpu' "Evidence-driven GPU driver repair through the helper's interactive menu"
-check_cnote_pair 'input-devices' "Evidence-driven keyboard, mouse and touchpad repair through the helper's interactive menu"
-check_cnote_pair 'network' "Evidence-driven network repair through the helper's interactive menu; live connectivity changes never touch the interface holding the default route"
+check_cnote_pair 'display' 'Restores the display manager and startup link without starting the GUI'
+check_cnote_pair 'gpu' "Evidence-driven GPU driver repair via the interactive menu"
+check_cnote_pair 'input-devices' "Repairs keyboard, mouse and touchpad through the interactive menu"
+check_cnote_pair 'network' "Network repair via the interactive menu; the default route stays untouched"
 check_cnote_pair 'efi' 'Repairs the EFI / UKI boot path for UEFI systems'
-check_cnote_pair 'grub' 'Regenerates the GRUB configuration (backed up, every entry preserved)'
-check_cnote_pair 'extlinux' 'Alternative bootloader; on this system extlinux is not part of the default boot path'
-check_cnote_pair 'bootstack' 'One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration'
+check_cnote_pair 'grub' 'Regenerates the GRUB configuration (backed up, all entries kept)'
+check_cnote_pair 'extlinux' "Alternative bootloader; not the standard"
+check_cnote_pair 'bootstack' 'One guarded pass: mapper/crypttab, initramfs and bootloader'
 check_cnote_pair 'lvm' 'Optional LVM storage-stack support'
 check_cnote_pair 'raid' 'Optional Linux MD RAID support'
 # The status vocabulary + the renamed Packages header (round 105 ITEM 2/4):
@@ -579,7 +582,7 @@ printf '  capability-note parity: PASS (%d shared notes + status vocabulary + Pa
 # not-available caveat ======================================================
 # The static per-row package names the Boot capabilities Packages column
 # renders come from ONE shared data file, consumed by BOTH GUIs (the modern
-# embeds it via resources/boot-repair.qrc; the legacy loads the staged copy).
+# embeds it via resources/boot-bitch.qrc; the legacy loads the staged copy).
 # The parity lock covers: (a) the canonical file (a golden checksum + the row
 # count), (b) the consumption references in both GUI sources + the packaging
 # staging, (c) the legacy capabilitySpecs package values == the table's
@@ -589,15 +592,15 @@ printf '  capability-packages parity:\n'
 CPKG_FILE="$ROOT_DIR/data/capability-packages.tsv"
 [[ -f "$CPKG_FILE" ]] || fail "canonical capability-packages table missing: data/capability-packages.tsv"
 CPKG_SHA="$(sha256sum "$CPKG_FILE" | awk '{print $1}')"
-[[ "$CPKG_SHA" == "9adc6dbb9bc6eb2694aad45edefa651e49871211ccb587ad58f2793573073359" ]] \
+[[ "$CPKG_SHA" == "f8bc43ade0216965de474e484de4255a7e51134cd21c1ded23c7c48d4cfca4d7" ]] \
     || fail "capability-packages.tsv sha256 $CPKG_SHA != the golden checksum (a table change must update the parity contract)"
 CPKG_ROWS="$(grep -vcE '^#|^$' "$CPKG_FILE")"
 [[ "$CPKG_ROWS" == 41 ]] \
     || fail "capability-packages.tsv row count changed (expected 41, got $CPKG_ROWS)"
 grep -q 'capability-packages.tsv' "$ROOT_DIR/src/CapabilityChecker.cpp" \
     || fail "the modern GUI no longer consumes capability-packages.tsv"
-grep -q 'capability-packages.tsv' "$ROOT_DIR/resources/boot-repair.qrc" \
-    || fail "resources/boot-repair.qrc no longer embeds capability-packages.tsv"
+grep -q 'capability-packages.tsv' "$ROOT_DIR/resources/boot-bitch.qrc" \
+    || fail "resources/boot-bitch.qrc no longer embeds capability-packages.tsv"
 grep -q 'capability-packages.tsv' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp" \
     || fail "the legacy GUI no longer consumes capability-packages.tsv"
 grep -q 'capability-packages.tsv' "$ROOT_DIR/scripts/package-legacy.sh" \

@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: target scope, snapshots, session logs and capability gating.
+// Part of the boot-bitch-ui-tests read-only regression suite: target scope, snapshots, session logs and capability gating.
 // The class declaration lives in MainWindowUiTest.h and the shared
 // fixtures/helpers in UiTestHelpers.h; this file holds the target scope, snapshots, session logs and capability gating test
 // implementations so the suite compiles as parallel translation units.
@@ -171,7 +171,7 @@ void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
                                       QFileDevice::ReadOwner | QFileDevice::WriteOwner
                                           | QFileDevice::ExeOwner));
     }
-    qputenv("BOOT_REPAIR_LSBLK", scriptPath.toUtf8());
+    qputenv("BOOT_BITCH_LSBLK", scriptPath.toUtf8());
 
     MainWindow window;
     window.show();
@@ -235,7 +235,7 @@ void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
     QVERIFY2(actionLog.contains(QStringLiteral("is waiting for the running")),
              "the unlock must defer behind the running host diagnostic instead of being superseded");
 
-    qunsetenv("BOOT_REPAIR_LSBLK");
+    qunsetenv("BOOT_BITCH_LSBLK");
 }
 
 void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
@@ -244,7 +244,7 @@ void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
     // first run (no persisted stage selections) so the no-evidence cases below
     // are deterministic: the Settings checkboxes stay disabled until evidence
     // exists, while the tool/plan/Run gates fail closed regardless.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -414,7 +414,7 @@ void MainWindowUiTest::missingCapabilityEvidenceFailsClosed()
     // presentation is deterministic: with no persisted selections and no
     // capability evidence the Settings checkboxes stay disabled while the
     // tool/plan/Run gates fail closed.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -570,7 +570,7 @@ void MainWindowUiTest::unavailablePlanStagesAreDisabledAndUnchecked()
 void MainWindowUiTest::settingsStageCheckboxesFirstRunStayDisabledUntilEvidence()
 {
     // Simulate the first run: no persisted stage selections.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -640,7 +640,7 @@ void MainWindowUiTest::settingsStageCheckboxesFirstRunStayDisabledUntilEvidence(
 // diagnostics ran again.
 void MainWindowUiTest::settingsStageSelectionSurvivesRelaunchWithoutCleanClose()
 {
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -699,7 +699,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterFullRepairDoesNotCrash()
     QVERIFY(logDir.isValid());
 
     // Simulate the first run: no persisted stage selections.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -742,7 +742,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterFullRepairDoesNotCrash()
                                       QFileDevice::ReadOwner | QFileDevice::WriteOwner
                                           | QFileDevice::ExeOwner));
     }
-    qputenv("BOOT_REPAIR_LSBLK", scriptPath.toUtf8());
+    qputenv("BOOT_BITCH_LSBLK", scriptPath.toUtf8());
 
     MainWindow window;
     window.show();
@@ -807,7 +807,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterFullRepairDoesNotCrash()
     window.exitHostMaintenanceMode();
     QVERIFY(!window.m_hostMaintenanceMode);
 
-    qunsetenv("BOOT_REPAIR_LSBLK");
+    qunsetenv("BOOT_BITCH_LSBLK");
 }
 
 // Regression for the resize + Host-Maintenance crash reported on TUXEDO OS:
@@ -831,7 +831,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     QVERIFY(logDir.isValid());
 
     // Simulate the first run: no persisted stage selections.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings persist(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
                             "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
                             "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
@@ -900,7 +900,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
                                       QFileDevice::ReadOwner | QFileDevice::WriteOwner
                                           | QFileDevice::ExeOwner));
     }
-    qputenv("BOOT_REPAIR_LSBLK", scriptPath.toUtf8());
+    qputenv("BOOT_BITCH_LSBLK", scriptPath.toUtf8());
 
     MainWindow window;
     window.show();
@@ -985,7 +985,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     window.exitHostMaintenanceMode();
     QVERIFY(!window.m_hostMaintenanceMode);
 
-    qunsetenv("BOOT_REPAIR_LSBLK");
+    qunsetenv("BOOT_BITCH_LSBLK");
 }
 
 // Regression: leaving Host Maintenance (or committing a repair target, which
@@ -1170,7 +1170,7 @@ void MainWindowUiTest::privilegedSessionRestagesTamperedHelperCopy()
     // regular file.
     QTemporaryDir helperHome;
     QVERIFY(helperHome.isValid());
-    const QString helperPath = helperHome.filePath(QStringLiteral("boot-repair-helper"));
+    const QString helperPath = helperHome.filePath(QStringLiteral("boot-bitch-helper"));
     {
         QFile source(helperPath);
         QVERIFY(source.open(QIODevice::WriteOnly));
@@ -1191,8 +1191,8 @@ void MainWindowUiTest::privilegedSessionRestagesTamperedHelperCopy()
         + QByteArrayLiteral(" rw - fuse.helper /dev/fuse rw,nosuid,nodev");
     const QList<QByteArray> mounts{fuseLine};
 
-    const QByteArray previousOverride = qgetenv("BOOT_REPAIR_HELPER_PATH");
-    qputenv("BOOT_REPAIR_HELPER_PATH", helperPath.toUtf8());
+    const QByteArray previousOverride = qgetenv("BOOT_BITCH_HELPER_PATH");
+    qputenv("BOOT_BITCH_HELPER_PATH", helperPath.toUtf8());
 
     MainWindow window;
 
@@ -1234,9 +1234,9 @@ void MainWindowUiTest::privilegedSessionRestagesTamperedHelperCopy()
     QVERIFY2(fourth != third, "a deleted staged copy must be re-staged, never reused");
 
     if (previousOverride.isNull()) {
-        qunsetenv("BOOT_REPAIR_HELPER_PATH");
+        qunsetenv("BOOT_BITCH_HELPER_PATH");
     } else {
-        qputenv("BOOT_REPAIR_HELPER_PATH", previousOverride);
+        qputenv("BOOT_BITCH_HELPER_PATH", previousOverride);
     }
 }
 

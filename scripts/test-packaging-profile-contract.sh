@@ -78,8 +78,8 @@ project_version="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*
     exit 1
 }
 grep -q "<release version=\"$project_version\" date=\"" \
-    "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
-metainfo="$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
+    "$ROOT_DIR/data/org.bootbitch.BootBitch.metainfo.xml"
+metainfo="$ROOT_DIR/data/org.bootbitch.BootBitch.metainfo.xml"
 grep -q '<screenshots>' "$metainfo"
 grep -q '<image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/' \
     "$metainfo"
@@ -142,11 +142,11 @@ while IFS= read -r url; do
     }
 done < <(sed -n 's#.*<image type="source">\([^<]*\)</image>.*#\1#p' "$metainfo")
 
-grep -q '<pkgname>boot-repair</pkgname>' "$metainfo"
-grep -q '<launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>' \
-    "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
-grep -q '^Icon=org.bootrepair.BootRepair$' "$ROOT_DIR/data/org.bootrepair.BootRepair.desktop"
-grep -q '^StartupWMClass=BootRepair$' "$ROOT_DIR/data/org.bootrepair.BootRepair.desktop"
+grep -q '<pkgname>boot-bitch</pkgname>' "$metainfo"
+grep -q '<launchable type="desktop-id">org.bootbitch.BootBitch.desktop</launchable>' \
+    "$ROOT_DIR/data/org.bootbitch.BootBitch.metainfo.xml"
+grep -q '^Icon=org.bootbitch.BootBitch$' "$ROOT_DIR/data/org.bootbitch.BootBitch.desktop"
+grep -q '^StartupWMClass=BootBitch$' "$ROOT_DIR/data/org.bootbitch.BootBitch.desktop"
 
 # Packaged desktop entries must hand software centers an installed local icon.
 # Discover 6.7.x on KIconThemes 6.28 cannot resolve stock theme icons, so the
@@ -173,12 +173,12 @@ fi
 rewrite_dir="$(mktemp -d)"
 trap 'rm -rf "$rewrite_dir"' EXIT
 mkdir -p "$rewrite_dir/usr/share/applications"
-cp "$ROOT_DIR/data/org.bootrepair.BootRepair.desktop" \
-    "$rewrite_dir/usr/share/applications/org.bootrepair.BootRepair.desktop"
+cp "$ROOT_DIR/data/org.bootbitch.BootBitch.desktop" \
+    "$rewrite_dir/usr/share/applications/org.bootbitch.BootBitch.desktop"
 cmake -DCPACK_TEMPORARY_DIRECTORY="$rewrite_dir" -DCPACK_PACKAGING_INSTALL_PREFIX=/usr \
     -P "$ROOT_DIR/scripts/cpack-rewrite-desktop-icon.cmake" >/dev/null
-grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootrepair.BootRepair.png$' \
-    "$rewrite_dir/usr/share/applications/org.bootrepair.BootRepair.desktop" || {
+grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootbitch.BootBitch.png$' \
+    "$rewrite_dir/usr/share/applications/org.bootbitch.BootBitch.desktop" || {
     echo 'FAIL: CPack desktop icon rewrite did not produce the installed icon path.' >&2
     exit 1
 }
@@ -225,7 +225,7 @@ grep -q 'options=(!debug)' "$ROOT_DIR/scripts/package-arch.sh"
 # hicolor icon cache and the desktop database on install and upgrade so
 # launchers resolve the packaged icon. makepkg only embeds the hooks when the
 # PKGBUILD declares install=.
-grep -q '^install=boot-repair.install$' "$ROOT_DIR/scripts/package-arch.sh"
+grep -q '^install=boot-bitch.install$' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q '^post_install()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q '^post_upgrade()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor' "$ROOT_DIR/scripts/package-arch.sh"
@@ -237,13 +237,13 @@ grep -q 'MTREE does not record root ownership' "$ROOT_DIR/scripts/package-arch.s
 grep -q -- '--source' "$ROOT_DIR/scripts/install.sh"
 grep -q 'pacman -U' "$ROOT_DIR/scripts/install.sh"
 grep -q 'zypper --non-interactive install' "$ROOT_DIR/scripts/install.sh"
-grep -q 'boot-repair-source-install-manifest.txt' "$ROOT_DIR/scripts/install.sh"
+grep -q 'boot-bitch-source-install-manifest.txt' "$ROOT_DIR/scripts/install.sh"
 grep -q 'INSTALL_MANIFEST' "$ROOT_DIR/scripts/uninstall.sh"
 
 # Exercise install.sh's no-package path without building or invoking a package
 # manager. This checks that an Arch/SUSE host receives the native-package and
 # source-install guidance instead of an unconditional apt-get failure.
-output="$(env BOOT_REPAIR_PACKAGE_FAMILY=arch PATH=/usr/bin:/bin "$ROOT_DIR/scripts/install.sh" 2>&1 || true)"
+output="$(env BOOT_BITCH_PACKAGE_FAMILY=arch PATH=/usr/bin:/bin "$ROOT_DIR/scripts/install.sh" 2>&1 || true)"
 grep -q 'package-arch.sh' <<<"$output"
 grep -q -- '--source' <<<"$output"
 

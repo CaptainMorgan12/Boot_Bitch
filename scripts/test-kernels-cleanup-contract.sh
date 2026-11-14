@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo 'FAIL: helper is not executable' >&2; exit 1; }
 bash -n "$HELPER"
@@ -1600,8 +1600,8 @@ fi
 # counter variable would not survive back here.
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 PROMPT_FILE="$sandbox/prompt.txt"
 PROMPT_COUNT_FILE="$sandbox/prompt-count.txt"
 : > "$PROMPT_FILE"
@@ -1636,8 +1636,8 @@ baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 LOOP_PROMPT_FILE="$sandbox/loop-prompt.txt"
 LOOP_PROMPT_COUNT_FILE="$sandbox/loop-prompt-count.txt"
 : > "$LOOP_PROMPT_FILE"
@@ -1705,7 +1705,7 @@ fi
 # must terminate by reporting the verified consistent state.
 grep -q '^Repair change status kernels:verify: unchanged|reason:kernel-verified$' <<<"$status_line" \
     || fail 'the kernel menu must report kernel-verified after the removal'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
 KERNEL_BASELINE_B64=""
 
@@ -2346,8 +2346,8 @@ COLLECT_CALLS=0
 kernel_inventory_collect() { COLLECT_CALLS=$((COLLECT_CALLS + 1)); }
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 NOCOLLECT_PROMPT_FILE="$sandbox/nocollect-prompt.txt"
 NOCOLLECT_PROMPT_COUNT_FILE="$sandbox/nocollect-prompt-count.txt"
 : > "$NOCOLLECT_PROMPT_FILE"
@@ -2373,7 +2373,7 @@ kernel_interactive_menu >"$sandbox/nocollect-status.txt" 2>&1 || true
     || fail 'the menu must re-prompt once after an invalid answer, then abort'
 grep -q '^Repair change status kernels: unchanged|reason:kernels-aborted$' "$sandbox/nocollect-status.txt" \
     || fail 'an aborted kernel menu must run no action and report kernels-aborted (unchanged)'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- apk kernel inventory: healthy Alpine -> no false orphans/missing --------
@@ -3456,8 +3456,8 @@ Depends: linux-image-6.5.0-10040-generic (= 6.5.0-10040.1)
 PACKAGES
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 SINGLE_MENU_FILE="$sandbox/single-kernel-menu.txt"
 : > "$SINGLE_MENU_FILE"
 helper_menu_prompt() { printf '%s\n' "$1" >> "$SINGLE_MENU_FILE"; HELPER_MENU_ANSWER="0"; return 0; }
@@ -3471,7 +3471,7 @@ grep -q 'Install repository-latest kernel' "$SINGLE_MENU_FILE" \
     || fail 'single-kernel target with a newer repo kernel must offer install-repo-latest'
 grep -q 'Remove newest kernel' "$SINGLE_MENU_FILE" \
     && fail 'single-kernel target must never offer "Remove newest kernel"'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- non-apt install-headers offer (cross-distribution audit) --------------
@@ -3510,8 +3510,8 @@ PACKAGES
 recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 SUPPRESS_MENU_FILE="$sandbox/suppress-repo-latest-menu.txt"
 : > "$SUPPRESS_MENU_FILE"
 helper_menu_prompt() { printf '%s\n' "$1" >> "$SUPPRESS_MENU_FILE"; HELPER_MENU_ANSWER="0"; return 0; }
@@ -3525,7 +3525,7 @@ kernel_repo_latest_installability() {
 kernel_interactive_menu >"$sandbox/suppress-repo-latest-status.txt" 2>&1 || true
 grep -q 'Install repository-latest kernel' "$SUPPRESS_MENU_FILE" \
     && fail 'uninstallable repo-latest image must suppress install-repo-latest (headers installable)'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- apt/dpkg: target with TWO kernels (older + newest) ----------------------
@@ -3538,8 +3538,8 @@ kernel_newest_is_removable \
     || fail 'apt two-kernel target must allow newest removal (an older kernel remains)'
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 TWO_MENU_FILE="$sandbox/two-kernel-menu.txt"
 : > "$TWO_MENU_FILE"
 # Select kernel 2 (the newest) in the kernel-selection prompt, then answer 0
@@ -3573,7 +3573,7 @@ grep -q 'running kernel:' "$TWO_MENU_FILE" \
     && fail 'a repair target menu must never report a running kernel line'
 grep -q 'pkgs=' "$TWO_MENU_FILE" \
     && fail 'the level-1 menu must not repeat the full pkgs= package lists'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- host mode: newest removable iff running != latest ------------------------
@@ -3741,8 +3741,8 @@ FAKE_RUNNING=7.1.9.1-tuxedo-amd64
 recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 REPROMPT_MENU_FILE="$sandbox/reprompt-menu.txt"
 REPROMPT_COUNT_FILE="$sandbox/reprompt-count.txt"
 : > "$REPROMPT_MENU_FILE"
@@ -3779,7 +3779,7 @@ grep -q 'remove newest' "$REPROMPT_MENU_FILE" \
     || fail 'the re-prompted kernel-selection menu must still annotate the newest kernel as removable'
 grep -q '^Repair change status kernels: unchanged|reason:kernels-aborted$' "$sandbox/reprompt-status.txt" \
     || fail 'an aborted kernel menu must report kernels-aborted (unchanged)'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- menu-size guard: level-1 menu stays concise with many kernels ----------
@@ -3795,8 +3795,8 @@ recollect_kernel_inventory
     || fail "five-kernel fixture must map 5 kernels, got: ${KERNEL_INVENTORY_VERSIONS[*]}"
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 MENU_SIZE_FILE="$sandbox/five-kernel-menu-size.txt"
 MENU_TEXT_FILE="$sandbox/five-kernel-menu.txt"
 MENU_PROMPT_COUNT_FILE="$sandbox/five-kernel-menu-count.txt"
@@ -3824,7 +3824,7 @@ for v in 6.0.0-1-generic 6.1.0-2-generic 6.2.0-3-generic 6.3.0-4-generic 6.4.0-5
     grep -q "$v" "$MENU_TEXT_FILE" \
         || fail "the 5-kernel menu must list $v"
 done
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
 
 # ---- metapackage-downgrade guard: removing newest cascades to metapackages ---

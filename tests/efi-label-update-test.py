@@ -32,7 +32,7 @@ def run_updater(efivarfs: Path, label: str, backup: Path) -> subprocess.Complete
     return subprocess.run(
         [
             "python3",
-            str(ROOT / "scripts/boot-repair-efi-label.py"),
+            str(ROOT / "scripts/boot-bitch-efi-label.py"),
             "--bootnum",
             "0008",
             "--partuuid",
@@ -50,7 +50,7 @@ def run_updater(efivarfs: Path, label: str, backup: Path) -> subprocess.Complete
     )
 
 
-with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+with tempfile.TemporaryDirectory(prefix="boot-bitch-efi-label-") as temp:
     efivarfs = Path(temp)
     variable = efivarfs / VARIABLE
     original = make_variable("UEFI OS")
@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
 # reports Boot000A/Boot000B and the helper passes those digits through to the
 # updater.  The four-hex-digit validation must accept A-F (case-insensitive)
 # and write the correct variable path.
-with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+with tempfile.TemporaryDirectory(prefix="boot-bitch-efi-label-") as temp:
     efivarfs = Path(temp)
     for bootnum, variable_name in (
         ("000A", "Boot000A-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
         result = subprocess.run(
             [
                 "python3",
-                str(ROOT / "scripts/boot-repair-efi-label.py"),
+                str(ROOT / "scripts/boot-bitch-efi-label.py"),
                 "--bootnum",
                 bootnum,
                 "--partuuid",
@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
 # variable simulates the write failure without root; skip when running as
 # root (root bypasses the permission bit).
 if os.geteuid() != 0:
-    with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+    with tempfile.TemporaryDirectory(prefix="boot-bitch-efi-label-") as temp:
         efivarfs = Path(temp)
         variable = efivarfs / VARIABLE
         original = make_variable("UEFI OS")

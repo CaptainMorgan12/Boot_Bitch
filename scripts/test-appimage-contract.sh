@@ -18,7 +18,7 @@
 #      musl/no-FUSE hosts, failing closed when no safe patchelf exists.
 # The static checks always run; the built artifact in build-release/ is
 # inspected only when it is fresh, i.e. when its bundled privileged helper is
-# byte-identical to the current scripts/boot-repair-helper.sh (readelf,
+# byte-identical to the current scripts/boot-bitch-helper.sh (readelf,
 # sha1sum and unsquashfs are optional tooling). A missing, stale or unreadable
 # AppImage SKIPs the artifact inspection with exit 0 instead of failing: a
 # helper edit made after the last AppImage build must not leave a stale
@@ -33,8 +33,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_APPIMAGE="$ROOT_DIR/scripts/build-appimage.sh"
 BUILD_SH="$ROOT_DIR/scripts/build.sh"
 MAINWINDOW="$ROOT_DIR/src/MainWindow.cpp"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
-UPDATE_INFORMATION='gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-repair_*_x86_64.AppImage.zsync'
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
+UPDATE_INFORMATION='gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-bitch_*_x86_64.AppImage.zsync'
 
 fail()
 {
@@ -84,7 +84,7 @@ require_fragment "$BUILD_APPIMAGE" 'iconengines/libqsvgicon.so' \
     "build-appimage.sh no longer asserts the bundled Qt SVG icon engine"
 require_fragment "$BUILD_APPIMAGE" 'DEPLOY_PLATFORM_THEMES="${DEPLOY_PLATFORM_THEMES:-1}"' \
     "build-appimage.sh no longer bundles the build host's Qt platform themes"
-require_fragment "$BUILD_APPIMAGE" 'usr/libexec/boot-repair/boot-repair-helper' \
+require_fragment "$BUILD_APPIMAGE" 'usr/libexec/boot-bitch/boot-bitch-helper' \
     "build-appimage.sh no longer asserts the bundled privileged helper"
 require_fragment "$BUILD_APPIMAGE" 'not a Debian-family host' \
     "build-appimage.sh no longer warns on a non-Debian AppImage build host"
@@ -279,7 +279,7 @@ plain_appdir="$probe_dir/plain-appdir"
 mkdir -p "$plain_appdir/usr/bin"
 plain_ok=0
 if command -v c++ >/dev/null 2>&1 \
-        && printf 'int main(){return 0;}\n' | c++ -x c++ -o "$plain_appdir/usr/bin/boot-repair" - 2>/dev/null; then
+        && printf 'int main(){return 0;}\n' | c++ -x c++ -o "$plain_appdir/usr/bin/boot-bitch" - 2>/dev/null; then
     plain_ok=1
 fi
 if (( plain_ok )); then
@@ -302,8 +302,8 @@ relr_appdir="$probe_dir/relr-appdir"
 mkdir -p "$relr_appdir/usr/bin"
 relr_ok=0
 if (( plain_ok )) \
-        && c++ -Wl,-z,pack-relative-relocs -x c++ -o "$relr_appdir/usr/bin/boot-repair" - <<<'int main(){return 0;}' 2>/dev/null \
-        && has_relr_section "$relr_appdir/usr/bin/boot-repair"; then
+        && c++ -Wl,-z,pack-relative-relocs -x c++ -o "$relr_appdir/usr/bin/boot-bitch" - <<<'int main(){return 0;}' 2>/dev/null \
+        && has_relr_section "$relr_appdir/usr/bin/boot-bitch"; then
     relr_ok=1
 fi
 if (( relr_ok )); then
@@ -347,14 +347,14 @@ fi
 # ---------------------------------------------------------------------------
 # Artifact contract: inspect the built AppImage only when it is present and
 # fresh (its bundled privileged helper is byte-identical to the current
-# scripts/boot-repair-helper.sh); a missing, stale or unreadable artifact
+# scripts/boot-bitch-helper.sh); a missing, stale or unreadable artifact
 # skips the inspection with exit 0.
 # ---------------------------------------------------------------------------
 VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
     "$ROOT_DIR/CMakeLists.txt" | head -1)"
 [[ -n "$VERSION" ]] || fail "cannot read the project version from CMakeLists.txt"
 
-IMAGE="$ROOT_DIR/build-release/boot-repair_${VERSION}_x86_64.AppImage"
+IMAGE="$ROOT_DIR/build-release/boot-bitch_${VERSION}_x86_64.AppImage"
 if [[ ! -f "$IMAGE" ]]; then
     echo "SKIP: no built AppImage; artifact checks skipped (build with scripts/build.sh --with-appimage to enable them)"
     exit 0
@@ -387,7 +387,7 @@ if command -v unsquashfs >/dev/null 2>&1; then
     if [[ -n "$offset" ]]; then
         bundled_helper_file="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-bundled-helper.XXXXXX")"
         if unsquashfs -o "$offset" -cat "$IMAGE" \
-                usr/libexec/boot-repair/boot-repair-helper >"$bundled_helper_file" 2>/dev/null; then
+                usr/libexec/boot-bitch/boot-bitch-helper >"$bundled_helper_file" 2>/dev/null; then
             bundled_helper_sha="$(sha256sum -- "$bundled_helper_file")"
             bundled_helper_sha="${bundled_helper_sha%% *}"
         fi
@@ -395,7 +395,7 @@ if command -v unsquashfs >/dev/null 2>&1; then
     fi
 fi
 if [[ -n "$bundled_helper_sha" && "$bundled_helper_sha" == "$source_helper_sha" ]]; then
-    note "bundled helper matches scripts/boot-repair-helper.sh (fresh artifact)"
+    note "bundled helper matches scripts/boot-bitch-helper.sh (fresh artifact)"
 elif [[ -n "$bundled_helper_sha" ]]; then
     echo "SKIP: built AppImage is stale (bundled helper ${bundled_helper_sha:0:12} vs source ${source_helper_sha:0:12}); artifact checks skipped until the AppImage is rebuilt with scripts/build.sh --with-appimage"
     exit 0
@@ -454,41 +454,41 @@ if command -v unsquashfs >/dev/null 2>&1; then
 
     listing="$(unsquashfs -o "$offset" -ll "$IMAGE" 2>/dev/null)" \
         || fail "cannot list $(basename -- "$IMAGE")"
-    grep -qF 'usr/libexec/boot-repair/boot-repair-helper' <<<"$listing" \
-        || fail "$(basename -- "$IMAGE") does not bundle usr/libexec/boot-repair/boot-repair-helper"
-    grep -qE '^-rwx.*usr/libexec/boot-repair/boot-repair-helper$' <<<"$listing" \
+    grep -qF 'usr/libexec/boot-bitch/boot-bitch-helper' <<<"$listing" \
+        || fail "$(basename -- "$IMAGE") does not bundle usr/libexec/boot-bitch/boot-bitch-helper"
+    grep -qE '^-rwx.*usr/libexec/boot-bitch/boot-bitch-helper$' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") bundles a non-executable privileged helper"
     grep -qF 'usr/plugins/iconengines/libqsvgicon.so' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the Qt SVG icon engine plugin"
     grep -qF 'usr/plugins/imageformats/libqsvg.so' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the Qt SVG image-format plugin"
-    grep -qF 'usr/share/applications/org.bootrepair.BootRepair.desktop' <<<"$listing" \
+    grep -qF 'usr/share/applications/org.bootbitch.BootBitch.desktop' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the desktop entry"
-    grep -qF 'usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml' <<<"$listing" \
+    grep -qF 'usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the AppStream metadata"
-    grep -qF 'usr/share/icons/hicolor/256x256/apps/org.bootrepair.BootRepair.png' <<<"$listing" \
+    grep -qF 'usr/share/icons/hicolor/256x256/apps/org.bootbitch.BootBitch.png' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the application icon"
-    grep -qF 'org.bootrepair.BootRepair.desktop' <<<"$listing" \
+    grep -qF 'org.bootbitch.BootBitch.desktop' <<<"$listing" \
         || fail "$(basename -- "$IMAGE") does not bundle the top-level desktop entry"
     note "squashfs: helper, Qt SVG plugins and desktop metadata present"
 
     if command -v sha256sum >/dev/null 2>&1; then
         bundled_helper="$(unsquashfs -o "$offset" -cat "$IMAGE" \
-            usr/libexec/boot-repair/boot-repair-helper 2>/dev/null | sha256sum)"
+            usr/libexec/boot-bitch/boot-bitch-helper 2>/dev/null | sha256sum)"
         bundled_helper="${bundled_helper%% *}"
         source_helper="$(sha256sum -- "$HELPER")"
         source_helper="${source_helper%% *}"
         [[ "$bundled_helper" == "$source_helper" ]] \
             || fail "$(basename -- "$IMAGE") bundles a stale privileged helper (sha256 $bundled_helper != $source_helper)"
-        note "bundled helper matches scripts/boot-repair-helper.sh"
+        note "bundled helper matches scripts/boot-bitch-helper.sh"
     fi
 
     if command -v strings >/dev/null 2>&1; then
         extracted="$(mktemp)"
         extracted_strings="$extracted.strings"
         trap 'cleanup_probe_dir; rm -f -- "$extracted" "$extracted_strings"' EXIT
-        unsquashfs -o "$offset" -cat "$IMAGE" usr/bin/boot-repair > "$extracted" 2>/dev/null \
-            || fail "cannot extract usr/bin/boot-repair from $(basename -- "$IMAGE")"
+        unsquashfs -o "$offset" -cat "$IMAGE" usr/bin/boot-bitch > "$extracted" 2>/dev/null \
+            || fail "cannot extract usr/bin/boot-bitch from $(basename -- "$IMAGE")"
         # QStringLiteral stores UTF-16, so scan the binary as little-endian
         # wide strings once; a pipeline into grep -q would SIGPIPE strings
         # under pipefail even on a match.

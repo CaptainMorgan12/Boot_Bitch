@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.30 — maintenance release
+# Boot Bitch 0.2.31
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.30 includes the Host/Target repair-environment isolation hardening (target-scope dnf5/dracut identity pins, the fresh-procfs guarantee and the scope-labeled identity reads), the Snapshots tab visible whenever a snapshot inventory exists, in-run confirmations for package-mutating repair stages, graphical-login repair on every service manager including the black-screen-after-unlock class, the splitter and plan-frame layout alignment, cancel/cache/shell and session-log fixes in both editions, a security hardening pass over the backend and both GUIs, the EFI boot entries manager, the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. The snapshot support is now complete end to end: one guarded Install/Enable action creates the Snapper root configuration and the first snapshot, the transactional rollback accepts single, pre and post snapshots, the Snapshots tab gains a manual Create Snapshot action and an All/Single/Pre/Post filter, per-device firmware evidence carries versions, a clean repair's completion schedules exactly the affected diagnostic regeneration, and the diagnostics/repair cycle received a performance pass. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy tools cover deeper problems.
+Boot Bitch is a native Qt 6 Linux recovery utility. You select the running host or a repairable target Linux system, and the tool detects it, collects boot-relevant diagnostics (booting, reaching the graphical login, and keyboard and network availability at login) and edits selected target-system files directly; repairs that stack, including the interactive kernel, graphics-driver, graphical-login, input-device and network repairs, and builds the graphical/input/network modules into the kernel so they are available early in boot without kernel auto-detection; manages Btrfs snapshots (view, select, create, delete, and safely roll back to a prior functioning state); copies files between host and target; and runs chroot/shell commands for deeper problems. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy tools cover deeper problems.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -24,17 +24,19 @@ Download the artifact for your system from the GitHub release page and verify it
 
 | System | Artifact | Install |
 | --- | --- | --- |
-| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.30_amd64.deb` | `sudo apt install ./boot-repair_0.2.30_amd64.deb` |
-| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.30-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.30-etch1_amd64.deb` |
-| Arch | `boot-repair-0.2.30-x86_64.pkg.tar.zst` | `sudo pacman -U boot-repair-0.2.30-x86_64.pkg.tar.zst` |
-| Fedora/RHEL | `boot-repair-0.2.30.x86_64.rpm` | `sudo dnf install ./boot-repair-0.2.30.x86_64.rpm` |
-| openSUSE/SUSE | `boot-repair-0.2.30.x86_64.rpm` | `sudo zypper install ./boot-repair-0.2.30.x86_64.rpm` |
-| Alpine | `boot-repair-0.2.30.apk` | `sudo apk add --allow-untrusted ./boot-repair-0.2.30.apk` |
-| Any Linux desktop | `boot-repair_0.2.30_x86_64.AppImage` | `chmod +x boot-repair_0.2.30_x86_64.AppImage && ./boot-repair_0.2.30_x86_64.AppImage` |
+| Debian/Ubuntu/TUXEDO | `boot-bitch_0.2.31_amd64.deb` | `sudo apt install ./boot-bitch_0.2.31_amd64.deb` |
+| Debian Etch (legacy, Qt 3) | `boot-bitch-legacy_0.2.31-etch1_amd64.deb` | `sudo dpkg -i ./boot-bitch-legacy_0.2.31-etch1_amd64.deb` |
+| Arch | `boot-bitch-0.2.31-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.31-x86_64.pkg.tar.zst` |
+| Fedora/RHEL | `boot-bitch-0.2.31.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.31.x86_64.rpm` |
+| openSUSE/SUSE | `boot-bitch-0.2.31.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.31.x86_64.rpm` |
+| Alpine | `boot-bitch-0.2.31.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.31.apk` |
+| Any Linux desktop | `boot-bitch_0.2.31_x86_64.AppImage` | `chmod +x boot-bitch_0.2.31_x86_64.AppImage && ./boot-bitch_0.2.31_x86_64.AppImage` |
 
-The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-repair/boot-repair-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
+The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-bitch/boot-bitch-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
 
-Launch the installed command as `boot-repair`. On GNOME, install the optional `qt6-gtk-platformtheme` and `qt6-xdgdesktopportal-platformtheme` packages for GTK-like controls and native file dialogs; KDE uses its normal Qt platform theme. The AppImage uses the same privilege boundary and is intended for portable use, not as a replacement for the native package; its file dialogs use Qt's own implementation, while installed builds keep their desktop's native dialogs.
+Verify your download with `sha256sum -c SHA256SUMS` in the directory containing the downloaded artifact and the `SHA256SUMS` file from the same release.
+
+Launch the installed command as `boot-bitch`. On GNOME, install the optional `qt6-gtk-platformtheme` and `qt6-xdgdesktopportal-platformtheme` packages for GTK-like controls and native file dialogs; KDE uses its normal Qt platform theme. The AppImage uses the same privilege boundary and is intended for portable use, not as a replacement for the native package; its file dialogs use Qt's own implementation, while installed builds keep their desktop's native dialogs.
 
 `./scripts/install.sh` detects the host package family and installs a locally built `.deb`, RPM, Arch package or APK after an explicit `INSTALL` confirmation. `./scripts/install.sh --source` installs a staged CMake build under `/usr/local` (or another absolute `PREFIX`), and `./scripts/uninstall.sh` removes a detected native package or the source install after an explicit `UNINSTALL` confirmation.
 
@@ -75,12 +77,16 @@ The standard manual build for your own system:
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/boot-repair
+./build/boot-bitch
 ```
 
 A source install uses `-DCMAKE_INSTALL_PREFIX=/usr/local` (or another prefix) followed by `sudo cmake --install build`.
 
 `./scripts/build.sh` does the Release build plus the Debian-family `.deb` (on Debian-family hosts) and the AppImage (when linuxdeploy/appimagetool are available); on OTHER distributions run the ONE package script that matches your system — `package-arch.sh` (Arch), `package-rpm.sh` (Fedora/RHEL), `package-alpine.sh` (Alpine) — each building a single native package without installing it, using the distribution's own packaging tools (dpkg-dev, rpmbuild, makepkg, abuild). Nothing is installed unless you run `install.sh`.
+
+### Upgrading an existing source build
+
+An existing source checkout upgrades between releases with the source-change patch attached to the new release (`source-changes-since-<previous>.patch`): download it from the GitHub release page, apply it from the source root (`git apply source-changes-since-0.2.30.patch`, or `patch -p1 < source-changes-since-0.2.30.patch` outside Git), then install the build dependencies (`./scripts/setup-dev-deps.sh`), rebuild and install as above — the CMake/Ninja release build followed by `sudo cmake --install build`, or `./scripts/build.sh` with the matching `install.sh`.
 
 ## Safety model
 
@@ -94,11 +100,11 @@ A source install uses `-DCMAKE_INSTALL_PREFIX=/usr/local` (or another prefix) fo
 - Missing optional runtime tools disable only the related feature; host tools are never installed silently.
 - The AppImage self-update channel is transport-authenticated over HTTPS but not content-signed; verify the release `SHA256SUMS` before applying a fetched update.
 
-Still intentionally constrained in 0.2.30:
+Still intentionally constrained in 0.2.31:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
-- transactional rollback is limited to Btrfs layouts whose installed root is a detectable top-level root subvolume (`@` or the name-agnostic detection) with Snapper-style root snapshots; single, pre and post snapshots are accepted rollback targets. Running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin, no separate `/boot` and no other nested `@` child subvolumes, and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed. The manual Create Snapshot action requires the same Snapper root configuration and `.snapshots` store;
-- unsupported package-manager operations on Arch (such as standalone APT/dpkg stages), unknown boot layouts, and package transactions whose preflight reports repository errors, removals or unresolved dependencies; these remain hard-gated.
+- transactional rollback is limited to Btrfs layouts whose installed root is a detectable top-level root subvolume (`@` or the name-agnostic detection) with Snapper-style root snapshots; single, pre and post snapshots are accepted rollback targets. Running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin and no other nested `@` child subvolumes, supports a separate `/boot` through a bounded file-level capture (refused only when the capture is infeasible), and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed. The running-host rollback keeps `/home` retained by design, while the repair-target rollback asks whether the separate `/home` subvolume rolls back together with the root (the opt-in full restore); the snapshot list survives a successful rollback, the preserved undo points resolve by name alongside numeric ids and appear in the list, and the staged rollback's source snapshot cannot be deleted. The manual Create Snapshot action requires the same Snapper root configuration and `.snapshots` store;
+- unsupported package-manager operations on Arch (such as standalone APT/dpkg stages), unknown boot layouts, and package transactions whose preflight reports repository errors, removals or unresolved dependencies; these remain hard-gated. User-supplied local-package installs are supported on every package family through the guarded local-file verb (`pacman -U` on Arch, `apk add <file>` on Alpine, and the dpkg/apt and rpm/dnf5 equivalents).
 
 ## Using Boot Bitch
 
@@ -150,6 +156,49 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 ### Settings
 
 ![Settings for Full Repair stages, diagnostics refresh and safety controls](docs/screenshots/9.png)
+
+## 0.2.31 refinements
+
+The changes in this release are listed below. See the [0.2.31 release notes](docs/release-notes-0.2.31.md).
+
+- Renamed: the package, command, desktop entry, helper path and settings
+  namespace are now `boot-bitch` (`boot-bitch-legacy` for the Debian Etch
+  edition; catalogs are `boot-bitch_*.qm`). The rename ends the collision
+  with the unrelated upstream `boot-repair` package whose higher version
+  once replaced this application during an upgrade; the new packages are
+  fully independent of the old name and the transition is manual.
+- Snapshots: a successful target rollback keeps the list and shows the
+  staged banner (no reboot buttons); preserved undo-point names resolve
+  alongside numeric ids and appear in the list; the running-host rollback
+  gains a Cancel that un-stages it, snapshot deletion lands with a guard on
+  the staged source, and a repeated rollback click on the same staged
+  snapshot reports a no-op.
+- Interactive: the graphical-login manager repair becomes a walk-through —
+  restore the vendor default (derived from package evidence) or switch to
+  another manager behind a from→to confirmation — and the kernel, graphics,
+  input and network menus regenerate exactly the affected diagnostic
+  evidence at completion. User-supplied local-package installs cover Arch
+  (`pacman -U`) and Alpine (`apk add <file>`) through the same guarded flow
+  as the Debian and RPM verbs.
+- Fixes: the Alpine mkinitfs inclusion evidence parse and the modules-file
+  merge; the driver-conflict comma artifact and the honest
+  lspci-without-libkmod note; the zpool capture-first hardening; the target
+  rollback cancel resolves the root's undo point and mounts the promoted
+  root before firmware isolation, undoing the /home swap fail-closed; the
+  TUXEDO UKI post-install hook failure class is tolerated honestly.
+- Interface: the Systems drive list hugs its content with a three-row
+  floor; the Logs reflow, elided title and floors; the Diagnostics results
+  floor and scroll-to-bottom fix; the Snapshots finalize and the Settings
+  capability-column tuning; the EFI boot-entries growth cap; the host
+  rollback banner stays a few lines tall at the minimum window size; one
+  reboot confirmation after a running-host rollback.
+- Translations and documentation: all 23 shipped catalogs refresh to zero
+  unfinished strings; the GitHub issue-reporting form and the CONTRIBUTING
+  guidance landed; the README opening paragraph is now a stable
+  release-independent description, the install section documents the
+  SHA256SUMS verification and the source-change patch upgrade, and the
+  exact-23 pipeline is documented; the host rollback keeps a Timeshift
+  store untouched.
 
 ## 0.2.30 refinements
 

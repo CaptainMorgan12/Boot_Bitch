@@ -3,7 +3,7 @@
 #
 #   legacy/port.sh [--check] [--quiet]
 #
-# Generates legacy/boot-repair-helper.sh from scripts/boot-repair-helper.sh by
+# Generates legacy/boot-bitch-helper.sh from scripts/boot-bitch-helper.sh by
 # applying the reviewed transformation set below, embedding legacy/compat.sh as
 # a prelude and appending legacy/overlay.sh.  --check regenerates to a
 # temporary file, lists every transformation with its count and fails when the
@@ -25,10 +25,10 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname -- "$SCRIPT_DIR")"
-MODERN="$ROOT_DIR/scripts/boot-repair-helper.sh"
+MODERN="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 COMPAT="$SCRIPT_DIR/compat.sh"
 OVERLAY="$SCRIPT_DIR/overlay.sh"
-OUTPUT="$SCRIPT_DIR/boot-repair-helper.sh"
+OUTPUT="$SCRIPT_DIR/boot-bitch-helper.sh"
 
 CHECK=0
 QUIET=0
@@ -39,7 +39,7 @@ usage()
 Usage: legacy/port.sh [--check] [--quiet]
 
   --check   regenerate to a temporary file, print the transformation summary
-            and fail when legacy/boot-repair-helper.sh is not byte-identical
+            and fail when legacy/boot-bitch-helper.sh is not byte-identical
   --quiet   only print the final result line
   -h, --help
 USAGE
@@ -551,6 +551,14 @@ transform_regex_compat()
         '    __legacy_re='"'"'([0-9]+\.[0-9]+\.[0-9]+.*)'"'"'
     if [[ "$rest" =~ $__legacy_re ]]; then'
 
+    # Round 208 (the postinst-hook class): the initramfs post-hook failure
+    # matcher's run-parts regex (the parenthesised path/wording alternations
+    # are the unhoisted `(`/`|` class bash 3.1 cannot parse inline).
+    regex_replacement \
+        '        if [[ "$line" =~ ^run-parts:[[:space:]]+(/etc/(initramfs/post-update\.d|kernel/postinst\.d|kernel/postrm\.d)/?[^[:space:]]+)[[:space:]]+exited[[:space:]]+with[[:space:]]+(return[[:space:]]+code|status)[[:space:]]+([0-9]+)[[:space:]]*$ ]]; then' \
+        '        __legacy_re='"'"'^run-parts:[[:space:]]+(/etc/(initramfs/post-update\.d|kernel/postinst\.d|kernel/postrm\.d)/?[^[:space:]]+)[[:space:]]+exited[[:space:]]+with[[:space:]]+(return[[:space:]]+code|status)[[:space:]]+([0-9]+)[[:space:]]*$'"'"'
+        if [[ "$line" =~ $__legacy_re ]]; then'
+
     (( count >= 0 )) || return 1
     note "=~ regex literal hoists" "$count"
 }
@@ -1025,9 +1033,9 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 92
+    check_count 'legacy_readarray' 'legacy_readarray' 93
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 130
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 147
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 18
     check_count 'legacy_date_iso' 'legacy_date_iso' 5
     check_count 'legacy_lc' 'legacy_lc ' 77
@@ -1299,7 +1307,7 @@ main()
 
     if (( CHECK )); then
         printf 'port-helper-legacy: checking %s\n' "${OUTPUT#"$ROOT_DIR"/}"
-        target="$(mktemp "${TMPDIR:-/tmp}/boot-repair-helper-legacy.XXXXXX")" || exit 1
+        target="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-helper-legacy.XXXXXX")" || exit 1
         if ! generate "$target"; then
             rm -f -- "$target"
             printf 'port-helper-legacy: GENERATION FAILED\n' >&2

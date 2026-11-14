@@ -2,9 +2,9 @@
 #
 # THE SINGLE SOURCE OF TRUTH, consumed by BOTH GUIs:
 #   - the modern Qt6 GUI (src/MainWindow.cpp; embedded at build time via
-#     resources/boot-repair.qrc as ":/data/repair-diagnostic-map.tsv"),
+#     resources/boot-bitch.qrc as ":/data/repair-diagnostic-map.tsv"),
 #   - the legacy Qt3 GUI (legacy/gui/src/EvidenceParser.cpp; staged into the
-#     Etch package at /usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
+#     Etch package at /usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv
 #     by scripts/package-legacy.sh).
 # This file serializes the round-19/20 invalidation-map table
 # (Development/docs/cancel-and-cache-behavior.md section 2.4.4). A map change
@@ -98,6 +98,16 @@ enable-host-snapshot-config	-	package backend usage btrfs capabilities
 dkms	kernel	kernel
 display	display	display
 display-manager	display	display
+# Round 195 (task 2): the walk-through's from→to SWITCH — the explicit
+# map-derived scoped set.  The switch may install the target manager (a
+# package transaction: the disk-usage evidence goes stale), disables/enables
+# units and repoints display-manager.service, so the set is
+# `package backend usage capabilities display` (usage included, the
+# round-18/19 parity rule for every package-mutating row).  The helper
+# publishes `Repair change status display-switch: changed` pre-apply
+# (repair_change_status_force) so a cancel/failure mid-dance carries the
+# evidence; a switch with no install and a no-change refusal never emits it.
+display-switch	display	package backend usage capabilities display
 # The GPU driver swap changes packages, modules, the initramfs and the
 # bootloader configuration (round 19: package/usage/capabilities included).
 gpu	gpu kernel	gpu display kernel boot boot-evidence grub uki package usage capabilities
@@ -207,6 +217,27 @@ shell:no-op	-	-
 snapshot-load	-	-
 snapshot-inspect	-	-
 snapshot-rollback	-	all
+# Round 220 (ITEM 2): the snapshot-delete batch (single + multi-select).  A
+# deletion removes Btrfs subvolumes from the snapshot store (the btrfs
+# section's subvolume list changes), frees disk space (the usage evidence)
+# and can flip the capability evidence (the free-space gate) — the derived
+# scoped set, the round-187 enable-row shape minus the package members (no
+# package transaction runs).  The snapshot INVENTORY itself is re-loaded by
+# the GUI through the round-135 X3 pattern, never a diagnostic section; the
+# "snapshot evidence" the delete consumes is the live inventory plus the
+# cached capability line (the same `-` baseline the rollback row declares).
+snapshot-delete	-	btrfs usage capabilities
+# Round 225 (the plan-adjacent-findings C1): the snapshot-create parity
+# twin of the round-220 delete row.  A creation adds a Btrfs subvolume to
+# the snapshot store (the btrfs section's subvolume list changes), consumes
+# disk space (the usage evidence) and can flip the capability evidence (the
+# free-space gate) — the same derived scoped set as the delete row (no
+# package transaction runs, so no package members).  The snapshot INVENTORY
+# itself is re-loaded by the GUI through the round-135 X3 pattern, never a
+# diagnostic section; the create verb consumes the live inventory plus the
+# cached capability line (the same `-` baseline the delete/rollback rows
+# declare).
+snapshots-create	-	btrfs usage capabilities
 # File copy (both directions): the destination impact is unclassifiable.
 file-copy	-	all
 # The plan-union and cancelled-variant rules (code rules in both GUIs; the

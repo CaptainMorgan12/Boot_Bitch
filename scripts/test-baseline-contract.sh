@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo 'FAIL: helper is not executable' >&2; exit 1; }
 bash -n "$HELPER"
@@ -118,6 +118,18 @@ grep -q 'echo "Display manager decision:' "$HELPER" \
     || fail 'the display diagnostic must emit a Display manager decision: line'
 [[ "$(grep -c 'Display manager decision:' "$HELPER")" -ge 2 ]] \
     || fail 'both diagnostic_display and diagnostic_display_openrc must emit the decision line'
+# Round 195: the cached display section carries the switch-candidate machine
+# line on EVERY backend branch (the walk-through consumes it, never re-probing).
+[[ "$(grep -c 'Display manager switch candidates:' "$HELPER")" -ge 3 ]] \
+    || fail 'diagnostic_display (systemd + OpenRC + SysV) must emit the switch-candidate machine line'
+grep -q 'DISPLAY_MANAGER_CACHED_CANDIDATES' "$HELPER" \
+    || fail 'parse_cached_display_inventory must reconstruct the cached switch candidates'
+grep -q 'Available display managers in the repositories' "$HELPER" \
+    || fail 'the display diagnostic must emit the honest repository-availability list'
+grep -q '^display_manager_repo_availability()' "$HELPER" \
+    || fail 'the display diagnostic must probe repository availability per backend'
+grep -q '^diagnostic_display_manager_switch_candidates()' "$HELPER" \
+    || fail 'the candidate machine line must come from one diagnostic-time probe point'
 for fn in preflight_dkms preflight_initramfs adaptive_initramfs_repair; do
     body="$(grep -A40 "^${fn}()" "$HELPER")"
     grep -q 'repair_kernel_versions' <<<"$body" \
@@ -559,8 +571,8 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     }
     REPAIR_CHANGE_STATUS_COLLECT=0
     REPAIR_CHANGE_STATUS_COLLECTED=()
-    BOOT_REPAIR_SESSION_PROTOCOL=1
-    BOOT_REPAIR_SESSION_REQUEST=7
+    BOOT_BITCH_SESSION_PROTOCOL=1
+    BOOT_BITCH_SESSION_REQUEST=7
     NOC_PROMPT_FILE="$sandbox/gpu-nocollect-prompt.txt"
     NOC_PROMPT_COUNT_FILE="$sandbox/gpu-nocollect-prompt-count.txt"
     : > "$NOC_PROMPT_FILE"
@@ -586,7 +598,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
         || fail 'the GPU menu must re-prompt once after an invalid answer, then abort'
     grep -q 'driver mismatch: nvidia vs nouveau' "$NOC_PROMPT_FILE" \
         || fail 'the GPU menu summary must name the mismatch from the baseline'
-    BOOT_REPAIR_SESSION_PROTOCOL=0
+    BOOT_BITCH_SESSION_PROTOCOL=0
     GPU_BASELINE_B64=""
 
     # ---- interactive menu: re-collects fresh after a dispatched sub-action --
@@ -614,8 +626,8 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     repair_gpu_driver_swap() { :; }
     REPAIR_CHANGE_STATUS_COLLECT=0
     REPAIR_CHANGE_STATUS_COLLECTED=()
-    BOOT_REPAIR_SESSION_PROTOCOL=1
-    BOOT_REPAIR_SESSION_REQUEST=7
+    BOOT_BITCH_SESSION_PROTOCOL=1
+    BOOT_BITCH_SESSION_REQUEST=7
     SWAP_PROMPT_FILE="$sandbox/gpu-swap-prompt.txt"
     SWAP_PROMPT_COUNT_FILE="$sandbox/gpu-swap-prompt-count.txt"
     : > "$SWAP_PROMPT_FILE"
@@ -626,19 +638,25 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
         n=$((n + 1))
         printf '%s' "$n" > "$SWAP_PROMPT_COUNT_FILE"
         printf '%s\n' "$1" >> "$SWAP_PROMPT_FILE"
-        HELPER_MENU_ANSWER="1"
+        if (( n >= 2 )); then
+            HELPER_MENU_ANSWER="0"   # abort on the post-swap re-display (round 212)
+        else
+            HELPER_MENU_ANSWER="1"
+        fi
         return 0
     }
     status_line="$(gpu_interactive_menu 2>/dev/null || true)"
-    [[ "$(cat "$SWAP_PROMPT_COUNT_FILE")" -eq 1 ]] \
-        || fail 'the mismatched GPU menu must prompt once for the driver swap'
+    [[ "$(cat "$SWAP_PROMPT_COUNT_FILE")" -eq 2 ]] \
+        || fail 'a completed swap must re-display the menu once before the abort'
     grep -q 'driver mismatch: nvidia vs nouveau' "$SWAP_PROMPT_FILE" \
         || fail 'the first GPU menu display must come from the baseline'
     [[ "$(cat "$GPU_COLLECT_COUNT_FILE")" -ge 1 ]] \
         || fail 'the GPU menu must re-collect fresh after the dispatched sub-action'
-    grep -q '^Repair change status gpu: unchanged|reason:gpu-verified$' <<<"$status_line" \
-        || fail 'the GPU menu must report gpu-verified after the simulated driver swap'
-    BOOT_REPAIR_SESSION_PROTOCOL=0
+    grep -q 'Re-install the correct driver' "$SWAP_PROMPT_FILE" \
+        || fail 'the post-swap re-display must offer the maintenance actions (round 212)'
+    grep -q '^Repair change status gpu: unchanged|reason:gpu-aborted$' <<<"$status_line" \
+        || fail 'the GPU swap session must terminate by reporting the honest abort'
+    BOOT_BITCH_SESSION_PROTOCOL=0
     GPU_BASELINE_B64=""
 
     # ---- kernel-dependent actions route through repair_kernel_prepare_inventory
@@ -666,7 +684,9 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Systemd default target:' \
         'graphical.target' \
-        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service')")"
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager switch candidates: gdm.service:installed lightdm.service:installable')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_BACKEND" == systemd ]] || fail "parsed display backend: $DISPLAY_MANAGER_BACKEND"
     [[ "$DISPLAY_MANAGER_SERVICE" == sddm.service ]] || fail "parsed display service: $DISPLAY_MANAGER_SERVICE"
@@ -674,13 +694,143 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     [[ "$DISPLAY_MANAGER_LABEL" == SDDM ]] || fail "parsed display label: $DISPLAY_MANAGER_LABEL"
     [[ "$DISPLAY_MANAGER_UNIT_REL" == /usr/lib/systemd/system/sddm.service ]] \
         || fail "parsed display unit: $DISPLAY_MANAGER_UNIT_REL"
+    # Round 195: the cached switch-candidate payload parses into the render
+    # state (never re-probed in the walk-through menu).
+    [[ "$DISPLAY_MANAGER_CACHED_PARSED" == 1 ]] || fail 'the candidates line must mark the cache parsed'
+    [[ "${#DISPLAY_MANAGER_CACHED_CANDIDATES[@]}" -eq 2 ]] \
+        || fail "parsed display candidates: ${DISPLAY_MANAGER_CACHED_CANDIDATES[*]}"
+    [[ "${DISPLAY_MANAGER_CACHED_CANDIDATES[0]}" == gdm.service:installed ]] \
+        || fail "parsed display candidate 0: ${DISPLAY_MANAGER_CACHED_CANDIDATES[0]}"
+    [[ "${DISPLAY_MANAGER_CACHED_CANDIDATES[1]}" == lightdm.service:installable ]] \
+        || fail "parsed display candidate 1: ${DISPLAY_MANAGER_CACHED_CANDIDATES[1]}"
+    # Round 199: the vendor-default line parses into the render state (the
+    # menu renders the vendor default from this cached payload, never a live
+    # re-derivation).
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT" == 'SDDM (derived from kde-plasma-desktop)' ]] \
+        || fail "parsed vendor default line: $DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT"
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == sddm.service ]] \
+        || fail "parsed vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
     DISPLAY_BASELINE_B64=""
 
-    DISPLAY_BASELINE_B64="$(b64 'Display manager decision: backend=OpenRC service=gdm package=gdm label=GDM unit=/etc/init.d/gdm')"
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=OpenRC service=gdm package=gdm label=GDM unit=/etc/init.d/gdm' \
+        'Vendor default display manager: not derivable from installed package evidence (no installed desktop metapackage declares a display-manager dependency)' \
+        'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_BACKEND" == OpenRC ]] || fail "parsed OpenRC backend: $DISPLAY_MANAGER_BACKEND"
     [[ "$DISPLAY_MANAGER_SERVICE" == gdm ]] || fail "parsed OpenRC service: $DISPLAY_MANAGER_SERVICE"
     [[ "$DISPLAY_MANAGER_UNIT_REL" == /etc/init.d/gdm ]] || fail "parsed OpenRC unit: $DISPLAY_MANAGER_UNIT_REL"
+    [[ "$DISPLAY_MANAGER_CACHED_PARSED" == 1 && "${#DISPLAY_MANAGER_CACHED_CANDIDATES[@]}" -eq 0 ]] \
+        || fail 'the OpenRC none-form candidates line must parse to an empty cached set'
+    # Round 200 (ITEM 5): the not-derivable form may carry the backend-aware
+    # reasoning suffix — any "not derivable..." line parses to the empty
+    # vendor-default state (never a derivation label to resolve).
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT" == 'not derivable from installed package evidence (no installed desktop metapackage declares a display-manager dependency)' \
+        && -z "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" ]] \
+        || fail 'the not-derivable vendor-default line must parse to the empty-service state'
+    DISPLAY_BASELINE_B64=""
+
+    # Round 202: the new source forms parse — the rpm comps-group form
+    # resolves the label from the first token (the derived-from prose is
+    # honest source naming, never a derivation label), and the new rpm
+    # not-derivable form parses to the empty-service state.
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        "Vendor default display manager: GDM (derived from the installed gnome-desktop group's mandatory packages)" \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT" == "GDM (derived from the installed gnome-desktop group's mandatory packages)" ]] \
+        || fail "parsed rpm vendor default line: $DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT"
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == gdm.service ]] \
+        || fail "parsed rpm vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
+    DISPLAY_BASELINE_B64=""
+
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        'Vendor default display manager: not derivable from installed package evidence (no installed desktop group is recorded in the comps group state)' \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ -z "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" \
+        && "$DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT" == 'not derivable from installed package evidence (no installed desktop group is recorded in the comps group state)' ]] \
+        || fail 'the rpm not-derivable vendor-default line must parse to the empty-service state'
+    DISPLAY_BASELINE_B64=""
+
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        "Vendor default display manager: GDM (derived from the installed task-gnome-desktop task's dependencies)" \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == gdm.service ]] \
+        || fail "parsed tasksel vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
+    DISPLAY_BASELINE_B64=""
+
+    # Round 203: the derivation-ladder source forms parse — the label still
+    # resolves from the first token; the T4 "assumed from" phrasing is honest
+    # source naming, never a derivation label; the extended not-derivable form
+    # (every tier's reason) parses to the empty-service state.
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Vendor default display manager: GDM (derived from the last-boot display-manager evidence)' \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == gdm.service ]] \
+        || fail "parsed boot-evidence vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
+    DISPLAY_BASELINE_B64=""
+
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        'Vendor default display manager: LightDM (derived from the installation history (first-installed display manager))' \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == lightdm.service ]] \
+        || fail "parsed install-history vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
+    DISPLAY_BASELINE_B64=""
+
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        'Vendor default display manager: LightDM (assumed from the installed set (the only installed display manager))' \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == lightdm.service ]] \
+        || fail "parsed installed-set vendor default service: $DISPLAY_MANAGER_CACHED_VENDOR_SERVICE"
+    DISPLAY_BASELINE_B64=""
+
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
+        'Vendor default display manager: not derivable from installed package evidence (no installed desktop metapackage dependency names exactly one display manager; probe-unavailable (no journal evidence source names a last-boot display manager); the installation history records no display-manager install; no display manager is installed)' \
+        'Display manager switch candidates: none')")"
+    parse_cached_display_inventory
+    [[ -z "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" ]] \
+        || fail 'the extended not-derivable vendor-default line must parse to the empty-service state'
+    DISPLAY_BASELINE_B64=""
+
+    # Round 195: a cached baseline WITHOUT the candidates line (an older
+    # diagnostic) fails closed — never a silent fallback to a re-probe.
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Vendor default display manager: SDDM (derived from kde-plasma-desktop)')")"
+    set +e
+    refusal_out="$(parse_cached_display_inventory 2>&1)"
+    refusal_rc=$?
+    set -e
+    [[ "$refusal_rc" -ne 0 ]] || fail 'a cached display baseline without switch-candidate evidence must fail closed'
+    grep -q 'no switch-candidate evidence' <<<"$refusal_out" \
+        || fail 'the missing-candidates refusal must name the evidence'
+    DISPLAY_BASELINE_B64=""
+
+    # Round 199: a cached baseline WITHOUT the vendor-default line (an older
+    # diagnostic) fails closed — the same contract as the decision and the
+    # candidates lines.
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Display manager switch candidates: none')")"
+    set +e
+    refusal_out="$(parse_cached_display_inventory 2>&1)"
+    refusal_rc=$?
+    set -e
+    [[ "$refusal_rc" -ne 0 ]] || fail 'a cached display baseline without vendor-default evidence must fail closed'
+    grep -q 'no vendor-default evidence' <<<"$refusal_out" \
+        || fail 'the missing-vendor-default refusal must name the evidence'
     DISPLAY_BASELINE_B64=""
 
     # ---- fail-closed: absent / undecodable / empty / no-manager -------------
@@ -734,7 +884,10 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     unset -f installed_kernel_versions arch_kernel_versions alpine_kernel_pairs rpm_kernel_pairs running_kernel_version
 
     # ---- display repair consumes the cached display baseline ----------------
-    DISPLAY_BASELINE_B64="$(b64 'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service')"
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager switch candidates: lightdm.service:installable')")"
     touch "$fake_root/usr/lib/systemd/system/graphical.target"
     touch "$fake_root/usr/lib/systemd/system/sddm.service"
     dm_poison="$sandbox/display-poison.txt"
@@ -762,7 +915,10 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
 
     # ---- display repair: correct config but the last boot stopped at a TTY --
     boot_failure_classification() { BOOT_REACHED='tty'; BOOT_FAILURE_MARKERS='tty-only'; BOOT_FAILURE_CLASSIFIED=1; }
-    DISPLAY_BASELINE_B64="$(b64 'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service')"
+    DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
+        'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
+        'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager switch candidates: lightdm.service:installable')")"
     display_manager_already_correct() { return 0; }
     restore_display_manager() { :; }
     status_line=""

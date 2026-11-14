@@ -102,7 +102,7 @@ private:
 // underlying number, date or rank so a size/count/date column orders by its
 // real value instead of its formatted string. Items without a key fall back to
 // a natural-order text comparison, so /dev/sda2 sorts before /dev/sda10.
-constexpr int BootRepairSortKeyRole = Qt::UserRole + 64;
+constexpr int BootBitchSortKeyRole = Qt::UserRole + 64;
 
 // Payload carried by the capabilities table's first (Feature) column item so
 // the per-row Install action cell widget can be re-attached to the CORRECT row
@@ -659,12 +659,41 @@ private:
     bool manualSnapshotCreateAvailable(QString *reason = nullptr) const;
     // Running-host rollback flow and its persisted reboot-required state.
     void rollbackHostSnapshot(const QString &snapshotId);
-    void setHostRebootRequired(const QString &snapshotId);
+    void setHostRebootRequired(const QString &snapshotId, const QString &undoPoint = QString());
     void clearHostRebootRequired();
     void updateHostRebootBanner();
+    // Round 189 (the robust cancel): true when the persisted rebootRequired
+    // record claims a staged rollback but the cached running-host capability
+    // evidence reports a canonical running root (no -rollback-before- name) —
+    // the staging was already reversed on disk and the record is stale.
+    bool hostRebootRecordStaleAgainstEvidence() const;
     void confirmAndRebootHost();
+    // Round 231 (plan §1 item 23): the reboot-request core — the busy scope,
+    // the `host-reboot` privileged request and the HOST_REBOOT_SCHEDULED=1 /
+    // not-scheduled handling.  confirmAndRebootHost() keeps its single
+    // confirmation dialog in front of this core (the persistent banner's
+    // guard — that path is one prompt, never two); the rollback-success
+    // popup's Reboot Now calls it DIRECTLY — the click is the confirmation.
+    void requestHostReboot();
+    // Round 185 (ITEM 1): the deliberate un-stage of a pending running-host
+    // rollback — the Cancel button next to Reboot Now | Later.  The helper's
+    // in-window CONFIRM is the single confirmation (the round-134 one-popup
+    // invariant); a success clears the staged banner + the rebootRequired
+    // record and re-loads the snapshot inventory.
+    void confirmAndCancelHostRollback();
     QString currentBootId() const;
     void reconcileHostRebootRequired();
+    // Round 174 (ITEM 1): the target-side staged-rollback informational
+    // banner — the host's below-title staged message WITHOUT the reboot
+    // affordance (the recovery host never reboots the offline repair target;
+    // the round-171 ruling).  Session-scoped: it clears together with the
+    // snapshot inventory on a scope change and carries no persisted state.
+    // Round 222 (plan §1 item 16): the preserved undo-point NAME rides along
+    // (the round-189 record pattern) so the Cancel verb can pass it to the
+    // helper.
+    void setTargetRollbackStaged(const QString &snapshotId,
+                                 const QString &undoPoint = QString());
+    void updateTargetRollbackBanner();
     // Renders parsed snapshot rows into the inventory with numeric/date sort
     // keys and the round-146 single-first default ordering; the type filter
     // and the row visibility are applied by applySnapshotFilter().
@@ -678,6 +707,15 @@ private:
     void showSnapshotInventoryNotApplicable(const QString &fileSystem);
     void inspectSelectedSnapshot();
     void rollbackSelectedSnapshot();
+    void deleteSelectedSnapshots();
+    // Round 228 (ITEM 2): the staged-state re-resolution probe — dispatched
+    // after each completed target-scope inventory load; re-shows the staged
+    // banner + Cancel when the helper's read-only probe resolves a pending
+    // staged rollback (the round-227 persisted record + the preserved-root
+    // scan), so the staged state survives an app restart.  (The round-226
+    // curated renderSnapshotDetailsPane() was REMOVED round 228 ITEM 3 — the
+    // pane content reverted to the original rich presentation.)
+    void probeTargetRollbackStagedState();
     // Round 146 (ITEM 2): the guarded manual snapshot creation flow (the
     // helper's snapshots/host-snapshots create verb with the CONFIRM prompt;
     // a success reloads the snapshot inventory).
@@ -950,6 +988,15 @@ private:
     // Undoes the progressive commits (the failure/scope-change paths of a
     // combined run restore the exact pre-run cache state).
     void revertProgressiveDiagnosticSections(bool targetScope, const QSet<QString> &keys);
+    // Round 200 (ITEM 3): the display walk-through re-emits its scoped
+    // diagnostic sections at the per-switch/restore success marker (the
+    // helper holds the single-request gate for the whole menu session, so
+    // the regeneration runs inside the helper and lands here as a framed
+    // block).  Commits exactly the display-switch map row's set (display,
+    // package, backend, usage + the capability preamble) into the scope's
+    // cache while the walk-through stays open; a section missing from the
+    // block keeps its previous entry (fail closed).
+    void commitWalkthroughScopedRegen(const QString &block, const QString &sessionKey = QString());
     // Round 118 (performance UX): paints the Diagnostics list row as running
     // (title + " …") while its section streams, restored to the plain title
     // when the section commits or the run ends.  The row state is display
@@ -1056,7 +1103,19 @@ private:
                                  // evidence on BOTH verdicts.  Every other
                                  // armed request keeps the round-119
                                  // no-change-terminal skip.
-                                 bool terminalHookOnProvenNoOp = false);
+                                 bool terminalHookOnProvenNoOp = false,
+                                 // Round 194 (ITEM 3): the individual-repair
+                                 // FAILURE terminal.  A non-empty hook arms the
+                                 // at-DONE gate release for a FAILED request:
+                                 // when the transcript explicitly reports a
+                                 // changed stage, the gate is released at the
+                                 // DONE record and the hook is invoked deferred
+                                 // to the next event-loop turn, applying the
+                                 // scoped failure invalidation + the coalesced
+                                 // regeneration while the failure popup stays
+                                 // open.  A failure with no changed stage
+                                 // keeps the gate released at frame end.
+                                 const std::function<void(const QString &)> &repairFailureTerminalHook = {});
     void closePrivilegedSession();
     // A8-04: the single user-facing Cancel affordance for a RUNNING privileged
     // operation (the progress dialog's Cancel for repairs, the Shell page's
@@ -1188,7 +1247,7 @@ private:
     static bool helperNeedsPrivateCopy(const QString &helperPath,
                                        const QList<QByteArray> &mountInfo,
                                        QString *reason = nullptr);
-    // Copies the helper into <runtimeBase>/boot-repair/helper-XXXXXX/ with
+    // Copies the helper into <runtimeBase>/boot-bitch/helper-XXXXXX/ with
     // mode 0700, verifies the sha256 of the copy and returns the staged path.
     static StagedHelper stageHelperForPrivilegedSession(const QString &helperPath,
                                                         const QString &runtimeBase,
@@ -1319,6 +1378,13 @@ private:
     // reported changed (for example the GRUB follow-up of an EFI repair).
     static QStringList invalidatingRepairToolKeys(const QStringList &requestedKeys,
                                                   const QString &output);
+    // Round 194 (ITEM 3): the keys whose status the helper EXPLICITLY reported
+    // changed (a bare `changed` or `changed|<reason>`) — never the
+    // missing-status fail-safe of invalidatingRepairToolKeys().  The failure
+    // and cancel completions derive their scoped invalidation from exactly
+    // this evidence: a failure/abort with no explicit changed status changed
+    // nothing and invalidates NOTHING.
+    static QStringList explicitlyChangedRepairToolKeys(const QString &output);
     // Repair-result categorization. Every repair action result is reported as
     // exactly one of: success (exit 0 with a proven change), failed (non-zero
     // exit or an issue that could not be repaired), aborted (round 97: a
@@ -1428,21 +1494,31 @@ private:
     // helper proved no package changed, but the capability evidence is still
     // re-resolved so the row flips once the prerequisite is genuinely
     // satisfied (the status wording then says "re-probed" instead of
-    // "modified").
+    // "modified").  Round 210 (ITEM 2): `freshSections` names scoped sections
+    // the in-terminal walk-through regeneration already committed for the
+    // CURRENT session — the completion subtracts them from the mapped stale
+    // set instead of re-marking them stale (the post-close double-run fix);
+    // a completion whose mapped set is fully covered by the fresh sections
+    // invalidates NOTHING and schedules NO regeneration (the committed cache
+    // is reused).  Only the display walk-through's completion passes a
+    // non-empty set; every other caller keeps the default.
     void invalidateDiagnosticsForRepair(const QStringList &toolKeys, bool failed,
                                         const QString &reason, LogEntryKind kind,
-                                        bool modified = true);
+                                        bool modified = true,
+                                        const QSet<QString> &freshSections = QSet<QString>());
     // Round 119 (ITEM 1/2): the single completion-side entry point for a
     // FINISHED individual repair — shared by the success terminal (invoked from
     // the DONE record while the review popup is still open) and by the
-    // genuine-failure completion (after the request frame).  A failed run
-    // keeps the fail-safe complete set (the round-16/19 contract — a failed
-    // modifying run may have left any stage half-applied; the round-86
-    // input/network targeted exception lives inside
-    // invalidateDiagnosticsForRepair()); a successful run invalidates exactly
-    // the map's scoped set for the stages the transcript proves changed and a
-    // proven no-op terminal invalidates nothing (the map's conditional
-    // invalidation semantics — the evidence is still fresh by definition).
+    // genuine-failure completion (after the request frame, or at the round-194
+    // failure terminal).  Round 194 (ITEM 3): a failed run invalidates exactly
+    // the map's scoped set for the stages the transcript EXPLICITLY reported
+    // changed, and NOTHING when no stage reported a change before the failure
+    // (the unit-file-refusal class — the failure happened before any
+    // mutation); the pre-round-194 fail-safe complete set is retired.  A
+    // successful run invalidates exactly the map's scoped set for the stages
+    // the transcript proves changed and a proven no-op terminal invalidates
+    // nothing (the map's conditional invalidation semantics — the evidence is
+    // still fresh by definition).
     void scheduleRepairCompletionRegeneration(const QStringList &toolKeys,
                                               const QString &transcript,
                                               LogEntryKind kind, bool failed,
@@ -1456,6 +1532,31 @@ private:
     void handleIndividualRepairSuccessTerminal(const QStringList &toolKeys,
                                                const QString &transcript,
                                                LogEntryKind kind);
+    // Round 194 (ITEM 3): the failure-terminal handler — the round-188
+    // pattern applied to the FAILURE marker: the failed request's DONE record
+    // releases the gate early (the failure popup stays open for review) and
+    // this hook, deferred one event-loop turn, applies the scoped invalidation
+    // + the coalesced regeneration while the popup is still open.  Latches
+    // m_repairSuccessTerminalHandled so the post-frame failure completion
+    // does not apply it twice.
+    void handleIndividualRepairFailureTerminal(const QStringList &toolKeys,
+                                               const QString &transcript,
+                                               LogEntryKind kind);
+    // Round 196 (ITEM 3): the cancel/abort-marker terminal handler — the
+    // round-188 pattern applied to the CANCEL marker: a user force-stop's
+    // DONE-143 record (the session force-stop / the CANCEL record / the
+    // abort_mutating_request exit) releases the gate early while the abort
+    // popup stays open, and this hook, deferred one event-loop turn, applies
+    // the cancelled-repair scoped invalidation (the verb-derived set refined
+    // by the transcript's explicitly-changed keys, the round-194/195 cancel
+    // rule) + the coalesced regeneration at the marker — the coordinator's
+    // standing rule: the scope diagnostics always start right away on the
+    // success, failure and abort markers, never waiting for the terminal
+    // close.  Latches m_repairCancelTerminalHandled so the post-frame cancel
+    // completion does not apply the invalidation twice.
+    void handleIndividualRepairCancelTerminal(const QStringList &toolKeys,
+                                              const QString &transcript,
+                                              LogEntryKind kind);
     // Round 120 (ITEM 2): the Boot entries Save batch's success-terminal
     // handler — invoked from the last sub-request's DONE record.  A partially
     // failed batch (an earlier sub-request failed) does nothing (the
@@ -1469,6 +1570,38 @@ private:
     // the post-close batch completion (which skips when the terminal already
     // handled it).
     void invalidateBootEntrySaveDiagnostics(bool isHost);
+    // Round 188 (the success-marker timing fix): the host-rollback-cancel
+    // completion — shared by the round-119/120 success terminal (fired at the
+    // DONE record while the terminal window stays open, gated on the
+    // transcript's HOST_ROLLBACK_CANCEL_RESULT=SUCCESS marker — a DECLINED /
+    // NOT_STAGED exit-0 outcome invalidates nothing) and the post-close
+    // completion (which skips when the terminal already handled it).  Applies
+    // the round-187/187.1/187.2 scoped set (btrfs usage boot-evidence + the
+    // capability preamble) and schedules the coalesced regeneration at the
+    // success marker instead of waiting for the terminal close / the
+    // informational popup.
+    void handleHostRollbackCancelTerminal(const QString &transcript);
+    void invalidateHostRollbackCancelDiagnostics();
+    // Round 222 (plan §1 item 16): the target-scoped staged-rollback Cancel
+    // flow — the round-189 host cancel machinery extended to the target
+    // scope.  The helper's in-window CONFIRM is the single confirmation (the
+    // round-134 one-popup invariant); a success clears the staged banner and
+    // re-loads the snapshot inventory; the declined/cancelled paths keep the
+    // staging.  The terminal hook fires the scoped invalidation at the DONE
+    // record (the round-188 timing) and the record-clear + banner teardown
+    // at the success marker.
+    void confirmAndCancelTargetRollback();
+    void handleTargetRollbackCancelTerminal(const QString &transcript);
+    void clearTargetRollbackStaged();
+    // Round 188: the rollback-success scoped invalidation + regeneration
+    // scheduling — the shared {btrfs, usage, boot-evidence} + capability
+    // preamble set (the round-187.2 cancel rationale applies identically to
+    // the staging: the default subvolume is re-pointed, the .snapshots store
+    // migrates and the boot-stack reconcile re-generates the GRUB
+    // configuration, while the running system keeps executing the same root).
+    // hostScope selects the host/target stale-sections set; the regeneration
+    // reason is the existing "snapshot rollback completed".
+    void invalidateRollbackSuccessDiagnostics(bool hostScope);
     // Round 120 (ITEM 3): the capability-table Install completion — shared by
     // the success terminal (fired on BOTH verdicts via
     // terminalHookOnProvenNoOp) and the post-close completion (which skips
@@ -1531,6 +1664,11 @@ private:
     // (the module/driver/firmware actions; live connectivity mutations are
     // never run through a repair-target chroot).
     void runNetworkRepairSession();
+    // Interactive graphical-login walk-through (round 193): the helper walks
+    // the restore-default / switch menus (the vendor default derived from
+    // vendor package evidence, the switch behind the terminal from->to
+    // confirmation) over the shared PROMPT/ANSWER channel.
+    void runDisplayRepairSession();
 
     // ---- Presentation and responsive layout ----------------------------------
 
@@ -1591,6 +1729,14 @@ private slots:
 private:
     void updateBusyIndicator();
     void updateResponsiveLayout();
+    // Round 222 (plan §1 item 14): the Diagnostics stacked scroll-content
+    // minimum — the round-218 construction-time constant as the BASE, raised
+    // to the REAL laid-out requirement at the current width (the wrapped
+    // header's live height + the splitter panes' real minimums), re-measured
+    // on every wrap-state change.  Only the page scroll area's trigger timing
+    // moves: the 480x500 window minimum and the splitter's 350/330 floors
+    // stay byte-unchanged.
+    void applyDiagnosticsStackedContentFloor();
     void updateFullRepairSummary();
     void updateFullRepairPlanHeight();
     void updateSettingsSplitterDefaults();
@@ -1681,6 +1827,12 @@ private:
     // the enum value so the actual indices can shift freely.
     QWidget *m_systemsPage = nullptr;
     QWidget *m_diagnosticsPage = nullptr;
+    // Round 218 (plan §1 item 9): the Diagnostics page's scroll-area content
+    // widget and its stacked content floor (a construction-time constant that
+    // feeds the internal vertical scrollbar's trigger timing only — applied
+    // in the stacked branch of updateResponsiveLayout, cleared side-by-side).
+    QWidget *m_diagnosticsScrollContent = nullptr;
+    int m_diagnosticsStackedContentFloor = 0;
     QWidget *m_bootEntriesPage = nullptr;
     QWidget *m_repairPage = nullptr;
     QWidget *m_snapshotsPage = nullptr;
@@ -1868,11 +2020,12 @@ private:
     QTableWidget *m_snapshotTable = nullptr;
     QPlainTextEdit *m_snapshotDetails = nullptr;
     QSplitter *m_snapshotSplitter = nullptr;
-    QBoxLayout *m_snapshotButtonLayout = nullptr;
+    QGridLayout *m_snapshotButtonLayout = nullptr;
     QPushButton *m_snapshotLoadButton = nullptr;
     QPushButton *m_snapshotInspectButton = nullptr;
     QPushButton *m_snapshotRollbackButton = nullptr;
     QPushButton *m_snapshotCreateButton = nullptr;
+    QPushButton *m_snapshotDeleteButton = nullptr;
     QComboBox *m_snapshotFilterCombo = nullptr;
     bool m_snapshotPreloadScheduled = false;
     // Btrfs inventory dedupe. m_snapshotScopeGeneration is bumped on every
@@ -1994,11 +2147,37 @@ private:
     QLabel *m_hostRebootBannerLabel = nullptr;
     QPushButton *m_hostRebootNowButton = nullptr;
     QPushButton *m_hostRebootLaterButton = nullptr;
+    QPushButton *m_hostRebootCancelButton = nullptr;
     bool m_hostRebootRequired = false;
     bool m_hostRebootBannerDismissed = false;
     QString m_hostRebootSnapshotId;
     QString m_hostRebootRequiredAt;
     QString m_hostRebootBootId;
+    // Round 189 (the robust cancel): the preserved undo-point NAME the
+    // rollback transcript recorded at staging time (the round-152.3
+    // `rollback-preserved-name` line) — persisted so the cancel verb can pass
+    // the GUI's staged record to the helper even when the on-disk staging is
+    // older/chained and the strict re-detection alone cannot resolve it.
+    QString m_hostRebootUndoPoint;
+    // Round 174 (ITEM 1): the target-scoped staged-rollback banner state
+    // (session-scoped, no persistence — the round-171 evaluation).
+    QFrame *m_targetRollbackBanner = nullptr;
+    QLabel *m_targetRollbackBannerLabel = nullptr;
+    // Round 222 (plan §1 item 16): the target banner's Cancel button — the
+    // deliberate un-stage (the round-189 host cancel machinery, target
+    // scope).  The Reboot Now/Later affordances stay HOST-only (the
+    // round-171/174 ruling): the recovery host never reboots the offline
+    // target, and the CANCEL (the un-stage) is not a reboot.
+    QPushButton *m_targetRollbackCancelButton = nullptr;
+    bool m_targetRollbackStaged = false;
+    QString m_targetRollbackSnapshotId;
+    // Round 222 (plan §1 item 16): the preserved undo-point NAME the target
+    // rollback transcript recorded at staging time (the helper's stable
+    // `msg:snapshot-previous-root|param:<name>` line) — the target twin of
+    // the round-189 host record, passed to the cancel verb so an
+    // older/chained staging resolves even when the strict re-detection
+    // alone cannot resolve it.
+    QString m_targetRollbackUndoPoint;
     QLabel *m_fileCopyHeading = nullptr;
     QComboBox *m_fileCopyDirectionCombo = nullptr;
     QSplitter *m_fileCopySectionSplitter = nullptr;
@@ -2021,6 +2200,15 @@ private:
     QWidget *m_sessionLogPanel = nullptr;
     QWidget *m_sessionLogViewer = nullptr;
     QListWidget *m_sessionLogList = nullptr;
+    // Round 217 (the round-216 revert + the minimal fix): the stacked
+    // session-log splitter's floor — its panes' worst-case content floors
+    // (the two-row wrapped filter row + a few mono log lines + the session
+    // panel's fixed content) plus the handle.  Computed once at construction
+    // (no dynamic budget pass), applied while the splitter is stacked so the
+    // handle always sits cleanly below the log's visible content; the page's
+    // vertical scroll area provides the room on short windows instead of
+    // squeezing a pane below its content (the m_repairSplitter pattern).
+    int m_logsStackedSplitterFloor = 0;
     QLabel *m_priorLogBanner = nullptr;
     QPushButton *m_newSessionLogButton = nullptr;
     QPushButton *m_addNoteButton = nullptr;
@@ -2219,6 +2407,28 @@ private:
     // so the post-frame invalidation is not applied twice; it is reset when
     // the next request starts (like m_lastPrivilegedRequestUserCancelled).
     bool m_repairSuccessTerminalHandled = false;
+    // Round 196 (ITEM 3): set by the cancel/abort-marker terminal handler (the
+    // DONE-143 record of a user force-stop) after it applied the scoped
+    // invalidation + scheduled the regeneration while the abort popup was
+    // still open.  The post-frame cancel completion inside
+    // runPrivilegedRequest consumes it so the invalidation is not applied
+    // twice; it is reset when the next request starts (like
+    // m_lastPrivilegedRequestUserCancelled).
+    bool m_repairCancelTerminalHandled = false;
+    // Round 210 (ITEM 3): re-entrancy guard for the device-tree height pass
+    // (the same pattern as m_deviceColumnLayoutInProgress): the pass applies
+    // a fixed height whose viewport resize re-enters the width-change hook.
+    bool m_deviceTreeHeightPassInProgress = false;
+    // Round 210 (ITEM 2, the post-close double-run fix): the scoped diagnostic
+    // sections the walk-through's in-terminal re-generation COMMITTED during
+    // the current walk-through session (commitWalkthroughScopedRegen records
+    // them, runDisplayRepairSession clears them for a fresh session).  The
+    // walk-through completion passes this set as the fresh sections so the
+    // post-close stale-marking/autoRefresh reuses the already-refreshed cache
+    // instead of re-running the same sections.  It is consulted ONLY for a
+    // completion whose requested tool is `display-walkthrough`, so a stale
+    // set can never leak into another repair's invalidation.
+    QSet<QString> m_walkthroughCommittedSections;
     // A8-04: set when the user cancelled a read-only diagnostics run.  The
     // per-section and single-diagnostic run loops observe it after the
     // interrupted section returns: they stop the run and invalidate the

@@ -192,8 +192,8 @@ QString prettyNameFromOsRelease(const QString &root)
 // system lsblk and /run/udev/data.
 QString lsblkBinaryOverride()
 {
-#ifdef BOOT_REPAIR_UI_TEST
-    const QByteArray overridePath = qgetenv("BOOT_REPAIR_LSBLK");
+#ifdef BOOT_BITCH_UI_TEST
+    const QByteArray overridePath = qgetenv("BOOT_BITCH_LSBLK");
     if (!overridePath.isEmpty()) {
         return QString::fromLocal8Bit(overridePath);
     }
@@ -203,8 +203,8 @@ QString lsblkBinaryOverride()
 
 QString udevDataDirectoryOverride()
 {
-#ifdef BOOT_REPAIR_UI_TEST
-    const QByteArray overridePath = qgetenv("BOOT_REPAIR_UDEV_DATA_DIR");
+#ifdef BOOT_BITCH_UI_TEST
+    const QByteArray overridePath = qgetenv("BOOT_BITCH_UDEV_DATA_DIR");
     if (!overridePath.isEmpty()) {
         return QString::fromLocal8Bit(overridePath);
     }

@@ -1,10 +1,10 @@
-// Shared fixtures and helpers for the boot-repair-ui-tests read-only
+// Shared fixtures and helpers for the boot-bitch-ui-tests read-only
 // regression suite.  These were moved out of MainWindowUiTest.cpp so the
 // 895 KB suite can compile as several parallel translation units; every
 // helper stays header-defined (inline) because the QtTest QVERIFY/QCOMPARE
 // macros return from the calling test function.
-#ifndef BOOT_REPAIR_UI_TEST_HELPERS_H
-#define BOOT_REPAIR_UI_TEST_HELPERS_H
+#ifndef BOOT_BITCH_UI_TEST_HELPERS_H
+#define BOOT_BITCH_UI_TEST_HELPERS_H
 
 // MainWindow.h pulls in QFileDialog (through <filesystem>/<sstream>); include
 // it before the private-access override so the standard headers are not
@@ -69,7 +69,7 @@
 #include <QUrl>
 #include <QtTest>
 
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
 #include <QDBusVariant>
 #endif
 
@@ -310,7 +310,7 @@ inline QStringList capturedHelperArguments(const QString &capturePath)
     return arguments;
 }
 
-// Starts a fake privileged-session process for the BOOT_REPAIR_UI_TEST build.
+// Starts a fake privileged-session process for the BOOT_BITCH_UI_TEST build.
 // It records the six protocol records of one request (BEGIN, four ARG, END)
 // into capturePath, then emits a canned response:
 //   success   - one OUT line followed by DONE with exit code 0
@@ -639,13 +639,13 @@ class ScopedSessionLogDir
 {
 public:
     ScopedSessionLogDir()
-        : m_previous(qgetenv("BOOT_REPAIR_LOG_DIR"))
+        : m_previous(qgetenv("BOOT_BITCH_LOG_DIR"))
     {
-        qputenv("BOOT_REPAIR_LOG_DIR", m_dir.path().toUtf8());
+        qputenv("BOOT_BITCH_LOG_DIR", m_dir.path().toUtf8());
     }
     ~ScopedSessionLogDir()
     {
-        qputenv("BOOT_REPAIR_LOG_DIR", m_previous);
+        qputenv("BOOT_BITCH_LOG_DIR", m_previous);
     }
 
     bool isValid() const
@@ -800,4 +800,4 @@ inline void acceptNextMessageBoxes(QObject *context, int count, QMessageBox::Sta
 
 } // namespace UiTestDetail
 
-#endif // BOOT_REPAIR_UI_TEST_HELPERS_H
+#endif // BOOT_BITCH_UI_TEST_HELPERS_H

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the legacy Debian Etch package (boot-repair-legacy) with dpkg-deb.
+# Build the legacy Debian Etch package (boot-bitch-legacy) with dpkg-deb.
 #
 # The legacy artifact must be built natively inside the Debian 4.0 "etch"
 # guest (dpkg-deb 1.13.26 + fakeroot 1.5.10); this script refuses a real build
@@ -23,24 +23,24 @@
 # The Qt3 GUI (legacy/gui/) is built natively with qmake-qt3 + make when
 # qmake-qt3 is available; --dry-run on a host without Qt3 stages a placeholder
 # GUI binary so the layout/control contract stays testable. The GUI is the
-# package's only entry point: the shell-only `boot-repair-legacy` TUI launcher
+# package's only entry point: the shell-only `boot-bitch-legacy` TUI launcher
 # (legacy/launcher/) is development-only and is deliberately NOT staged.
 #
 # Helper source coordination (the port agent owns the generated helper):
 #   LEGACY_HELPER_SRC      source path, absolute or relative to the repo root.
-#                          Default discovery order (legacy/boot-repair-helper.sh
+#                          Default discovery order (legacy/boot-bitch-helper.sh
 #                          is what legacy/compat.sh and legacy/port.sh
 #                          document; the rest are plan-era fallbacks):
-#                            legacy/boot-repair-helper.sh
-#                            legacy/helper/boot-repair-helper-legacy.sh
-#                            legacy/boot-repair-helper-legacy.sh
-#                            scripts/legacy/boot-repair-helper-legacy.sh
-#                            scripts/boot-repair-legacy-helper.sh
+#                            legacy/boot-bitch-helper.sh
+#                            legacy/helper/boot-bitch-helper-legacy.sh
+#                            legacy/boot-bitch-helper-legacy.sh
+#                            scripts/legacy/boot-bitch-helper-legacy.sh
+#                            scripts/boot-bitch-legacy-helper.sh
 #                          On a real build (--dry-run off) the drift gate is
 #                          mandatory: legacy/port.sh must exist, --check must
 #                          pass, and a LEGACY_HELPER_SRC override must be
 #                          byte-identical (cmp -s) to the generated
-#                          legacy/boot-repair-helper.sh — never NOTE-skipped.
+#                          legacy/boot-bitch-helper.sh — never NOTE-skipped.
 #                          Dry runs keep the override/missing-tool NOTE.
 #   LEGACY_ARCH            package architecture, default amd64.
 #   LEGACY_OUTPUT_DIR      output directory, default Development/build-legacy-package.
@@ -54,7 +54,7 @@ umask 022
 PROGRAM_NAME="${0##*/}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-PKG_NAME='boot-repair-legacy'
+PKG_NAME='boot-bitch-legacy'
 PKG_RELEASE='etch1'
 ARCH="${LEGACY_ARCH:-amd64}"
 
@@ -73,18 +73,18 @@ CHANGELOG_SRC="$ROOT_DIR/legacy/packaging/changelog.Debian"
 PORT_TOOL="$ROOT_DIR/legacy/port.sh"
 PORT_TOOL_FALLBACK="$ROOT_DIR/legacy/tools/port-helper.sh"
 
-GUI_NAME='boot-repair-legacy-gui'
+GUI_NAME='boot-bitch-legacy-gui'
 GUI_PRO="$ROOT_DIR/legacy/gui/boot-bitch-legacy.pro"
-GUI_DESKTOP_SRC="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
+GUI_DESKTOP_SRC="$ROOT_DIR/legacy/gui/data/boot-bitch-legacy-gui.desktop"
 GUI_ICON_DIR="$ROOT_DIR/legacy/gui/data"
 GUI_ICON_SIZES='16 22 32 48'
 
 # Qt3 i18n: the .ts translation sources ship under legacy/gui/translations and
 # are compiled to .qm by Qt3 lrelease at package time (the host has Qt6 only,
 # and Qt3/Qt6 .qm formats are incompatible). The catalogs are installed under
-# /usr/share/boot-repair-legacy/translations and resolved by main.cpp.
+# /usr/share/boot-bitch-legacy/translations and resolved by main.cpp.
 GUI_TRANSLATIONS_SRC="$ROOT_DIR/legacy/gui/translations"
-TRANSLATIONS_DEST='usr/share/boot-repair-legacy/translations'
+TRANSLATIONS_DEST='usr/share/boot-bitch-legacy/translations'
 # Pinned absolute Qt3 lrelease path (never a bare name; see the plan Step 0).
 LRELEASE=''
 
@@ -142,11 +142,11 @@ find_helper()
         return 0
     fi
     for _candidate in \
-        "$ROOT_DIR/legacy/boot-repair-helper.sh" \
-        "$ROOT_DIR/legacy/helper/boot-repair-helper-legacy.sh" \
-        "$ROOT_DIR/legacy/boot-repair-helper-legacy.sh" \
-        "$ROOT_DIR/scripts/legacy/boot-repair-helper-legacy.sh" \
-        "$ROOT_DIR/scripts/boot-repair-legacy-helper.sh"
+        "$ROOT_DIR/legacy/boot-bitch-helper.sh" \
+        "$ROOT_DIR/legacy/helper/boot-bitch-helper-legacy.sh" \
+        "$ROOT_DIR/legacy/boot-bitch-helper-legacy.sh" \
+        "$ROOT_DIR/scripts/legacy/boot-bitch-helper-legacy.sh" \
+        "$ROOT_DIR/scripts/boot-bitch-legacy-helper.sh"
     do
         if [ -f "$_candidate" ]; then
             printf '%s\n' "$_candidate"
@@ -167,11 +167,11 @@ run_drift_check()
         [ -f "$PORT_TOOL" ] \
             || fail "legacy/port.sh is missing; the generated-helper drift gate cannot run before packaging (never skipped on a real build)."
         if [ -n "$HELPER_SRC_ENV" ]; then
-            if [ -f "$ROOT_DIR/legacy/boot-repair-helper.sh" ] \
-                && cmp -s "$HELPER_SRC" "$ROOT_DIR/legacy/boot-repair-helper.sh"; then
+            if [ -f "$ROOT_DIR/legacy/boot-bitch-helper.sh" ] \
+                && cmp -s "$HELPER_SRC" "$ROOT_DIR/legacy/boot-bitch-helper.sh"; then
                 printf 'NOTE: LEGACY_HELPER_SRC is byte-identical to the generated helper; the drift gate still runs.\n'
             else
-                fail 'LEGACY_HELPER_SRC is set but is not byte-identical to the generated legacy/boot-repair-helper.sh; refusing to package an unverified helper.'
+                fail 'LEGACY_HELPER_SRC is set but is not byte-identical to the generated legacy/boot-bitch-helper.sh; refusing to package an unverified helper.'
             fi
         fi
         printf 'Checking generated legacy helper drift (%s --check)...\n' "${PORT_TOOL#"$ROOT_DIR"/}"
@@ -220,7 +220,7 @@ build_gui()
     mkdir -p -- "$_gui_build"
     (
         cd -- "$_gui_build" || exit 1
-        BOOT_REPAIR_LEGACY_VERSION="$PROJECT_VERSION" qmake-qt3 "$GUI_PRO" || exit 1
+        BOOT_BITCH_LEGACY_VERSION="$PROJECT_VERSION" qmake-qt3 "$GUI_PRO" || exit 1
         make || exit 1
     ) || fail "legacy GUI build failed (see the output above); expected $GUI_NAME."
     [ -x "$_gui_build/$GUI_NAME" ] \
@@ -251,31 +251,31 @@ stage_gui()
     install -m 0644 "$GUI_DESKTOP_SRC" \
         "$_stage/usr/share/applications/$GUI_NAME.desktop"
     for _size in $GUI_ICON_SIZES; do
-        _icon="$GUI_ICON_DIR/boot-repair-legacy-${_size}x${_size}.png"
+        _icon="$GUI_ICON_DIR/boot-bitch-legacy-${_size}x${_size}.png"
         [ -f "$_icon" ] || fail "missing legacy icon: $_icon"
         mkdir -p "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps"
         install -m 0644 "$_icon" \
-            "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-repair-legacy.png"
+            "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-bitch-legacy.png"
     done
     # Round 70 (E2): the running-system shield badge — the COLORED semantic
     # status asset extracted from the modern icon atlas (security.svg) by
     # legacy/gui/data/make-shield-icon.py — ships beside the app icons and is
     # loaded by the GUI with the "[OK]" text fallback when missing.
-    _shield_icon="$GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png"
+    _shield_icon="$GUI_ICON_DIR/boot-bitch-legacy-shield-32x32.png"
     [ -f "$_shield_icon" ] || fail "missing legacy shield icon: $_shield_icon"
     mkdir -p "$_stage/usr/share/icons/hicolor/32x32/apps"
     install -m 0644 "$_shield_icon" \
-        "$_stage/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png"
+        "$_stage/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png"
     # Round 103: the tab info-button circle-i badge — the MONOCHROME semantic
     # asset extracted from the modern icon atlas (info.svg) by
     # legacy/gui/data/make-info-icon.py — ships beside the app icons and is
     # loaded by the GUI (legacyInfoPixmap) with the plain "i" text fallback
     # when missing.
-    _info_icon="$GUI_ICON_DIR/boot-repair-legacy-info-18x18.png"
+    _info_icon="$GUI_ICON_DIR/boot-bitch-legacy-info-18x18.png"
     [ -f "$_info_icon" ] || fail "missing legacy info icon: $_info_icon"
     mkdir -p "$_stage/usr/share/icons/hicolor/18x18/apps"
     install -m 0644 "$_info_icon" \
-        "$_stage/usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"
+        "$_stage/usr/share/icons/hicolor/18x18/apps/boot-bitch-legacy-info.png"
 }
 
 # Resolve the pinned absolute Qt3 lrelease path. Returns nonzero when none is
@@ -296,7 +296,7 @@ find_lrelease()
 }
 
 # Compile the Qt3 .ts catalogs with lrelease and stage the .qm binaries under
-# /usr/share/boot-repair-legacy/translations. On a host without Qt3 lrelease
+# /usr/share/boot-bitch-legacy/translations. On a host without Qt3 lrelease
 # (--dry-run) a documented placeholder .qm is staged so the layout contract
 # stays testable; a real Etch build always produces the compiled catalogs.
 stage_translations()
@@ -310,7 +310,7 @@ stage_translations()
         return 0
     fi
     _count=0
-    for _ts in "$GUI_TRANSLATIONS_SRC"/boot-repair-legacy_*.ts; do
+    for _ts in "$GUI_TRANSLATIONS_SRC"/boot-bitch-legacy_*.ts; do
         [ -f "$_ts" ] || continue
         _count=$((_count + 1))
     done
@@ -322,7 +322,7 @@ stage_translations()
     if [ -n "$LRELEASE" ]; then
         _build="$GUI_BUILD_DIR/translations"
         mkdir -p "$_build"
-        for _ts in "$GUI_TRANSLATIONS_SRC"/boot-repair-legacy_*.ts; do
+        for _ts in "$GUI_TRANSLATIONS_SRC"/boot-bitch-legacy_*.ts; do
             [ -f "$_ts" ] || continue
             _base="$(basename "$_ts" .ts)"
             cp "$_ts" "$_build/$_base.ts"
@@ -333,7 +333,7 @@ stage_translations()
         printf 'Staged %s Qt3 .qm catalogs into %s.\n' "$_count" "$TRANSLATIONS_DEST"
     else
         printf 'NOTE: no Qt3 lrelease found; staging a placeholder .qm (dry run only).\n'
-        : > "$_dest/boot-repair-legacy_de.qm"
+        : > "$_dest/boot-bitch-legacy_de.qm"
     fi
 }
 
@@ -384,7 +384,7 @@ stage_tree()
         "$_stage/usr/share/applications" \
         "$_stage/usr/share/doc/$PKG_NAME"
 
-    install -m 0755 "$HELPER_SRC" "$_stage/usr/sbin/boot-repair-legacy-helper"
+    install -m 0755 "$HELPER_SRC" "$_stage/usr/sbin/boot-bitch-legacy-helper"
     install -m 0644 "$COPYRIGHT_SRC" "$_stage/usr/share/doc/$PKG_NAME/copyright"
     gzip -9 -n -c "$CHANGELOG_SRC" > "$_stage/usr/share/doc/$PKG_NAME/changelog.Debian.gz"
 
@@ -396,15 +396,15 @@ stage_tree()
     # invalidation map; installed beside the Qt3 translation catalogs and
     # resolved by the GUI at runtime.
     install -m 0644 "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
-        "$_stage/usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+        "$_stage/usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv"
 
     # Round 106: the shared capability -> package table (the same canonical
     # data file the modern GUI embeds) so the legacy GUI's Boot capabilities
     # Packages column renders the identical static names.
     install -m 0644 "$ROOT_DIR/data/capability-packages.tsv" \
-        "$_stage/usr/share/boot-repair-legacy/capability-packages.tsv"
+        "$_stage/usr/share/boot-bitch-legacy/capability-packages.tsv"
 
-    bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
+    bash -n "$_stage/usr/sbin/boot-bitch-legacy-helper" \
         || fail 'staged helper failed bash -n.'
 
     _installed_size="$(du -sk "$_stage/usr" | awk '{print $1}')"
@@ -446,15 +446,15 @@ validate_artifact()
     dpkg-deb --field "$_deb" Depends | grep -q 'libc6' \
         || fail "built package Depends is missing the dpkg-shlibdeps-resolved libc6 entry"
     for _path in \
-        ./usr/sbin/boot-repair-legacy-helper \
+        ./usr/sbin/boot-bitch-legacy-helper \
         ./usr/bin/$GUI_NAME \
         ./usr/share/applications/$GUI_NAME.desktop \
-        ./usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png \
-        ./usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png \
-        ./usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png \
+        ./usr/share/icons/hicolor/48x48/apps/boot-bitch-legacy.png \
+        ./usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png \
+        ./usr/share/icons/hicolor/18x18/apps/boot-bitch-legacy-info.png \
         ./usr/share/doc/$PKG_NAME/copyright \
-        ./usr/share/boot-repair-legacy/repair-diagnostic-map.tsv \
-        ./usr/share/boot-repair-legacy/capability-packages.tsv
+        ./usr/share/boot-bitch-legacy/repair-diagnostic-map.tsv \
+        ./usr/share/boot-bitch-legacy/capability-packages.tsv
     do
         if ! dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
             fail "built package is missing $_path"
@@ -462,13 +462,13 @@ validate_artifact()
     done
     # Qt3 i18n: a real build must ship the compiled translation catalogs.
     if ! dpkg-deb --contents "$_deb" \
-        | grep -q -- './usr/share/boot-repair-legacy/translations/.*\.qm$'; then
+        | grep -q -- './usr/share/boot-bitch-legacy/translations/.*\.qm$'; then
         fail 'built package is missing the Qt3 translation catalogs (.qm)'
     fi
     # The shell-only TUI launcher (and its desktop entry/man page) is
     # development-only and must never ship: the GUI is the entry point.
     for _path in \
-        ./usr/bin/boot-repair-legacy \
+        ./usr/bin/boot-bitch-legacy \
         ./usr/share/applications/$PKG_NAME.desktop \
         ./usr/share/man/man1/$PKG_NAME.1.gz
     do
@@ -516,13 +516,13 @@ install_built_package()
     [ "$_installed" = "$_version" ] \
         || fail "installed version is '${_installed:-none}', expected '$_version'"
 
-    PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-payload.XXXXXX")" \
+    PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-legacy-payload.XXXXXX")" \
         || fail 'unable to create a payload extraction directory'
     dpkg-deb -x "$_deb" "$PAYLOAD_DIR" || fail "unable to extract $_deb"
 
     _gui_hash=''
     _helper_hash=''
-    for _pair in "usr/bin/$GUI_NAME" "usr/sbin/boot-repair-legacy-helper"; do
+    for _pair in "usr/bin/$GUI_NAME" "usr/sbin/boot-bitch-legacy-helper"; do
         _want="$(sha256sum "$PAYLOAD_DIR/$_pair" | awk '{print $1}')"
         _got="$(sha256sum "/$_pair" | awk '{print $1}')"
         [ -n "$_want" ] && [ "$_want" = "$_got" ] \
@@ -590,12 +590,12 @@ main()
         [ -f "$_required" ] || fail "missing legacy packaging input: $_required"
     done
     for _size in $GUI_ICON_SIZES; do
-        _required="$GUI_ICON_DIR/boot-repair-legacy-${_size}x${_size}.png"
+        _required="$GUI_ICON_DIR/boot-bitch-legacy-${_size}x${_size}.png"
         [ -f "$_required" ] || fail "missing legacy icon: $_required"
     done
     # Round 70 (E2): the shield badge PNG is a mandatory packaging input.
-    [ -f "$GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png" ] \
-        || fail "missing legacy shield icon: $GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png"
+    [ -f "$GUI_ICON_DIR/boot-bitch-legacy-shield-32x32.png" ] \
+        || fail "missing legacy shield icon: $GUI_ICON_DIR/boot-bitch-legacy-shield-32x32.png"
 
     HELPER_SRC="$(find_helper)" \
         || fail "legacy helper source not found. Set LEGACY_HELPER_SRC=<path> (documented variable; see the script header)."
@@ -637,7 +637,7 @@ EOF
     DEB_PATH="$OUTPUT_DIR/${PKG_NAME}_${PROJECT_VERSION}-${PKG_RELEASE}_${ARCH}.deb"
 
     printf 'Package:    %s %s-%s (%s)\n' "$PKG_NAME" "$PROJECT_VERSION" "$PKG_RELEASE" "$ARCH"
-    printf 'Helper:     %s -> /usr/sbin/boot-repair-legacy-helper\n' "$HELPER_SRC"
+    printf 'Helper:     %s -> /usr/sbin/boot-bitch-legacy-helper\n' "$HELPER_SRC"
     printf 'GUI:        %s (Qt3, qmake-qt3; package entry point)\n' "${GUI_PRO#"$ROOT_DIR"/}"
     printf 'Stage tree: %s\n' "$STAGE"
     printf 'Artifact:   %s\n' "$DEB_PATH"

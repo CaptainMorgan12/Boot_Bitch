@@ -1,6 +1,6 @@
 // HelperRunner - QProcess wrapper for the ported legacy helper.
 //
-// Runs /usr/sbin/boot-repair-legacy-helper (or a configured path) with an
+// Runs /usr/sbin/boot-bitch-legacy-helper (or a configured path) with an
 // optional elevation prefix (sudo/gksu), streams merged stdout+stderr as lines
 // and reports the exit status. No secret is ever placed on the command line.
 //
@@ -42,12 +42,12 @@ public:
     HelperRunner(QObject *parent = 0, const char *name = 0);
     ~HelperRunner();
 
-    // Installed helper path, BOOT_REPAIR_LEGACY_HELPER and the source-tree
+    // Installed helper path, BOOT_BITCH_LEGACY_HELPER and the source-tree
     // fallbacks are resolved by the caller (main.cpp / LegacyMainWindow).
     void setHelperPath(const QString &path);
     QString helperPath() const;
 
-    // Explicit elevation prefix override (BOOT_REPAIR_LEGACY_ELEVATE). Empty
+    // Explicit elevation prefix override (BOOT_BITCH_LEGACY_ELEVATE). Empty
     // means auto-detect. The literal "none" forces direct execution.
     void setElevationOverride(const QString &override);
     void setNoElevate(bool noElevate);
@@ -120,9 +120,9 @@ public:
     void setInputData(const QByteArray &data);
 
     // Extra NAME=VALUE entries for the next run().  The interactive session
-    // arrives as the three known entries (BOOT_REPAIR_SESSION_PROTOCOL=1,
-    // BOOT_REPAIR_SESSION_REQUEST=<id> and
-    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE=<path>); run() converts them into the
+    // arrives as the three known entries (BOOT_BITCH_LEGACY_SESSION_PROTOCOL=1,
+    // BOOT_BITCH_LEGACY_SESSION_REQUEST=<id> and
+    // BOOT_BITCH_LEGACY_MENU_ANSWER_FILE=<path>); run() converts them into the
     // helper's --session-request and --menu-answer-file options placed before
     // the command verb (the helper validates both and exports the session
     // variables itself, so the session never depends on the elevation tool's

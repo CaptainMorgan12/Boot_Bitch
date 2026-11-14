@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <QApplication>
 #include <QFontDatabase>
 #include <QBoxLayout>
@@ -98,7 +99,7 @@
 #include <memory>
 #include <utility>
 
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
@@ -257,6 +258,55 @@ protected:
         painter.setPen(palette().color(foregroundRole()));
         const QString elided = fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width());
         painter.drawText(contentsRect(), static_cast<int>(alignment()), elided);
+    }
+};
+
+// Round 215 (plan §1 item 7c): the Logs search input shrinks toward a small
+// floor so the whole filter row stays on one line at the 480-px window floor
+// (the search bar never drops into a third row).  A QLineEdit hard-cuts its
+// displayed text at the field edge; this subclass paints the AT-REST state
+// (unfocused, no selection) elided with the trailing ellipsis, so a squeezed
+// field reads "Filter application l…" instead of a mid-word cut.  The
+// complete text stays in text() (the clear action, accessibility and tests
+// see the full value) and the focused state keeps the native editing
+// behavior (cursor, selection, scrolling) untouched.
+class ElidedLineEdit final : public QLineEdit
+{
+public:
+    explicit ElidedLineEdit(QWidget *parent = nullptr)
+        : QLineEdit(parent)
+    {
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        if (hasFocus() || hasSelectedText()) {
+            QLineEdit::paintEvent(event);
+            return;
+        }
+        QStyleOptionFrame option;
+        initStyleOption(&option);
+        QStylePainter painter(this);
+        painter.drawPrimitive(QStyle::PE_PanelLineEdit, option);
+
+        // The trailing clear-action button is a real child widget that
+        // paints and receives events itself; the text rect yields its width.
+        QRect textRect = contentsRect();
+        const QList<QToolButton *> iconButtons = findChildren<QToolButton *>();
+        for (const QToolButton *button : iconButtons) {
+            if (button->isVisible()) {
+                const QPoint origin = button->mapTo(this, QPoint(0, 0));
+                textRect.setRight(qMin(textRect.right(), origin.x() - 2));
+            }
+        }
+        const bool placeholder = text().isEmpty();
+        const QString shown = placeholder ? placeholderText() : text();
+        const QString elided = fontMetrics().elidedText(shown, Qt::ElideRight,
+                                                        textRect.width());
+        painter.setPen(palette().color(placeholder ? QPalette::PlaceholderText
+                                                   : QPalette::Text));
+        painter.drawText(textRect, static_cast<int>(alignment()), elided);
     }
 };
 
@@ -1619,27 +1669,301 @@ private:
 // the pushed-down content never costs list space).  The same fit test and
 // Resize/LayoutRequest/Show re-placement as the ResponsiveHeaderReflow /
 // ResponsiveShellButtonsReflow machinery.
+//
+// Round 214 (plan §1 item 2): the fit test measures the PANE LAYOUT BUDGET
+// (the session-log splitter's width) instead of the viewer's own width.
+// The round-154.2 per-row test made the row wrap PREMATURELY at intermediate
+// window widths — while the splitter was still horizontal the viewer pane
+// (window minus the 280-px "Sitzungsprotokolle" list and the handle) came in
+// under the row's hint sum, so the row wrapped beside the table, then
+// UN-wrapped again when the splitter stacked below the narrow breakpoint
+// (the jumpy wrap).  With the budget test the row stays on one row for as
+// long as the whole page width fits it (the dropdown yields its excess in
+// the 820–856 squeeze band exactly like the round-154.1 contract), and it
+// can only ever drop in the stacked layout — after the log-list table has
+// already dropped below the terminal window — so the wrap never jumps.
+//
+// Round 215 (plan §1 item 7c): the narrow wrap is GONE — when the full row
+// cannot fit, the input shrinks toward kLogSearchFloorWidth so the whole
+// row stays on ONE line down to the 480-px window floor (the search bar
+// never drops into a third row; the input content elides via ElidedLineEdit
+// instead of forcing the wrap).  The full singleRowFits() test and the wide
+// placement stay the round-214 coordination, byte-unchanged.
 class LogFilterRowReflow final : public QObject
 {
 public:
     static constexpr int kLogSearchUsableWidth = 200;
+    // Round 215 (plan §1 item 7c): when the single row cannot give the input
+    // its usable width, the input shrinks toward this floor so the whole
+    // filter row stays on ONE line (the search bar never drops into a third
+    // row; the input content elides instead of forcing the wrap).  The value
+    // is the measured 480-px budget on the TUXEDO host: the splitter's 428 px
+    // minus the label hint (~82), the combo's own content minimum (~229 on
+    // the round-215 stock QComboBox — plan-adjacent-findings B4 now
+    // disciplines the combo to the 120-px floor, so the dropdown can yield
+    // and the honest squeeze budget grows; the floor stays as the measured
+    // safety value), the two 6-px spacings and the 8-px fit fudge leaves
+    // ~97 px; 90 keeps a small margin so the single row honestly fits at the
+    // window floor.
+    static constexpr int kLogSearchFloorWidth = 90;
 
     LogFilterRowReflow(QWidget *host, QGridLayout *grid, QLabel *label,
-                       QLineEdit *input, QComboBox *combo)
+                       QLineEdit *input, QComboBox *combo,
+                       QWidget *budget = nullptr)
         : QObject(host)
         , m_host(host)
         , m_grid(grid)
         , m_label(label)
         , m_input(input)
         , m_combo(combo)
+        , m_budget(budget)
     {
         // Round 154.1 (ITEM 2): the usable width is the CONTRACT — the
-        // layout-level minimum keeps the search field at 200 px on every
-        // arrangement (the dropdown gives up its excess first when the row
-        // is tight; it stays above its own minimumSizeHint).
+        // layout-level minimum keeps the search field at 200 px on the full
+        // single row (the dropdown gives up its excess first when the row
+        // is tight; it stays above its own minimumSizeHint).  Round 215
+        // (plan §1 item 7c): below the full-row fit point the minimum drops
+        // to the shrink floor so the row stays on ONE line (updatePlacement
+        // owns the per-arrangement minimum).
         if (m_input) {
             m_input->setMinimumWidth(kLogSearchUsableWidth);
         }
+        if (m_host) {
+            m_host->installEventFilter(this);
+        }
+        // The pane budget changes with the window width and the splitter
+        // orientation, so re-evaluate on the splitter's own resize events
+        // too (a viewer resize alone can miss the exact stacking moment).
+        if (m_budget && m_budget != m_host) {
+            m_budget->installEventFilter(this);
+        }
+        updatePlacement();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == m_host || watched == m_budget) {
+            switch (event->type()) {
+            case QEvent::Resize:
+            case QEvent::LayoutRequest:
+            case QEvent::Show:
+                updatePlacement();
+                break;
+            default:
+                break;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    int gridSpacing() const
+    {
+        if (!m_grid) {
+            return 6;
+        }
+        int spacing = m_grid->horizontalSpacing();
+        if (spacing < 0) {
+            spacing = m_grid->spacing();
+        }
+        return spacing < 0 ? 6 : spacing;
+    }
+
+    bool singleRowFits() const
+    {
+        if (!m_host || !m_grid || !m_label || !m_input || !m_combo) {
+            return false;
+        }
+        const int spacing = gridSpacing();
+        const int required = m_label->sizeHint().width() + spacing
+            + kLogSearchUsableWidth + spacing + m_combo->sizeHint().width();
+        // Round 214: the fit is evaluated against the pane layout budget
+        // (the splitter spanning the page width) — never the viewer's own
+        // pane width, which is the round-154.2 premature-wrap source.
+        const int available = m_budget ? m_budget->width() : m_host->width();
+        return required + 8 <= available;
+    }
+
+    // Round 215 (plan §1 item 7c): the narrow single-line fit test — the row
+    // fits at the input's shrink floor plus the combo's OWN content minimum
+    // (its minimumSizeHint — the honest layout minimum; below this the grid
+    // would violate a widget minimum and overlap the window frame).  This is
+    // the test that keeps the search bar on one line down to the 480-px
+    // floor; the wide singleRowFits() test above stays the round-214
+    // coordination, byte-unchanged.
+    bool singleRowFitsAtFloor() const
+    {
+        if (!m_host || !m_grid || !m_label || !m_input || !m_combo) {
+            return false;
+        }
+        const int spacing = gridSpacing();
+        const int required = m_label->sizeHint().width() + spacing
+            + kLogSearchFloorWidth + spacing
+            + m_combo->minimumSizeHint().width();
+        const int available = m_budget ? m_budget->width() : m_host->width();
+        return required + 8 <= available;
+    }
+
+    void updatePlacement()
+    {
+        if (!m_grid) {
+            return;
+        }
+        const bool fullFits = singleRowFits();
+        const bool floorFits = singleRowFitsAtFloor();
+        // Round 215 (plan §1 item 7c): ONE line whenever the full row fits
+        // or the shrunk row fits — the search bar stays on the second row
+        // with the input shrunk toward the floor instead of dropping into a
+        // third row.  The wrapped fallback (the round-154.2 arrangement)
+        // remains the safety net below the floor row — unreachable at the
+        // 480-px window floor.
+        const bool singleRow = fullFits || floorFits;
+        const bool atFloor = singleRow && !fullFits;
+        if (m_placed && m_singleRow == singleRow && m_atFloor == atFloor) {
+            return;
+        }
+        m_placed = true;
+        m_singleRow = singleRow;
+        m_atFloor = atFloor;
+        // The input minimum is set BEFORE the re-placement so the grid
+        // minimum the new arrangement reports is the honest one: the usable
+        // 200 on the full single row (the round-154.1/214 wide contract),
+        // the shrink floor whenever the row needs the squeeze (the floor
+        // state and the wrapped fallback).
+        m_input->setMinimumWidth(singleRow && !atFloor
+                                     ? kLogSearchUsableWidth
+                                     : kLogSearchFloorWidth);
+        m_grid->removeWidget(m_label);
+        m_grid->removeWidget(m_input);
+        m_grid->removeWidget(m_combo);
+        if (singleRow) {
+            // [label][input(stretch)][combo] on one row — the input absorbs
+            // the slack, exactly like the historical single row.
+            m_grid->addWidget(m_label, 0, 0, Qt::AlignVCenter);
+            m_grid->addWidget(m_input, 0, 1, Qt::AlignVCenter);
+            m_grid->addWidget(m_combo, 0, 2, Qt::AlignVCenter);
+            m_grid->setColumnStretch(1, 1);
+        } else {
+            // Round 154.2 (the user's refinement): the dropdown pins to the
+            // RIGHT edge of the first row ([stretch][combo] — the combo
+            // keeps its own hint width, right-aligned, so it never moves
+            // with the reflow), and the [label][input] second row lets the
+            // input EXPAND to the row's right edge (the stretch column —
+            // the input is never clipped by the window frame).
+            m_combo->setMaximumWidth(m_combo->sizeHint().width());
+            m_grid->addWidget(m_combo, 0, 1, Qt::AlignRight | Qt::AlignVCenter);
+            m_grid->addWidget(m_label, 1, 0, Qt::AlignVCenter);
+            m_grid->addWidget(m_input, 1, 1, Qt::AlignVCenter);
+            m_grid->setColumnStretch(1, 1);
+        }
+    }
+
+    QWidget *m_host = nullptr;
+    QGridLayout *m_grid = nullptr;
+    QLabel *m_label = nullptr;
+    QLineEdit *m_input = nullptr;
+    QComboBox *m_combo = nullptr;
+    QWidget *m_budget = nullptr;
+    bool m_placed = false;
+    bool m_singleRow = false;
+    bool m_atFloor = false;
+};
+
+// Round 219 (plan §1 item 11c): the Snapshots filter combo's horizontal
+// minimum is disciplined to a small floor instead of Qt's full-content
+// minimum (QComboBox reports the WIDEST item as its minimumSizeHint — 192 px
+// for "Einzelne Snapshots" on this Qt — which pinned the inventory box's
+// minimum past the 480-px window frame).  The disciplined minimum keeps the
+// box's horizontal minimum honest (the widest wrapped row at its floors fits
+// the 480-px viewport); the combo still opens its dropdown at the content
+// width, and when the row is squeezed the combo yields toward the floor
+// before the buttons give up their last pixels.  The floor is a plain
+// constant (the arrow + frame + a short text run), never a runtime pass.
+class DisciplinedMinimumComboBox final : public QComboBox
+{
+public:
+    using QComboBox::QComboBox;
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QComboBox::minimumSizeHint();
+        hint.setWidth(qMin(hint.width(), kDisciplinedMinimumWidth));
+        return hint;
+    }
+
+private:
+    static constexpr int kDisciplinedMinimumWidth = 120;
+};
+
+// Round 214 (plan §1 item 1 — the round-154 recommendation implemented):
+// the Snapshots inventory action row stages progressively.  The items keep
+// their priority order on one row while they fit at their size hints; as the
+// window narrows the TRAILING items wrap onto a second, right-anchored row
+// one stage at a time — the filter combo (with its "Show:" label) drops
+// first, then Rollback, then Inspect — instead of the previous binary
+// single-row/vertical-stack flip whose Expanding buttons panned the whole
+// interior.  The wrap counts are the stage table: wrapCounts[0] must be 0
+// (the single row, whose stretch sits between the always-left buttons and
+// the first group that later wraps — the historical look), and each further
+// count is the number of trailing items the next stage wraps onto the second
+// row.  Each stage's fit test compares the wider of the two rows' full-hint
+// sums against the available width (the same fit-test +
+// Resize/LayoutRequest/Show re-placement pattern as the two-state
+// ResponsiveHeaderReflow / ResponsiveShellButtonsReflow machinery); when NO
+// stage fits at full hints the best-split stage (the smallest row
+// requirement) is chosen and the overflowing row squeezes toward the items'
+// minimums — the elided buttons (ElidedPushButton + makeButtonShrinkable)
+// compress and the combo yields to its disciplined minimum — so no stage
+// ever overlaps at the 480-px window floor.
+// Round 219 (plan §1 item 11, the four-part Snapshots finalize): each row
+// now lives in its OWN container (a QWidget with a QHBoxLayout) instead of
+// sharing the grid's columns.  The shared-column form coupled the two rows'
+// widths (each column took the max over both rows), so (a) the second row's
+// leading spacer competed with the first row's trailing spacer and the
+// dropdown group never reached the box's right edge; (b) the first-row
+// buttons stretched/compressed with the shared columns; and (d) the buttons
+// shrank as soon as the stage changed even though their own line still fit
+// (the per-line budget must be measured per line).  The per-row containers
+// make every row an independent HBox: [items][stretch] for the first row
+// (the buttons stay at natural width, the free space to the right —
+// left-aligned with each other) and [stretch][items] for the second row
+// (the pinned-right pattern — the trailing item hugs the box's inner right
+// edge).  A row's items shrink toward their minimums ONLY when that row's
+// own full-hint sum exceeds its width — the per-line budget is the row's
+// own sum, never the stage's shared-column aggregate.
+class StagedButtonRowReflow final : public QObject
+{
+public:
+    // huggedItem: the item index that must stay glued to its right-hand
+    // neighbour in the wrapped rows (a label whose grid column can be
+    // inflated by the first row's columns) — it is right-aligned there.
+    StagedButtonRowReflow(QWidget *host, QLayout *hostLayout, QGridLayout *grid,
+                          const QList<QWidget *> &items,
+                          const QList<int> &wrapCounts, int huggedItem = -1)
+        : QObject(host)
+        , m_host(host)
+        , m_hostLayout(hostLayout)
+        , m_grid(grid)
+        , m_items(items)
+        , m_wrapCounts(wrapCounts)
+        , m_huggedItem(huggedItem)
+    {
+        // The per-row containers (round 219): the grid's single column
+        // carries them full-width; each container owns its row's HBox so
+        // the two rows can never share a column width.  The stretch column
+        // makes the containers fill the grid's width exactly.
+        m_row0 = new QWidget(m_host);
+        m_row0Layout = new QHBoxLayout(m_row0);
+        m_row0Layout->setContentsMargins(0, 0, 0, 0);
+        m_row0Layout->setSpacing(gridSpacing());
+        m_row1 = new QWidget(m_host);
+        m_row1Layout = new QHBoxLayout(m_row1);
+        m_row1Layout->setContentsMargins(0, 0, 0, 0);
+        m_row1Layout->setSpacing(gridSpacing());
+        m_grid->addWidget(m_row0, 0, 0);
+        m_grid->addWidget(m_row1, 1, 0);
+        m_grid->setColumnStretch(0, 1);
         if (m_host) {
             m_host->installEventFilter(this);
         }
@@ -1676,60 +2000,131 @@ private:
         return spacing < 0 ? 6 : spacing;
     }
 
-    bool singleRowFits() const
+    int rowHintSum(const QList<QWidget *> &row) const
     {
-        if (!m_host || !m_grid || !m_label || !m_input || !m_combo) {
-            return false;
+        int sum = 0;
+        for (QWidget *item : row) {
+            if (item) {
+                if (sum > 0) {
+                    sum += gridSpacing();
+                }
+                sum += item->sizeHint().width();
+            }
         }
-        const int spacing = gridSpacing();
-        const int required = m_label->sizeHint().width() + spacing
-            + kLogSearchUsableWidth + spacing + m_combo->sizeHint().width();
-        return required + 8 <= m_host->width();
+        return sum;
+    }
+
+    int requirement(int wrapped) const
+    {
+        const int n = m_items.size();
+        if (wrapped <= 0) {
+            return rowHintSum(m_items);
+        }
+        const QList<QWidget *> row0 = m_items.mid(0, n - wrapped);
+        const QList<QWidget *> row1 = m_items.mid(n - wrapped);
+        return qMax(rowHintSum(row0), rowHintSum(row1));
+    }
+
+    int pickStage() const
+    {
+        int available = m_host ? m_host->width() : 0;
+        if (m_hostLayout) {
+            const QMargins margins = m_hostLayout->contentsMargins();
+            available -= qMax(0, margins.left()) + qMax(0, margins.right());
+        }
+        int fallback = 0;
+        int fallbackRequirement = std::numeric_limits<int>::max();
+        for (int wrapped : m_wrapCounts) {
+            const int req = requirement(wrapped);
+            if (req + 8 <= available) {
+                return wrapped;
+            }
+            if (req < fallbackRequirement) {
+                fallbackRequirement = req;
+                fallback = wrapped;
+            }
+        }
+        return fallback;
+    }
+
+    // Empties one row container's layout: the widgets are only removed (they
+    // keep living inside the container), the stretch spacer items deleted.
+    static void clearRow(QHBoxLayout *row)
+    {
+        while (row->count() > 0) {
+            QLayoutItem *item = row->takeAt(0);
+            if (item && !item->widget()) {
+                delete item;
+            }
+        }
     }
 
     void updatePlacement()
     {
-        if (!m_grid) {
+        if (!m_grid || m_items.isEmpty() || m_wrapCounts.isEmpty()
+            || !m_row0Layout || !m_row1Layout) {
             return;
         }
-        const bool singleRow = singleRowFits();
-        if (m_placed && m_singleRow == singleRow) {
+        const int stage = pickStage();
+        if (m_placed && m_stage == stage) {
             return;
         }
         m_placed = true;
-        m_singleRow = singleRow;
-        m_grid->removeWidget(m_label);
-        m_grid->removeWidget(m_input);
-        m_grid->removeWidget(m_combo);
-        if (singleRow) {
-            // [label][input(stretch)][combo] on one row — the input absorbs
-            // the slack, exactly like the historical single row.
-            m_grid->addWidget(m_label, 0, 0, Qt::AlignVCenter);
-            m_grid->addWidget(m_input, 0, 1, Qt::AlignVCenter);
-            m_grid->addWidget(m_combo, 0, 2, Qt::AlignVCenter);
-            m_grid->setColumnStretch(1, 1);
-        } else {
-            // Round 154.2 (the user's refinement): the dropdown pins to the
-            // RIGHT edge of the first row ([stretch][combo] — the combo
-            // keeps its own hint width, right-aligned, so it never moves
-            // with the reflow), and the [label][input] second row lets the
-            // input EXPAND to the row's right edge (the stretch column —
-            // the input is never clipped by the window frame).
-            m_combo->setMaximumWidth(m_combo->sizeHint().width());
-            m_grid->addWidget(m_combo, 0, 1, Qt::AlignRight | Qt::AlignVCenter);
-            m_grid->addWidget(m_label, 1, 0, Qt::AlignVCenter);
-            m_grid->addWidget(m_input, 1, 1, Qt::AlignVCenter);
-            m_grid->setColumnStretch(1, 1);
+        m_stage = stage;
+        const int n = m_items.size();
+        clearRow(m_row0Layout);
+        clearRow(m_row1Layout);
+        // A hidden row container collapses in the grid (no reserved row).
+        m_row1->setVisible(stage > 0);
+        if (stage <= 0) {
+            // The single row: [items…] with the stretch between the always-
+            // left buttons and the first group that later wraps (the
+            // historical look — buttons left, the label + combo right).
+            const int split = m_wrapCounts.size() > 1 ? m_wrapCounts.at(1) : 1;
+            for (int i = 0; i < n; ++i) {
+                if (i == n - split) {
+                    m_row0Layout->addStretch(1);
+                }
+                m_row0Layout->addWidget(m_items.at(i), 0, itemAlignment(i));
+            }
+            return;
+        }
+        // Wrapped (round 219): each row is its own HBox.  Row 0 keeps the
+        // leading items left-anchored with the trailing stretch (natural
+        // widths — the free space stays to the right, nothing stretches);
+        // row 1 pins the trailing group to the box's right edge behind a
+        // leading stretch (the round-154.2 pinned-right pattern — the group
+        // stays at the content edge instead of jumping to the row's left).
+        const int wrapped = stage;
+        for (int i = 0; i < n - wrapped; ++i) {
+            m_row0Layout->addWidget(m_items.at(i), 0, itemAlignment(i));
+        }
+        m_row0Layout->addStretch(1);
+        m_row1Layout->addStretch(1);
+        for (int i = n - wrapped; i < n; ++i) {
+            m_row1Layout->addWidget(m_items.at(i), 0, itemAlignment(i));
         }
     }
 
+    Qt::Alignment itemAlignment(int index) const
+    {
+        return index == m_huggedItem
+            ? (Qt::AlignRight | Qt::AlignVCenter)
+            : (Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
     QWidget *m_host = nullptr;
+    QLayout *m_hostLayout = nullptr;
     QGridLayout *m_grid = nullptr;
-    QLabel *m_label = nullptr;
-    QLineEdit *m_input = nullptr;
-    QComboBox *m_combo = nullptr;
+    QList<QWidget *> m_items;
+    QList<int> m_wrapCounts;
+    int m_huggedItem = -1;
     bool m_placed = false;
-    bool m_singleRow = false;
+    int m_stage = 0;
+    QWidget *m_row0 = nullptr;
+    QWidget *m_row1 = nullptr;
+    QHBoxLayout *m_row0Layout = nullptr;
+    QHBoxLayout *m_row1Layout = nullptr;
 };
 
 // Diagnostic log sections are tracked by (key, scope) so a newer result can
@@ -2087,10 +2482,10 @@ static const LogWorkflowFilterSpec *logWorkflowFilterFor(const QString &key)
 // ===== The shared repair -> diagnostic invalidation map (round 30) ===========
 // The complete per-tool invalidation table lives in ONE data file:
 // data/repair-diagnostic-map.tsv (embedded at build time through
-// resources/boot-repair.qrc as ":/data/repair-diagnostic-map.tsv", with a
-// BOOT_REPAIR_SOURCE_DIR fallback for source-tree runs without the resource).
+// resources/boot-bitch.qrc as ":/data/repair-diagnostic-map.tsv", with a
+// BOOT_BITCH_SOURCE_DIR fallback for source-tree runs without the resource).
 // The modern GUI and the legacy Qt3 GUI consume the SAME file (the legacy GUI
-// ships a staged copy at /usr/share/boot-repair-legacy/
+// ships a staged copy at /usr/share/boot-bitch-legacy/
 // repair-diagnostic-map.tsv via scripts/package-legacy.sh), and the parity
 // contract (legacy/tests/test-ui-parity-qt3.sh) locks the row set plus a
 // golden checksum, so a one-sided edit or a divergence of either GUI from the
@@ -2252,10 +2647,10 @@ static const QList<RepairDiagnosticMapRow> &repairDiagnosticMapRows()
         if (resourceFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
             data = resourceFile.readAll();
         }
-#ifdef BOOT_REPAIR_SOURCE_DIR
+#ifdef BOOT_BITCH_SOURCE_DIR
         if (data.isEmpty()) {
             const QString sourcePath =
-                QDir(QString::fromLatin1(BOOT_REPAIR_SOURCE_DIR))
+                QDir(QString::fromLatin1(BOOT_BITCH_SOURCE_DIR))
                     .absoluteFilePath(QStringLiteral("data/repair-diagnostic-map.tsv"));
             QFile sourceFile(sourcePath);
             if (sourceFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2393,6 +2788,46 @@ int embeddedSectionStartLine(const QStringList &lines, int diagnosticLine)
         return diagnosticLine - 1;
     }
     return diagnosticLine;
+}
+
+// Round 204: an individual diagnostic's captured transcript OPENS with the
+// session framing (the protected-host check, the target-disk/root-component
+// and mount lines prepare_target emits before the section frame; the
+// running-host identity/disk/root lines on the host path).  Those lines
+// belong to the session, not the section — the coordinator's first Fedora
+// paste showed them inside the graphical-login diagnostic's output.  Keep
+// only the section's own frame: from the frame's opening divider above the
+// "Diagnostic: <key>" header to the end.  A capture WITHOUT that header (an
+// honest helper failure body, an older helper shape, the preamble-less
+// fs-inspect body) is returned unchanged — only the frame-anchored trim is
+// safe.  Consumers that parse the session lines (the root-component-fallback
+// reconciliation) receive the untrimmed capture from their callers.
+QString trimDiagnosticSessionFraming(const QString &captured, const QString &key)
+{
+    const QStringList lines = captured.split(QLatin1Char('\n'));
+    const QString headerPrefix = QStringLiteral("Diagnostic: ");
+    int header = -1;
+    for (int index = 0; index < lines.size(); ++index) {
+        if (lines.at(index).startsWith(headerPrefix)
+            && lines.at(index).mid(headerPrefix.size()).trimmed()
+                   .compare(key, Qt::CaseInsensitive) == 0) {
+            header = index;
+            break;
+        }
+    }
+    if (header < 0) {
+        return captured;
+    }
+    const int start = embeddedSectionStartLine(lines, header);
+    if (start <= 0) {
+        return captured;
+    }
+    QStringList trimmed;
+    trimmed.reserve(lines.size() - start);
+    for (int index = start; index < lines.size(); ++index) {
+        trimmed.append(lines.at(index));
+    }
+    return trimmed.join(QLatin1Char('\n')).trimmed();
 }
 
 // Extracts the complete embedded sections of the requested keys from a
@@ -2565,7 +3000,9 @@ const ReasonSpec kReasonSpecs[] = {
     { "cmdline-root-mismatch", QT_TRANSLATE_NOOP("MainWindow", "Embedded cmdline does not reference the live root UUID %1.") },
     { "cmdline-subvol-mismatch", QT_TRANSLATE_NOOP("MainWindow", "Embedded cmdline does not select the live Btrfs subvolume /%1.") },
     { "config-already-exists", QT_TRANSLATE_NOOP("MainWindow", "The Snapper root configuration already exists; no changes were made.") },
+    { "display-aborted", QT_TRANSLATE_NOOP("MainWindow", "The graphical login walk-through was cancelled; no changes were made.") },
     { "display-already-correct", QT_TRANSLATE_NOOP("MainWindow", "default.target and display-manager.service were already correct.") },
+    { "display-already-configured", QT_TRANSLATE_NOOP("MainWindow", "Already the configured display manager; nothing to change.") },
     { "display-already-correct-boot-tty", QT_TRANSLATE_NOOP("MainWindow", "The display manager configuration is already correct, but the last boot stopped at a text console (the display manager did not start); the failure is likely elsewhere (driver or service crash).") },
     { "dkms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "DKMS preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
     { "dnf4-unsupported", QT_TRANSLATE_NOOP("MainWindow", "dnf4 is not supported by the guarded rpm backend.") },
@@ -2740,11 +3177,17 @@ const ReasonSpec kReasonSpecs[] = {
     { "shell-no-filesystem-change", QT_TRANSLATE_NOOP("MainWindow", "The shell command made no diagnostic-relevant filesystem change.") },
     { "shell-package-manager-noop", QT_TRANSLATE_NOOP("MainWindow", "The package-manager command reported that there was nothing to do; no package or metadata change was applied.") },
     { "snapper-running", QT_TRANSLATE_NOOP("MainWindow", "Another snapper command is running.") },
+    { "snapper-refused", QT_TRANSLATE_NOOP("MainWindow", "snapper refused the deletion (exit code %1).") },
     { "snapshot-config-declined", QT_TRANSLATE_NOOP("MainWindow", "The snapshot configuration change was declined; nothing was changed.") },
+    { "snapshot-delete-invalid-id", QT_TRANSLATE_NOOP("MainWindow", "Only numeric Snapper snapshot ids can be deleted; %1 is not one (rollback undo points are recovery artifacts and are never deleted).") },
+    // Round 227 (plan §1 item 21): the staged-source delete guard's per-id
+    // refusal reason (the round-220 outcome machinery carries it into the
+    // PARTIAL rendering).
+    { "snapshot-delete-staged", QT_TRANSLATE_NOOP("MainWindow", "it is the actively staged rollback snapshot — cancel the staged rollback first.") },
+    { "snapshot-delete-verify-failed", QT_TRANSLATE_NOOP("MainWindow", "snapper reported success but the snapshot is still in the store.") },
     { "snapshot-store-exists", QT_TRANSLATE_NOOP("MainWindow", "A .snapshots store already exists without a Snapper root configuration; it is left untouched and no automatic merge is attempted.") },
     { "syslinux-bios-no-efi", QT_TRANSLATE_NOOP("MainWindow", "syslinux/extlinux (BIOS) boot detected; no EFI boot path is available.") },
     { "sysvinit-display-unsupported", QT_TRANSLATE_NOOP("MainWindow", "A sysvinit display-manager script was detected; offline repair is not implemented for sysvinit.") },
-    { "timeshift-present", QT_TRANSLATE_NOOP("MainWindow", "A Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported.") },
     { "uefi-nvram-readonly", QT_TRANSLATE_NOOP("MainWindow", "UEFI variables are not writable; the running host default EFI entry cannot be changed.") },
     { "uki-file-missing", QT_TRANSLATE_NOOP("MainWindow", "%1 is missing or empty.") },
     { "uki-kernel-not-installed", QT_TRANSLATE_NOOP("MainWindow", "Embedded kernel %1 is not installed under /boot.") },
@@ -2805,6 +3248,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "user-artifact-unsupported", QT_TRANSLATE_NOOP("MainWindow", "This package backend has no guarded local-package install verb; the user-supplied driver package is not offered.") },
     { "user-artifact-not-readable", QT_TRANSLATE_NOOP("MainWindow", "The user-supplied path %1 does not exist or is not a readable regular file; no install was attempted.") },
     { "user-artifact-not-a-package", QT_TRANSLATE_NOOP("MainWindow", "The user-supplied file %1 is not a provable driver package; no install was attempted.") },
+    { "user-artifact-preflight-refused", QT_TRANSLATE_NOOP("MainWindow", "The simulated preflight refused the user-supplied package %1 (%2); no install was attempted.") },
     { "user-artifact-verify-failed", QT_TRANSLATE_NOOP("MainWindow", "The package manager does not report the user-supplied package %1 as installed after the apply; the install is not claimed.") },
     // Round 96 (ITEM 1c, the live-verified conflict override) reasons.
     { "input-conflict-live-verified", QT_TRANSLATE_NOOP("MainWindow", "Blacklisting %1 would target a module of the live-verified working keyboard; the conflict pair is informational and the action is refused.") },
@@ -2998,7 +3442,12 @@ const MsgSpec kMsgSpecs[] = {
     { "display-console-skip-unknown", QT_TRANSLATE_NOOP("MainWindow", "The effective kernel command line could not be determined read-only; the console routing was not changed.") },
     { "display-console-skip-unsupported", QT_TRANSLATE_NOOP("MainWindow", "The console-routing fix is not implemented for the detected %1 boot configuration; the visible-console fix was not applied.") },
     { "display-console-syntax-check", QT_TRANSLATE_NOOP("MainWindow", "Check the edited /etc/default/grub shell syntax") },
+    { "dm-active-overrides-configured", QT_TRANSLATE_NOOP("MainWindow", "The running host's active display manager is %1; the display-manager.service alias still points to %2, so the evidence follows the active manager.") },
+    { "dm-already-configured", QT_TRANSLATE_NOOP("MainWindow", "%1 is already the configured display manager; nothing to change.") },
+    { "dm-autologin-migration-unknown", QT_TRANSLATE_NOOP("MainWindow", "Autologin migration for %1 is not supported; re-configure it manually if needed.") },
+    { "dm-autologin-preserved", QT_TRANSLATE_NOOP("MainWindow", "Autologin for %1 was migrated into the %2 configuration.") },
     { "dm-configured-offline", QT_TRANSLATE_NOOP("MainWindow", "%1 was configured offline only; Boot Bitch intentionally did not start a graphical session.") },
+    { "dm-debconf-preseed", QT_TRANSLATE_NOOP("MainWindow", "Pre-seeded the target's debconf default display manager: %1.") },
     { "dm-configured-offline-chroot", QT_TRANSLATE_NOOP("MainWindow", "%1 was configured offline only; Boot Bitch intentionally did not start a graphical session inside the chroot.") },
     { "dm-default-link-pass", QT_TRANSLATE_NOOP("MainWindow", "PASS: default.target -> %1") },
     { "dm-detected", QT_TRANSLATE_NOOP("MainWindow", "Detected display manager: %1 (%2)") },
@@ -3019,9 +3468,23 @@ const MsgSpec kMsgSpecs[] = {
     { "dm-selected-multiple", QT_TRANSLATE_NOOP("MainWindow", "Selected %1 from last-boot display-manager journal evidence because multiple managers are installed.") },
     { "dm-simulate", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE/PREFLIGHT: graphical login / display manager") },
     { "dm-static-unit", QT_TRANSLATE_NOOP("MainWindow", "%1 is a static unit; preserving it through the display-manager.service alias.") },
+    { "dm-stale-alias-removed", QT_TRANSLATE_NOOP("MainWindow", "Removed the stale display-manager.service alias symlink so the enable can re-create it for the target manager.") },
+    { "dm-scoped-regen-begin", QT_TRANSLATE_NOOP("MainWindow", "Refreshing the affected diagnostic sections (display, packages, backend, usage) from the changed state…") },
+    { "dm-scoped-regen-end", QT_TRANSLATE_NOOP("MainWindow", "Affected diagnostic sections refreshed; the walk-through stays open.") },
+    { "scoped-regen-begin", QT_TRANSLATE_NOOP("MainWindow", "Refreshing the affected diagnostic sections from the changed state…") },
+    { "scoped-regen-end", QT_TRANSLATE_NOOP("MainWindow", "Affected diagnostic sections refreshed; the menu stays open.") },
     { "dm-systemd-analyze-unavailable", QT_TRANSLATE_NOOP("MainWindow", "WARNING: systemd-analyze is unavailable; skipped headless display-manager verification.") },
     { "dm-systemd-verify-issues", QT_TRANSLATE_NOOP("MainWindow", "WARNING: headless systemd verification reported issues for %1 (the manager will not be started during repair).") },
     { "dm-systemd-verify-pass", QT_TRANSLATE_NOOP("MainWindow", "PASS: headless systemd verification for %1") },
+    { "dm-restore-outcome", QT_TRANSLATE_NOOP("MainWindow", "Display manager restored: %1.") },
+    { "dm-switch-complete", QT_TRANSLATE_NOOP("MainWindow", "Display manager switched: %1 → %2.") },
+    { "dm-switch-install-plan", QT_TRANSLATE_NOOP("MainWindow", "Installing the missing %1 display manager before the switch.") },
+    { "dm-template-instance", QT_TRANSLATE_NOOP("MainWindow", "Template display-manager switch: enabling the %2 instance of %1 (display TTY %3).") },
+    { "dm-template-unit", QT_TRANSLATE_NOOP("MainWindow", "%1 ships only the template unit %2; the switch uses the template-instantiation flow.") },
+    { "dm-vendor-default", QT_TRANSLATE_NOOP("MainWindow", "Vendor default display manager: %1 (derived from %2).") },
+    { "dm-vendor-default-undecidable", QT_TRANSLATE_NOOP("MainWindow", "No vendor default display manager could be derived from installed package evidence; restoring the configured manager %1.") },
+    { "dm-walkthrough-switch", QT_TRANSLATE_NOOP("MainWindow", "Switching the graphical login manager from %1 to %2.") },
+    { "dm-x11-registry-repaired", QT_TRANSLATE_NOOP("MainWindow", "Corrected the stale X11 display-manager registry (it named %2) to the configured %1 binary.") },
     { "dnf5-download-size", QT_TRANSLATE_NOOP("MainWindow", "This transaction downloads approximately %1.") },
     { "dnf5-reinstall-resolved", QT_TRANSLATE_NOOP("MainWindow", "The requested package '%1' is no longer available at the recorded version; the reinstall was re-resolved to the currently installed version of '%2'.") },
     { "dnf5-kernel-replacement", QT_TRANSLATE_NOOP("MainWindow", "PASS: dnf5 upgrade removes only the old kernel package(s) (%1) — accepted as in-place kernel replacement.") },
@@ -3190,6 +3653,39 @@ const MsgSpec kMsgSpecs[] = {
     { "host-rollback-fingerprints", QT_TRANSLATE_NOOP("MainWindow", "Pre-rollback boot artifact fingerprints: fstab=%1 grub=%2 cmdline=%3 uki=%4") },
     { "host-rollback-migrating-snapshots", QT_TRANSLATE_NOOP("MainWindow", "Migrating nested @/.snapshots child subvolume into the promoted root.") },
     { "host-rollback-chained-preserve", QT_TRANSLATE_NOOP("MainWindow", "Staged state: re-preserving the running %1 root as %2 and moving the earlier staged root aside (it stays on disk, no longer the recorded undo point).") },
+    { "host-rollback-cancel-complete", QT_TRANSLATE_NOOP("MainWindow", "RUNNING-HOST ROLLBACK CANCEL COMPLETE: the staged %1 root was un-staged; the next reboot starts the original root.") },
+    { "host-rollback-cancel-already-unstaged", QT_TRANSLATE_NOOP("MainWindow", "RUNNING-HOST ROLLBACK CANCEL: the staged rollback was already un-staged — the running %1 root is the Btrfs default root again; nothing was pending and nothing was changed.") },
+    { "host-rollback-cancel-declined", QT_TRANSLATE_NOOP("MainWindow", "RUNNING-HOST ROLLBACK CANCEL SKIPPED: the confirmation prompt was declined or expired; the staged rollback remains in effect.") },
+    { "host-rollback-cancel-not-staged", QT_TRANSLATE_NOOP("MainWindow", "No staged running-host rollback was detected; nothing was changed.") },
+    { "host-rollback-cancel-plan", QT_TRANSLATE_NOOP("MainWindow", "Running-host rollback cancel plan: the preserved %1 root will be restored as the default %2 root; the staged root is retained under a timestamped -failed- staging name.") },
+    { "host-rollback-cancel-restage-attempt", QT_TRANSLATE_NOOP("MainWindow", "HOST ROLLBACK CANCEL RECOVERY: re-promoting the staged root.") },
+    { "host-rollback-cancel-restage-attempt-required", QT_TRANSLATE_NOOP("MainWindow", "The un-stage failed; automatically re-promoting the staged root.") },
+    { "host-rollback-cancel-restage-reconcile-failed", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: the re-staged root's boot-stack reconciliation also failed. Manual boot repair may be required before reboot.") },
+    { "host-rollback-cancel-restage-unresolvable", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not re-prove the staged state after a failed un-stage.") },
+    { "host-rollback-cancel-restaged", QT_TRANSLATE_NOOP("MainWindow", "PASS: the staged %1 root was re-promoted as the default; the staged rollback remains in effect.") },
+    { "host-rollback-cancel-restored", QT_TRANSLATE_NOOP("MainWindow", "PASS: the preserved pre-rollback root and its boot stack were restored; the staged rollback is cancelled. Staged root retained as %1.") },
+    { "host-rollback-cancel-restoring", QT_TRANSLATE_NOOP("MainWindow", "HOST ROLLBACK CANCEL: restoring the preserved pre-rollback root as the default.") },
+    // Round 222 (plan §1 item 16): the TARGET-side cancel msg keys — the
+    // round-189 host-cancel wording with the target truth (the recovery host
+    // never reboots the target; the next boot is the target's own).
+    { "rollback-cancel-complete", QT_TRANSLATE_NOOP("MainWindow", "TARGET ROLLBACK CANCEL COMPLETE: the staged %1 root was un-staged; the repair target starts the original root the next time it boots.") },
+    { "rollback-cancel-already-unstaged", QT_TRANSLATE_NOOP("MainWindow", "TARGET ROLLBACK CANCEL: the staged rollback was already un-staged — the restored original %1 root is the Btrfs default root again; nothing was pending and nothing was changed.") },
+    { "rollback-cancel-declined", QT_TRANSLATE_NOOP("MainWindow", "TARGET ROLLBACK CANCEL SKIPPED: the confirmation prompt was declined or expired; the staged rollback remains in effect.") },
+    { "rollback-cancel-not-staged", QT_TRANSLATE_NOOP("MainWindow", "No staged repair-target rollback was detected; nothing was changed.") },
+    // Round 224 (adjacent-findings plan A2): the /home opt-in swap undo — the
+    // un-stage restores the swapped /home together with the root (the
+    // round-150 swap-restore branch) and the plan/completion name it.
+    { "rollback-cancel-home-plan", QT_TRANSLATE_NOOP("MainWindow", "Repair-target rollback cancel plan: the /home opt-in swap will be restored with the root — the swapped /home subvolume %1 is removed and the preserved /home undo point %2 returns as the /home subvolume.") },
+    { "rollback-cancel-home-restore-failed", QT_TRANSLATE_NOOP("MainWindow", "WARN: the /home swap could not be restored during the un-stage; the preserved /home undo point %1 remains on disk and /home stays swapped. The preserved undo point keeps the original /home recoverable.") },
+    { "rollback-cancel-home-restored", QT_TRANSLATE_NOOP("MainWindow", "PASS: the /home opt-in swap was restored — the swapped /home subvolume %1 was removed and the preserved %2 undo point returns as the /home subvolume.") },
+    { "rollback-cancel-plan", QT_TRANSLATE_NOOP("MainWindow", "Repair-target rollback cancel plan: the preserved %1 root will be restored as the default %2 root; the staged root is retained under a timestamped -failed- staging name.") },
+    { "rollback-cancel-restage-attempt", QT_TRANSLATE_NOOP("MainWindow", "TARGET ROLLBACK CANCEL RECOVERY: re-promoting the staged root.") },
+    { "rollback-cancel-restage-attempt-required", QT_TRANSLATE_NOOP("MainWindow", "The un-stage failed; automatically re-promoting the staged root.") },
+    { "rollback-cancel-restage-reconcile-failed", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: the re-staged root's boot-stack reconciliation also failed. Manual boot repair may be required before the target next boots.") },
+    { "rollback-cancel-restage-unresolvable", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not re-prove the staged state after a failed un-stage.") },
+    { "rollback-cancel-restaged", QT_TRANSLATE_NOOP("MainWindow", "PASS: the staged %1 root was re-promoted as the default; the staged rollback remains in effect.") },
+    { "rollback-cancel-restored", QT_TRANSLATE_NOOP("MainWindow", "PASS: the preserved pre-rollback root and its boot stack were restored; the staged rollback is cancelled. Staged root retained as %1.") },
+    { "rollback-cancel-restoring", QT_TRANSLATE_NOOP("MainWindow", "TARGET ROLLBACK CANCEL: restoring the preserved pre-rollback root as the default.") },
     { "host-rollback-mount-failed", QT_TRANSLATE_NOOP("MainWindow", "Host rollback candidate mount/preflight failed; automatically restoring the preserved root.") },
     { "host-rollback-original-restored", QT_TRANSLATE_NOOP("MainWindow", "PASS: the original @ and its boot stack were restored automatically. Failed rollback candidate retained as %1.") },
     { "host-rollback-original-restored-bootstack-failed", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: the original @ was restored, but its boot-stack reconciliation also failed. Manual boot repair is required before reboot.") },
@@ -3311,6 +3807,7 @@ const MsgSpec kMsgSpecs[] = {
     { "rollback-cannot-determine-id", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not determine the preserved root subvolume ID.") },
     { "rollback-cannot-move-candidate", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not move failed rollback candidate out of @; refusing to promote the preserved root.") },
     { "rollback-cannot-move-snapshots", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not move the nested .snapshots child back into the preserved root.") },
+    { "rollback-cannot-restore-home-swap", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not restore the /home opt-in swap during the preserved-root restore; the preserved /home undo point %1 remains on disk and /home stays swapped.") },
     { "rollback-cannot-remount", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not remount the Btrfs top-level filesystem read-write during rollback recovery.") },
     { "rollback-cannot-restore-default", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: could not restore the previous Btrfs default subvolume.") },
     { "rollback-creating-candidate", QT_TRANSLATE_NOOP("MainWindow", "Creating writable rollback candidate %1") },
@@ -3390,6 +3887,21 @@ const MsgSpec kMsgSpecs[] = {
     { "snapshot-rollback-declined", QT_TRANSLATE_NOOP("MainWindow", "SNAPSHOT ROLLBACK SKIPPED: the confirmation prompt was declined or expired; no changes were made.") },
     { "snapshot-create-declined", QT_TRANSLATE_NOOP("MainWindow", "MANUAL SNAPSHOT SKIPPED: the confirmation prompt was declined or expired; no changes were made.") },
     { "snapshot-create-complete", QT_TRANSLATE_NOOP("MainWindow", "Manual snapshot created on %1: one single-type 'Boot Bitch manual snapshot' was added to the snapshot store.") },
+    // Round 220 (ITEM 1): the snapshot-deletion batch outcomes (per-id and
+    // batch verdicts — the helper emits these keyed like every display line).
+    { "snapshot-delete-declined", QT_TRANSLATE_NOOP("MainWindow", "SNAPSHOT DELETE SKIPPED: the confirmation prompt was declined or expired; no changes were made.") },
+    { "snapshot-delete-one", QT_TRANSLATE_NOOP("MainWindow", "Snapshot %1 deleted.") },
+    { "snapshot-delete-absent", QT_TRANSLATE_NOOP("MainWindow", "Snapshot %1 was already gone; nothing was deleted.") },
+    { "snapshot-delete-refused", QT_TRANSLATE_NOOP("MainWindow", "Snapshot %1 could not be deleted: snapper refused it (exit code %2).") },
+    { "snapshot-delete-verify-failed", QT_TRANSLATE_NOOP("MainWindow", "Snapshot %1: snapper reported success but the snapshot is still in the store; the outcome is recorded as a failure.") },
+    { "snapshot-delete-complete", QT_TRANSLATE_NOOP("MainWindow", "Snapshot deletion complete: %1 deleted, %2 already gone, %3 failed.") },
+    { "snapshot-delete-partial", QT_TRANSLATE_NOOP("MainWindow", "Snapshot deletion partially completed: %1 deleted, %2 already gone, %3 failed.") },
+    // Round 227 (plan §1 item 21): the staged-source delete guard — the per-id
+    // terminal information naming the protected snapshot, the unresolvable
+    // record's honest ambiguity report, and the record-write failure report.
+    { "snapshot-delete-staged", QT_TRANSLATE_NOOP("MainWindow", "Snapshot %1 cannot be deleted: it is the actively staged rollback snapshot — cancel the staged rollback first.") },
+    { "snapshot-delete-staged-ambiguous", QT_TRANSLATE_NOOP("MainWindow", "A staged rollback state exists but its source snapshot id could not be resolved; the staged snapshot is not protected from this deletion.") },
+    { "snapshot-staged-source-record-failed", QT_TRANSLATE_NOOP("MainWindow", "The staged rollback completed but its source snapshot record could not be persisted; the staged snapshot is not protected from deletion until the record is written.") },
     { "snapshot-selected", QT_TRANSLATE_NOOP("MainWindow", "Selected snapshot: %1") },
     { "snapshot-source-unchanged", QT_TRANSLATE_NOOP("MainWindow", "Source snapshot retained unchanged.") },
     { "snapshot-config-already-exists", QT_TRANSLATE_NOOP("MainWindow", "The Snapper root configuration already exists in this scope; no changes were made.") },
@@ -6871,8 +7383,8 @@ QString MainWindow::localizedDiagnosticReport(const QString &raw) const
     return localizeDiagnosticReportLines(displayLocalizedHelperOutput(raw));
 }
 
-#ifdef BOOT_REPAIR_UI_TEST
-// Test seam (compiled into boot-repair-ui-tests only): expose the resolved
+#ifdef BOOT_BITCH_UI_TEST
+// Test seam (compiled into boot-bitch-ui-tests only): expose the resolved
 // entry id of the host-default verification parser so the Fedora/BIOS
 // unchanged-result classification can be asserted without running the
 // privileged helper. Defined outside the file-local anonymous namespace so the
@@ -6890,7 +7402,7 @@ QString hostDefaultVerifiedEntryIdForTest(const QString &output)
 // loaders may contain spaces, so TAB is the only field separator and rows are
 // never split on whitespace. This free function holds the real parsing because
 // MainWindow::parseBootEntriesOutput() is a private static with no friend; the
-// UI test seam below re-exposes it for the boot-repair-ui-tests translation
+// UI test seam below re-exposes it for the boot-bitch-ui-tests translation
 // unit without opening the class.
 namespace {
 BootEntriesInventory parseBootEntriesOutputImpl(const QString &output)
@@ -6947,8 +7459,8 @@ BootEntriesInventory MainWindow::parseBootEntriesOutput(const QString &output)
     return parseBootEntriesOutputImpl(output);
 }
 
-#ifdef BOOT_REPAIR_UI_TEST
-// Test seam (compiled into boot-repair-ui-tests only): re-expose the file-local
+#ifdef BOOT_BITCH_UI_TEST
+// Test seam (compiled into boot-bitch-ui-tests only): re-expose the file-local
 // efi-list parser so the UI regression suite can assert the protocol parse
 // without a privileged helper. Production never builds this symbol.
 BootEntriesInventory parseBootEntriesOutputForTest(const QString &output)
@@ -6963,7 +7475,7 @@ BootEntriesInventory parseBootEntriesOutputForTest(const QString &output)
 // order. Titles may contain spaces, so TAB is the only field separator and rows
 // are never split on whitespace. This free function holds the real parsing
 // because MainWindow::parseGrubMenuOutput() is a private static with no friend;
-// the UI test seam below re-exposes it for the boot-repair-ui-tests translation
+// the UI test seam below re-exposes it for the boot-bitch-ui-tests translation
 // unit without opening the class.
 namespace {
 GrubMenuInventory parseGrubMenuOutputImpl(const QString &output)
@@ -7020,8 +7532,8 @@ GrubMenuInventory MainWindow::parseGrubMenuOutput(const QString &output)
     return parseGrubMenuOutputImpl(output);
 }
 
-#ifdef BOOT_REPAIR_UI_TEST
-// Test seam (compiled into boot-repair-ui-tests only): re-expose the file-local
+#ifdef BOOT_BITCH_UI_TEST
+// Test seam (compiled into boot-bitch-ui-tests only): re-expose the file-local
 // grub-list parser so the UI regression suite can assert the protocol parse
 // without a privileged helper. Production never builds this symbol.
 GrubMenuInventory parseGrubMenuOutputForTest(const QString &output)
@@ -7082,8 +7594,8 @@ ExtlinuxInventory MainWindow::parseExtlinuxOutput(const QString &output)
     return parseExtlinuxOutputImpl(output);
 }
 
-#ifdef BOOT_REPAIR_UI_TEST
-// Test seam (compiled into boot-repair-ui-tests only): re-expose the file-local
+#ifdef BOOT_BITCH_UI_TEST
+// Test seam (compiled into boot-bitch-ui-tests only): re-expose the file-local
 // extlinux-list parser so the UI regression suite can assert the protocol parse
 // without a privileged helper. Production never builds this symbol.
 ExtlinuxInventory parseExtlinuxOutputForTest(const QString &output)
@@ -7139,8 +7651,8 @@ GrubLegacyInventory MainWindow::parseGrubLegacyOutput(const QString &output)
     return parseGrubLegacyOutputImpl(output);
 }
 
-#ifdef BOOT_REPAIR_UI_TEST
-// Test seam (compiled into boot-repair-ui-tests only): re-expose the file-local
+#ifdef BOOT_BITCH_UI_TEST
+// Test seam (compiled into boot-bitch-ui-tests only): re-expose the file-local
 // grub-legacy-list parser so the UI regression suite can assert the protocol
 // parse without a privileged helper. Production never builds this symbol.
 GrubLegacyInventory parseGrubLegacyOutputForTest(const QString &output)
@@ -7392,15 +7904,15 @@ SortableTableItem::SortableTableItem(const QString &text, const QVariant &sortKe
     : QTableWidgetItem(text)
 {
     if (sortKey.isValid()) {
-        setData(BootRepairSortKeyRole, sortKey);
+        setData(BootBitchSortKeyRole, sortKey);
     }
 }
 
 bool SortableTableItem::operator<(const QTableWidgetItem &other) const
 {
     int comparison = 0;
-    if (compareExplicitSortKeys(data(BootRepairSortKeyRole),
-                                other.data(BootRepairSortKeyRole), &comparison)
+    if (compareExplicitSortKeys(data(BootBitchSortKeyRole),
+                                other.data(BootBitchSortKeyRole), &comparison)
         && comparison != 0) {
         return comparison < 0;
     }
@@ -7416,8 +7928,8 @@ bool SortableTreeWidgetItem::operator<(const QTreeWidgetItem &other) const
     }
 
     int comparison = 0;
-    if (compareExplicitSortKeys(data(column, BootRepairSortKeyRole),
-                                other.data(column, BootRepairSortKeyRole), &comparison)
+    if (compareExplicitSortKeys(data(column, BootBitchSortKeyRole),
+                                other.data(column, BootBitchSortKeyRole), &comparison)
         && comparison != 0) {
         return comparison < 0;
     }
@@ -7664,7 +8176,7 @@ void MainWindow::applyPortableFileDialogPolicy()
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_scanner(new SystemScanner(this))
-    , m_settings(new QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"), this))
+    , m_settings(new QSettings(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"), this))
 {
     // A7-04: the settings file persists scoped UI state and the running-host
     // reboot-required marker; keep it readable and writable only by the
@@ -7765,7 +8277,8 @@ MainWindow::MainWindow(QWidget *parent)
     titleFont.setBold(true);
     title->setFont(titleFont);
     titleColumn->addWidget(title);
-    titleColumn->addWidget(subtleLabel(tr("Linux recovery and boot-repair utility")));
+    auto *subtitle = subtleLabel(tr("Linux recovery and boot-repair utility"));
+    titleColumn->addWidget(subtitle);
 
     auto *modeBadge = new QLabel(tr("GUARDED REPAIR  •  %1").arg(QCoreApplication::applicationVersion()));
     QFont badgeFont = modeBadge->font();
@@ -7918,6 +8431,14 @@ MainWindow::MainWindow(QWidget *parent)
         QWidget *page = m_tabs->widget(index);
         if (page == m_snapshotsPage) {
             QTimer::singleShot(0, this, [this] { resizeSnapshotRows(); });
+        }
+        // Round 210 (ITEM 3): the device-tree frame hug measures real row
+        // geometry, which only exists once the Systems page is visible in the
+        // tab stack (a populate while hidden skips the measurement) — re-apply
+        // the hug on the next event-loop turn when the page becomes current
+        // (the T3.1 tab-visibility hook).
+        if (page == m_systemsPage) {
+            QTimer::singleShot(0, this, &MainWindow::updateDeviceTreeHeight);
         }
         // The Settings page's upper pane wraps against its final viewport width,
         // which is only known once the page becomes visible in the tab stack;
@@ -8127,11 +8648,27 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             scheduleColorSchemeRefresh();
         }
     }
+    // Round 222 (plan §1 item 14): the Diagnostics scroll content's own
+    // Resize/LayoutRequest/Show re-apply the stacked content minimum — the
+    // wrap-state change trigger (the scope-label text change and the reflow
+    // re-placement never fire a window resizeEvent; the ResponsiveHeaderReflow
+    // pattern).  The re-measure is convergent (a no-change pass schedules
+    // nothing), so the hook is bounded and safe inside the layout events.
+    if (m_diagnosticsScrollContent && watched == m_diagnosticsScrollContent
+        && (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest
+            || event->type() == QEvent::Show)) {
+        applyDiagnosticsStackedContentFloor();
+    }
     // Keep the shrink-only columns and the stretched Status column in step with
     // the pane width; a wrap-width change also changes the wrapped row heights.
     if (m_deviceTree && watched == m_deviceTree->viewport()
         && event->type() == QEvent::Resize) {
         applyDeviceColumnLayout();
+        // Round 210 (ITEM 3): the frame hug depends on the wrapped row
+        // heights, which follow the wrap width — re-measure after every
+        // viewport width change (the T3.10 width-change re-hug rule).  The
+        // pass's own re-entrancy guard + convergence chain keep this bounded.
+        updateDeviceTreeHeight();
     }
     // The shell command field is single-line, so Up/Down are otherwise unused;
     // consume them to navigate the session command history.
@@ -8662,7 +9199,55 @@ QWidget *MainWindow::buildSystemsPage()
 QWidget *MainWindow::buildDiagnosticsPage()
 {
     auto *page = new QWidget;
-    auto *layout = new QVBoxLayout(page);
+    auto *outerLayout = new QVBoxLayout(page);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    // Round 218 (plan §1 item 9): the page-level vertical scroll area (the
+    // round-217 Logs-tab pattern).  The window minimum is the FIXED 480 x 500,
+    // so at the minimum size the stacked diagnostic splitter's pane floors
+    // (the detail box's full content — title, description, availability,
+    // results, the Copy/Save buttons) exceed the tab viewport and the
+    // content below the "Selected diagnostic" group title was clipped with
+    // no way to reach it (the user's TUXEDO observation: the last visible
+    // line was "Ausgewählte Diagnose" with the "Ergebnisse kopieren" /
+    // "Ergebnisse speichern" buttons cut off).  The scroll area guarantees
+    // the content widget never gets less than its layout minimum, so the
+    // vertical scrollbar engages BEFORE anything below the buttons is cut
+    // off and all content stays reachable by scrolling.  NO floor, minimum
+    // or window-minimum change: the splitter's 350 (stacked) / 330
+    // (side-by-side) floors, the fractional pane minimums and the
+    // ResponsiveHeaderReflow thresholds stay byte-unchanged — only the
+    // scrollbar trigger timing is new.  The house pattern (the round-217
+    // Logs page): widgetResizable + NoFrame + horizontal off + vertical
+    // ScrollBarAsNeeded + the content pinned to the viewport width.
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // The stretch-1 fill (plan-adjacent-findings B3): the scroll area is
+    // the page's ONLY outer child and must take the full page height — the
+    // house pattern every other page uses (Systems, Boot entries,
+    // Snapshots, Settings, File Copy).  The wide-state splitter share is
+    // byte-unchanged: the splitter keeps its stretch-1 slot INSIDE the
+    // content layout, and the outer stretch only hands the scroll area the
+    // page's own leftover space.
+    outerLayout->addWidget(scroll, 1);
+
+    auto *content = new QWidget;
+    content->setMinimumWidth(0);
+    content->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // Round 222 (plan §1 item 14): the content's own Resize/LayoutRequest/
+    // Show re-apply the stacked scroll-content minimum (the wrap-state
+    // change trigger — the ResponsiveHeaderReflow pattern): the scope-label
+    // text change and the reflow re-placement never fire a window
+    // resizeEvent, so the re-measure hooks the content's own layout events
+    // instead (MainWindow::eventFilter).
+    content->installEventFilter(this);
+    scroll->setWidget(content);
+
+    auto *layout = new QVBoxLayout(content);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
@@ -8725,7 +9310,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_editTargetConfigButton->setVisible(false);
     m_editTargetConfigButton->setToolTip(tr("Read or edit the selected target configuration file."));
     layout->addLayout(heading);
-    new ResponsiveHeaderReflow(page, layout, heading, diagnosticsHeading, diagnosticsHelp,
+    new ResponsiveHeaderReflow(content, layout, heading, diagnosticsHeading, diagnosticsHelp,
                                m_diagnosticScopeLabel, {m_runAllDiagnosticsButton, m_diagnosticsCancelButton});
     auto *configRow = new QHBoxLayout;
     configRow->setContentsMargins(0, 0, 0, 0);
@@ -8749,6 +9334,16 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticList->setAlternatingRowColors(true);
     m_diagnosticList->setTextElideMode(Qt::ElideRight);
     installCopyAction(m_diagnosticList);
+    // Round 223 (plan §1 item 18): the SAME vertical floor as the Repair
+    // tab's "Individual repair tools" tree — about four visible rows at the
+    // smallest window width + height (the reference behavior measured at
+    // 480x500; the Repair tree's minimum uses the identical formula).  The
+    // stacked pane then shows at least those four rows and the list scrolls
+    // past the rest; the round-218/222 stacked content floor derives from
+    // the panes' own minimums, so the page-scroll trigger timing follows
+    // automatically (the round-218/222 semantics stay byte-unchanged).
+    m_diagnosticList->setMinimumHeight(
+        4 * (m_diagnosticList->fontMetrics().lineSpacing() + 10));
 
     for (const DiagnosticSpec &spec : diagnosticSpecs()) {
         auto *item = new QListWidgetItem(themedIcon(QString::fromLatin1(spec.icon)),
@@ -8767,11 +9362,20 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticTitle = sectionTitle(tr("Select a diagnostic"));
     detailLayout->addWidget(m_diagnosticTitle);
 
-    m_diagnosticDescription = subtleLabel(tr("Choose a diagnostic from the list."));
+    // Round 223 (plan §1 item 14 REOPENED): the detail-pane text labels are
+    // WrappedDialogLabel instances — their minimumSizeHint reports the REAL
+    // wrapped height at the real pane width.  A bare subtleLabel (the T3.20
+    // selectable-wrapped-QLabel trap) reported the text wrapped at the
+    // construction-time width as its minimum, so the detail box's (and the
+    // splitter's) minimumSizeHint under-reported the real pane minimum by the
+    // description's wrap delta — the round-222 scroll-content floor consumed
+    // the under-reported value and the last button row got clipped under the
+    // user's real conditions (Breeze + HiDPI + a long selected description).
+    m_diagnosticDescription = new WrappedDialogLabel(tr("Choose a diagnostic from the list."));
     m_diagnosticDescription->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     detailLayout->addWidget(m_diagnosticDescription);
 
-    m_diagnosticAvailability = subtleLabel(tr("Ready"));
+    m_diagnosticAvailability = new WrappedDialogLabel(tr("Ready"));
     QFont availabilityFont = m_diagnosticAvailability->font();
     availabilityFont.setBold(true);
     m_diagnosticAvailability->setFont(availabilityFont);
@@ -8804,6 +9408,29 @@ QWidget *MainWindow::buildDiagnosticsPage()
     QFont diagnosticMono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     diagnosticMono.setPointSizeF(QApplication::font().pointSizeF());
     m_diagnosticResults->setFont(diagnosticMono);
+    // Round 230 (ITEM 1): the results box vertical floor.  At the minimum
+    // application width (the stacked layout) the "Ergebnisse" window inside
+    // "Ausgewählte Diagnose" shrank to ~5 lines of diagnostic text as the
+    // window height decreased.  The box now keeps a ~13-line mono floor —
+    // the same behavior the Systems tab's "Selected drive details" box
+    // already has (its inner scroll carries a fixed minimum height and the
+    // overflow rides the inner scrollbar) — while the page-level scroll
+    // area absorbs the rest (the §2.1 window-shrinking contract: the window
+    // minimum stays 480x500; the floor constrains the BOX within the page's
+    // own scroll budget).  The floor is line-based (13 x the results font's
+    // real line spacing) so it follows the font-metric families across
+    // distributions, plus the document margin and the frame chrome; the
+    // explicit minimum feeds the detail box's layout minimum, so both the
+    // construction-time stacked content floor and the round-222/223 live
+    // pass pick it up automatically (the page scrollbar engages exactly
+    // when the viewport can no longer fit the floored box).
+    {
+        const int resultsLine = m_diagnosticResults->fontMetrics().lineSpacing();
+        const int resultsFloor = 13 * resultsLine
+            + 2 * static_cast<int>(m_diagnosticResults->document()->documentMargin())
+            + 2 * m_diagnosticResults->frameWidth();
+        m_diagnosticResults->setMinimumHeight(resultsFloor);
+    }
     detailLayout->addWidget(m_diagnosticResults, 1);
 
     auto *resultButtons = new QHBoxLayout;
@@ -8826,6 +9453,56 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticSplitter->setStretchFactor(1, 5);
     m_diagnosticSplitter->setSizes({280, 760});
     layout->addWidget(m_diagnosticSplitter, 1);
+
+    // Round 218 (plan §1 item 9): the stacked content floor — a
+    // construction-time constant, never a runtime budget pass (the round-217
+    // Logs-tab companion, applied at the same place: the stacked branch of
+    // updateResponsiveLayout).  The diagnostic splitter's own floors stay
+    // byte-unchanged (350 stacked / 330 side-by-side), so when the stacked
+    // panes' content floors exceed the 350-px minimum the panes would
+    // overflow the splitter's geometry and hang below the scroll range (the
+    // user's TUXEDO observation: the "Ergebnisse kopieren"/"Ergebnisse
+    // speichern" buttons cut off with no way to reach them).  The floor is
+    // derived from the page's own widget minimums exactly like the round-217
+    // Logs floor: the detail box's construction-time minimum plus the
+    // description's wrap-trap excess (a wrapped selectable QLabel reports
+    // the text wrapped at its construction-time width — the T3.20 trap —
+    // never the real pane width, so the excess is bounded by the height at
+    // the trap width 121 px) plus one mono line for the style-polish growth
+    // (measured on the Logs page: 58 px at construction -> 65 px laid out);
+    // the list pane keeps its own content minimum (its minimumSizeHint —
+    // the list and its group chrome carry no wrapped labels); and the
+    // heading takes its stacked worst case (the action row plus the scope
+    // label's two-line floor).  The constant only feeds the scroll area's
+    // trigger timing: the vertical scrollbar engages exactly when the
+    // viewport can no longer fit the stacked content, and the content
+    // widget's extra height hands the stretch-1 splitter the pane sum, so
+    // the panes lay out complete and everything stays reachable by
+    // scrolling.  Nothing else changes: no floor, minimum or window-minimum
+    // edit.
+    {
+        const int actionLine = qMax(
+            m_runAllDiagnosticsButton->minimumSizeHint().height(),
+            m_diagnosticsCancelButton->minimumSizeHint().height());
+        const int scopeLine = qMax(1, m_diagnosticScopeLabel->fontMetrics().lineSpacing());
+        // The scope label always reports its two-line floor (the
+        // WrappedScopeLabel form); the 8-px pad covers the title/help row's
+        // style polish over the action-row height.
+        const int headingWorst = actionLine + heading->verticalSpacing()
+            + qMax(2 * scopeLine, actionLine) + 8;
+        const int descTrap = m_diagnosticDescription->heightForWidth(121);
+        const int monoLine = qMax(1, m_diagnosticResults->fontMetrics().lineSpacing());
+        const int detailFloor = detailBox->minimumSizeHint().height()
+            - m_diagnosticDescription->minimumSizeHint().height()
+            + descTrap + monoLine;
+        const int listFloor = listBox->minimumSizeHint().height();
+        m_diagnosticsStackedContentFloor = layout->contentsMargins().top()
+            + headingWorst
+            + layout->spacing()
+            + listFloor + m_diagnosticSplitter->handleWidth() + detailFloor
+            + layout->contentsMargins().bottom();
+        m_diagnosticsScrollContent = content;
+    }
 
     connect(m_diagnosticList, &QListWidget::currentRowChanged, this, &MainWindow::updateDiagnosticDetails);
     connect(m_runDiagnosticButton, &QPushButton::clicked, this, &MainWindow::runSelectedDiagnostic);
@@ -9195,28 +9872,88 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_hostRebootBanner->setObjectName(QStringLiteral("hostRebootBanner"));
     m_hostRebootBanner->setFrameShape(QFrame::StyledPanel);
     m_hostRebootBanner->setFrameShadow(QFrame::Plain);
-    auto *rebootBannerLayout = new QHBoxLayout(m_hostRebootBanner);
+    // Round 231 (plan §1 item 22, the Sparky reflow): the banner stacks like
+    // the Systems-tab protected-host card — the wrapped info line owns the
+    // FULL banner width on the top row, and the Reboot Now/Later/Cancel row
+    // is its own right-anchored container below (the round-219 per-row-
+    // container shape: [stretch][buttons], the per-line budget measured on
+    // that row alone).  Sharing one HBox made the buttons eat the label's
+    // horizontal budget at the 480-px floor — the label wrapped to ~15 rows
+    // and pushed the whole Snapshots content down.  The label row's budget
+    // is the full width (a wrapped label never runs through a hint-sum fit
+    // test — the T3.2 rule), and the button row's own full-hint sum fits at
+    // 480 px at every measured font scale, so no squeeze/drop stage is
+    // needed on it (the ElidedPushButton + shrinkable floor stay as the
+    // round-219 safety net).
+    auto *rebootBannerLayout = new QVBoxLayout(m_hostRebootBanner);
     rebootBannerLayout->setContentsMargins(10, 8, 10, 8);
     rebootBannerLayout->setSpacing(8);
     m_hostRebootBannerLabel = new QLabel;
     m_hostRebootBannerLabel->setWordWrap(true);
     m_hostRebootBannerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_hostRebootBannerLabel->setAccessibleName(QStringLiteral("Reboot required"));
-    rebootBannerLayout->addWidget(m_hostRebootBannerLabel, 1);
-    m_hostRebootNowButton = new QPushButton(themedIcon(QStringLiteral("system-reboot")), tr("Reboot Now"));
+    rebootBannerLayout->addWidget(m_hostRebootBannerLabel);
+    m_hostRebootNowButton = new ElidedPushButton(themedIcon(QStringLiteral("system-reboot")), tr("Reboot Now"));
     m_hostRebootNowButton->setToolTip(tr("Reboot the host after confirmation; all users are signed out."));
-    m_hostRebootLaterButton = new QPushButton(tr("Later"));
+    m_hostRebootLaterButton = new ElidedPushButton(tr("Later"));
     m_hostRebootLaterButton->setToolTip(tr("Hide the reminder until Host Maintenance is re-entered."));
+    // Round 185 (ITEM 1): Cancel — the deliberate un-stage.  Inside the
+    // banner, so its visibility mirrors the Reboot-button gating (visible
+    // only while the staged state is active).
+    m_hostRebootCancelButton = new ElidedPushButton(tr("Cancel"));
+    m_hostRebootCancelButton->setToolTip(tr("Un-stage the pending rollback: the preserved pre-rollback root is restored as the default root, so the next reboot starts the original system."));
+    makeButtonShrinkable(m_hostRebootNowButton);
+    makeButtonShrinkable(m_hostRebootLaterButton);
+    makeButtonShrinkable(m_hostRebootCancelButton);
     connect(m_hostRebootNowButton, &QPushButton::clicked, this, &MainWindow::confirmAndRebootHost);
     connect(m_hostRebootLaterButton, &QPushButton::clicked, this, [this] {
         m_hostRebootBannerDismissed = true;
         updateHostRebootBanner();
         statusBar()->showMessage(tr("Reboot reminder hidden; the running-host rollback stays staged until the host is rebooted."), 5000);
     });
-    rebootBannerLayout->addWidget(m_hostRebootNowButton, 0, Qt::AlignTop);
-    rebootBannerLayout->addWidget(m_hostRebootLaterButton, 0, Qt::AlignTop);
+    connect(m_hostRebootCancelButton, &QPushButton::clicked, this, &MainWindow::confirmAndCancelHostRollback);
+    auto *rebootButtonRow = new QWidget(m_hostRebootBanner);
+    rebootButtonRow->setObjectName(QStringLiteral("hostRebootBannerButtonRow"));
+    auto *rebootButtonRowLayout = new QHBoxLayout(rebootButtonRow);
+    rebootButtonRowLayout->setContentsMargins(0, 0, 0, 0);
+    rebootButtonRowLayout->setSpacing(8);
+    rebootButtonRowLayout->addStretch(1);
+    rebootButtonRowLayout->addWidget(m_hostRebootNowButton);
+    rebootButtonRowLayout->addWidget(m_hostRebootLaterButton);
+    rebootButtonRowLayout->addWidget(m_hostRebootCancelButton);
+    rebootBannerLayout->addWidget(rebootButtonRow);
     m_hostRebootBanner->setVisible(false);
     layout->addWidget(m_hostRebootBanner);
+
+    // Round 174 (ITEM 1): the target-side staged-rollback informational
+    // message — the SAME below-title position and frame style as the host's
+    // reboot banner, but WITHOUT the Reboot Now/Later affordance: the
+    // recovery host never reboots the offline repair target (the round-171
+    // ruling), so the informational wording stands alone.  Session-scoped:
+    // it shows after a successful target rollback while that target scope
+    // stays active and clears with the inventory on a scope change.
+    // Round 222 (plan §1 item 16): the banner gains the CANCEL button —
+    // the deliberate un-stage.  The CANCEL is not a reboot (the round-189
+    // host machinery, target scope), so it belongs here RIGHT-ALIGNED just
+    // like the host's; the Reboot Now/Later buttons stay HOST-only.
+    m_targetRollbackBanner = new QFrame;
+    m_targetRollbackBanner->setObjectName(QStringLiteral("targetRollbackBanner"));
+    m_targetRollbackBanner->setFrameShape(QFrame::StyledPanel);
+    m_targetRollbackBanner->setFrameShadow(QFrame::Plain);
+    auto *targetBannerLayout = new QHBoxLayout(m_targetRollbackBanner);
+    targetBannerLayout->setContentsMargins(10, 8, 10, 8);
+    m_targetRollbackBannerLabel = new QLabel;
+    m_targetRollbackBannerLabel->setWordWrap(true);
+    m_targetRollbackBannerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_targetRollbackBannerLabel->setAccessibleName(tr("Snapshot rollback staged"));
+    targetBannerLayout->addWidget(m_targetRollbackBannerLabel, 1);
+    m_targetRollbackCancelButton = new QPushButton(tr("Cancel"));
+    m_targetRollbackCancelButton->setToolTip(tr("Un-stage the pending target rollback: the preserved pre-rollback root is restored as the default root, so the repair target starts the original system the next time it boots."));
+    connect(m_targetRollbackCancelButton, &QPushButton::clicked, this,
+            &MainWindow::confirmAndCancelTargetRollback);
+    targetBannerLayout->addWidget(m_targetRollbackCancelButton, 0, Qt::AlignTop);
+    m_targetRollbackBanner->setVisible(false);
+    layout->addWidget(m_targetRollbackBanner);
 
     m_snapshotTable = new QTableWidget(0, 5);
     m_snapshotTable->setHorizontalHeaderLabels({
@@ -9225,6 +9962,12 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotTable->setAlternatingRowColors(true);
     m_snapshotTable->setMinimumHeight(220);
     m_snapshotTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    // Round 220 (ITEM 3): ExtendedSelection enables CTRL+click multi-select
+    // for the batch deletion.  The single-row actions (Rollback, Inspect)
+    // keep their single-row semantics: they act on the CURRENT row exactly as
+    // before (their enabled state keys off the current row too), so a
+    // multi-selection never changes their behavior.
+    m_snapshotTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_snapshotTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_snapshotTable->setTextElideMode(Qt::ElideRight);
     // Keep snapshot rows single-line; long descriptions are elided instead
@@ -9287,28 +10030,49 @@ QWidget *MainWindow::buildSnapshotsPage()
     // The inventory actions live in the panel header, above the splitter, so
     // they stay visible when the window is short and the page scrolls; they
     // are never at the bottom of the scrollable inventory.
-    m_snapshotButtonLayout = new QBoxLayout(QBoxLayout::LeftToRight);
+    // Round 214 (plan §1 item 1): the row is a grid owned by the staged
+    // reflow below (the old QBoxLayout direction flip is gone — the staged
+    // wrap replaces the binary single-row/vertical-stack behavior).
+    m_snapshotButtonLayout = new QGridLayout;
     m_snapshotButtonLayout->setContentsMargins(0, 0, 0, 0);
-    m_snapshotButtonLayout->setSpacing(8);
+    m_snapshotButtonLayout->setHorizontalSpacing(8);
+    m_snapshotButtonLayout->setVerticalSpacing(8);
 
-    m_snapshotLoadButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), tr("Load Snapshots"));
-    m_snapshotCreateButton = new QPushButton(themedIcon(QStringLiteral("list-add")), tr("Create Snapshot"));
-    m_snapshotInspectButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), tr("Inspect Selected"));
-    m_snapshotRollbackButton = new QPushButton(themedIcon(QStringLiteral("document-revert")), tr("Roll Back to Selected"));
+    // Eliding button class + the shrinkable marker: when a staged row is
+    // squeezed the buttons compress toward their small floor and the painted
+    // label elides (the round-154.1 last-resort pattern) instead of the
+    // historical minimum-size lock that made the row overlap.
+    m_snapshotLoadButton = new ElidedPushButton(themedIcon(QStringLiteral("view-refresh")), tr("Load Snapshots"));
+    m_snapshotCreateButton = new ElidedPushButton(themedIcon(QStringLiteral("list-add")), tr("Create Snapshot"));
+    m_snapshotInspectButton = new ElidedPushButton(themedIcon(QStringLiteral("document-preview")), tr("Inspect Selected"));
+    m_snapshotRollbackButton = new ElidedPushButton(themedIcon(QStringLiteral("document-revert")), tr("Roll Back to Selected"));
+    // Round 220 (ITEM 3): the Delete Selected button sits to the RIGHT of
+    // Roll Back to Selected on the same row (the round-214 staged reflow
+    // keeps it in line with the other actions; it wraps together with the
+    // rollback action when the window narrows).
+    m_snapshotDeleteButton = new ElidedPushButton(themedIcon(QStringLiteral("list-remove")), tr("Delete Selected"));
+    makeButtonShrinkable(m_snapshotLoadButton);
+    makeButtonShrinkable(m_snapshotCreateButton);
+    makeButtonShrinkable(m_snapshotInspectButton);
+    makeButtonShrinkable(m_snapshotRollbackButton);
+    makeButtonShrinkable(m_snapshotDeleteButton);
 
     m_snapshotLoadButton->setEnabled(false);
     m_snapshotCreateButton->setEnabled(false);
     m_snapshotInspectButton->setEnabled(false);
     m_snapshotRollbackButton->setEnabled(false);
+    m_snapshotDeleteButton->setEnabled(false);
     m_snapshotLoadButton->setToolTip(tr("Load Btrfs root snapshots read-only."));
     m_snapshotCreateButton->setToolTip(tr("Create one single-type 'Boot Bitch manual snapshot'."));
     m_snapshotInspectButton->setToolTip(tr("Inspect the selected snapshot read-only."));
     m_snapshotRollbackButton->setToolTip(tr("Run a read-only rollback preflight, then promote a writable copy to @."));
+    m_snapshotDeleteButton->setToolTip(tr("Delete the selected Snapper snapshots after the confirmation prompt."));
 
     connect(m_snapshotLoadButton, &QPushButton::clicked, this, [this] { loadSnapshots(false); });
     connect(m_snapshotCreateButton, &QPushButton::clicked, this, &MainWindow::createSnapshot);
     connect(m_snapshotInspectButton, &QPushButton::clicked, this, &MainWindow::inspectSelectedSnapshot);
     connect(m_snapshotRollbackButton, &QPushButton::clicked, this, &MainWindow::rollbackSelectedSnapshot);
+    connect(m_snapshotDeleteButton, &QPushButton::clicked, this, &MainWindow::deleteSelectedSnapshots);
     connect(m_snapshotTable, &QTableWidget::itemSelectionChanged, this, [this] { updateSnapshotControls(); });
     connect(m_snapshotTable, &QTableWidget::cellDoubleClicked, this,
             [this](int, int) { inspectSelectedSnapshot(); });
@@ -9317,18 +10081,16 @@ QWidget *MainWindow::buildSnapshotsPage()
     // column needs a data hint (its full path is set per-cell in
     // populateSnapshotTable). The "i" help explains the table instead.
 
-    m_snapshotButtonLayout->addWidget(m_snapshotLoadButton);
-    m_snapshotButtonLayout->addWidget(m_snapshotCreateButton);
-    m_snapshotButtonLayout->addWidget(m_snapshotInspectButton);
-    m_snapshotButtonLayout->addWidget(m_snapshotRollbackButton);
-    m_snapshotButtonLayout->addStretch(1);
     // Round 146 (ITEM 2): the type filter.  Single is the default: the
     // manual snapshots and Snapper singles are the ordinary rollback
     // targets; Pre/Post/All cover the pair snapshots and the rollback
     // backup undo points.
     auto *snapshotFilterLabel = new QLabel(tr("Show:"));
     snapshotFilterLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    m_snapshotFilterCombo = new QComboBox;
+    // Round 219 (plan §1 item 11c): the disciplined-minimum combo — its
+    // horizontal minimum is a small floor, never the full widest-item width,
+    // so the inventory box's minimum fits the 480-px window frame.
+    m_snapshotFilterCombo = new DisciplinedMinimumComboBox;
     m_snapshotFilterCombo->addItem(tr("All snapshots"), QStringLiteral("all"));
     m_snapshotFilterCombo->addItem(tr("Single snapshots"), QStringLiteral("single"));
     m_snapshotFilterCombo->addItem(tr("Pre snapshots"), QStringLiteral("pre"));
@@ -9340,9 +10102,27 @@ QWidget *MainWindow::buildSnapshotsPage()
                 applySnapshotFilter();
                 updateSnapshotControls();
             });
-    m_snapshotButtonLayout->addWidget(snapshotFilterLabel);
-    m_snapshotButtonLayout->addWidget(m_snapshotFilterCombo);
     snapshotBoxLayout->addLayout(m_snapshotButtonLayout);
+    // Round 214 (plan §1 item 1): the staged progressive wrap — the items in
+    // their priority order with the wrap stage table {0, 2, 3, 4}: the
+    // filter combo (with its "Show:" label) drops to the second row first,
+    // then Rollback, then Inspect.  The label is the right-hugged item.
+    // Round 219 (plan §1 item 11): the reflow now places each row in its own
+    // container — the second row pins right to the box's inner edge, the
+    // first-row buttons keep natural widths, and each row's squeeze budget is
+    // measured per line (see StagedButtonRowReflow).
+    // Round 220 (ITEM 3): the Delete Selected button joins the row between
+    // Rollback and the filter label, so the stage table gains one stage:
+    // {0, 2, 3, 4, 5} — combo group, then Delete, then Rollback, then
+    // Inspect (trailing-first wrap order), and the hugged-item index (the
+    // filter label) moves from 4 to 5.
+    new StagedButtonRowReflow(snapshotBox, snapshotBoxLayout,
+                              m_snapshotButtonLayout,
+                              {m_snapshotLoadButton, m_snapshotCreateButton,
+                               m_snapshotInspectButton, m_snapshotRollbackButton,
+                               m_snapshotDeleteButton,
+                               snapshotFilterLabel, m_snapshotFilterCombo},
+                              {0, 2, 3, 4, 5}, 5);
 
     m_snapshotSplitter = new QSplitter(Qt::Vertical);
     m_snapshotSplitter->setObjectName(QStringLiteral("snapshotSplitter"));
@@ -9621,27 +10401,84 @@ class BootEntriesTable final : public QTableWidget
 public:
     using QTableWidget::QTableWidget;
 
-    // The true content height: header plus the visible rows (plus the frame).
-    // The vertical header drives the real row height (Fixed section mode with
-    // a lineSpacing+10 minimum section size), so the laid-out rows can be
-    // taller than the item size hints — take the maximum so the drag-up
-    // minimum never clips a row.
+    // The real widget chrome above/below the viewport: the horizontal header,
+    // the frame strip AND the horizontal scrollbar that appears when the six
+    // columns do not fit the pane width (width-driven, style-stable — the
+    // T3.9 gutter).  The live height()-viewport() difference is deliberately
+    // NOT used: the rebalance runs from a resize hook and reads transient
+    // mid-relayout geometry (the T3.1 trap), which inflated the chrome and
+    // the cap by a full row on some passes.
+    int viewportChrome() const
+    {
+        int chrome = 2 * frameWidth() + horizontalHeader()->sizeHint().height();
+        if (horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOn
+            || horizontalScrollBar()->maximum() > 0) {
+            // The scrollbar's REAL laid-out height (its sizeHint over-reports
+            // under the scaled fonts); the height is style-stable and
+            // independent of the pane's transient geometry.
+            const int hs = horizontalScrollBar()->height();
+            chrome += hs > 0 ? hs : horizontalScrollBar()->sizeHint().height();
+        }
+        return chrome;
+    }
+
+    // The true content height: the real chrome plus the visible rows (the
+    // REAL laid-out row heights — the vertical header drives them (Fixed
+    // section mode with a lineSpacing+10 minimum section size), so the
+    // laid-out rows can be taller than the item size hints — take the
+    // maximum so the drag-up minimum never clips a row.
     int contentHeight() const
     {
         const int rows = rowCount();
-        int height = 2 * frameWidth() + horizontalHeader()->sizeHint().height();
-        if (rows > 0) {
-            height += rows * qMax(sizeHintForRow(0),
-                                  verticalHeader()->defaultSectionSize());
+        int rowsHeight = 0;
+        for (int r = 0; r < rows; ++r) {
+            rowsHeight += qMax(verticalHeader()->sectionSize(r),
+                               sizeHintForRow(r));
         }
-        return height;
+        return viewportChrome() + rowsHeight;
+    }
+
+    // Round 223 (plan §1 item 17): the ~6-row growth cap — the real chrome
+    // plus six real rows.  The pane hugs its content up to the cap (3-6
+    // entries -> the box expands, every row visible) and the table's INNER
+    // scrollbar engages beyond (20 entries scroll inside the table).
+    int cappedContentHeight() const
+    {
+        // The REAL row height: the vertical header's section size (the
+        // Fixed-mode section carries the actual laid-out height; the
+        // lineSpacing+10 estimate over-reports under the HiDPI fonts —
+        // 37 px vs the real 31 px at 1.7x, which pushed the cap one row
+        // past the intended six).
+        const int rowHeight = rowCount() > 0
+            ? qMax(24, verticalHeader()->sectionSize(0))
+            : qMax(24, fontMetrics().lineSpacing() + 10);
+        return viewportChrome() + 6 * rowHeight;
+    }
+
+    // The growth-capped minimum: QTableView's own minimumSizeHint reports
+    // the FULL content (all 20 rows), which inflates the splitter's and the
+    // box's minimums and forces the page far beyond the viewport.  The
+    // capped minimum keeps the layout minimum at the same ~6-row cap the
+    // rebalance uses, so the splitter/box minimums stay bounded.
+    QSize minimumSizeHint() const override
+    {
+        const QSize base = QTableWidget::minimumSizeHint();
+        return QSize(base.width(),
+                     qMin(contentHeight(), cappedContentHeight()));
     }
 
     QSize sizeHint() const override
     {
-        // Same +8 headroom as GrubMenuTree (the splitter's pane hints omit
-        // the handle).
-        return QSize(QTableWidget::sizeHint().width(), contentHeight() + 8);
+        // The growth-capped hint (round 223, plan §1 item 17): the content
+        // hug up to the ~6-row cap plus the same +8 headroom as
+        // GrubMenuTree (the splitter's pane hints omit the handle).  The
+        // uncapped full-content hint drove the page's content sizeHint far
+        // beyond the viewport (the box ballooned with 20 entries); the
+        // capped hint keeps the whole chain (splitter -> box -> stack ->
+        // page content) bounded, and the inner scrollbar takes over beyond
+        // the cap.
+        return QSize(QTableWidget::sizeHint().width(),
+                     qMin(contentHeight(), cappedContentHeight()) + 8);
     }
 };
 
@@ -9697,14 +10534,18 @@ public:
 // (changed from the round-7 70/30 so the info box below is fully shown by
 // default), computed at layout time so the whole page fits the viewport and
 // the info section's floor always fits inside its 35% share.  A top table
-// whose content is taller than its 65% share grows beyond it (the page
-// scrolls only then).  The budget is unknown while the page is not laid out
-// for real (hidden-tab auto-load): fall back to the comfortable table-sized
-// seed and let the view-switch rebalance apply the real budget once the view
-// is current.
+// whose content is taller than its 65% share grows beyond it — up to its
+// growth CAP (round 223, plan §1 item 17: the EFI firmware table hugs its
+// content up to ~6 rows and its INNER scrollbar engages beyond; the Boot
+// menu view keeps the uncapped full-content growth) — and the page scrolls
+// only when even the capped content cannot fit.  The budget is unknown while
+// the page is not laid out for real (hidden-tab auto-load): fall back to the
+// comfortable table-sized seed and let the view-switch rebalance apply the
+// real budget once the view is current.
 static QList<int> bootEntriesSplitterDefaultSizes(int budget, int handle,
                                                   int detailsFloor,
                                                   int topContentHint,
+                                                  int topCapHint,
                                                   int rowHeight)
 {
     if (budget <= 0) {
@@ -9716,10 +10557,14 @@ static QList<int> bootEntriesSplitterDefaultSizes(int budget, int handle,
     // is fully shown by default; the floor always fits by construction.
     int details = qMax(detailsFloor, (7 * available) / 20);
     int top = available - details;
-    if (top < topContentHint) {
-        // The content pushes the page beyond the budget; the page scrolls
-        // only then (the details keep their floor).
-        top = topContentHint;
+    // Round 223 (plan §1 item 17): the growth cap — the top pane grows to
+    // its content only up to topCapHint (the ~6-row cap for the EFI table;
+    // the full content for the Boot menu view, byte-unchanged).
+    const int topCapped = qMin(topContentHint, topCapHint);
+    if (top < topCapped) {
+        // The capped content pushes the page beyond the budget; the page
+        // scrolls only then (the details keep their floor).
+        top = topCapped;
         details = qMax(detailsFloor, available - top);
     }
     return {top, details};
@@ -9757,13 +10602,22 @@ void rebalanceGrubMenuSplitter(QTreeWidget *tree, QSplitter *splitter,
     const int budget = grubMenuBoxSplitterBudget(splitter);
     splitter->setSizes(bootEntriesSplitterDefaultSizes(
         budget, splitter->handleWidth(), details->minimumHeight(),
-        tree->sizeHint().height(), rowHeight));
+        tree->sizeHint().height(),
+        // The Boot menu view keeps the UNcapped full-content growth (the
+        // round-7/16 contract: a long menu grows the tree and the page
+        // scrolls; the cap is the EFI firmware table's round-223 rule only).
+        tree->sizeHint().height(),
+        rowHeight));
 }
 
 // The EFI/UKI firmware view's mirror of rebalanceGrubMenuSplitter(): the SAME
 // 65/35 default distribution over the page budget and the SAME
 // content-hugging table minimum (ITEM 1 + ITEM 2), so both views behave
-// identically until the user drags a handle.
+// identically until the user drags a handle.  Round 223 (plan §1 item 17):
+// the EFI table's growth is CAPPED at ~6 rows — the pane hugs its content
+// for 3-6 entries (the box expands, every row visible) and the table's
+// inner scrollbar engages beyond (20 entries scroll inside the table
+// instead of growing the page).
 void rebalanceBootEntriesSplitter(QTableWidget *table, QSplitter *splitter,
                                   QPlainTextEdit *details, bool userAdjusted)
 {
@@ -9776,7 +10630,17 @@ void rebalanceBootEntriesSplitter(QTableWidget *table, QSplitter *splitter,
     const int headerHint = table->horizontalHeader()->sizeHint().height();
     const int oneRow = qMax(headerHint, rowHeight) + rowHeight;
     const auto *contentTable = static_cast<const BootEntriesTable *>(table);
-    table->setMinimumHeight(qMax(oneRow, contentTable->contentHeight()));
+    // Round 223 (plan §1 item 17): the ~6-row growth cap (the class's own
+    // cappedContentHeight — the real chrome + six real rows).  The pane's
+    // MAXIMUM is the capped content, so the table can never grow beyond
+    // ~6 rows (the inner scrollbar takes over; the splitter's extra space
+    // goes to the stretch-1 details pane) — and the MINIMUM keeps the
+    // round-16 one-row floor, so the handle stays draggable in both
+    // directions.  Below the cap the default hugs the real content (the
+    // box expands for 3-6 entries).
+    const int cappedContent = contentTable->cappedContentHeight();
+    table->setMinimumHeight(oneRow);
+    table->setMaximumHeight(cappedContent);
 
     if (userAdjusted) {
         return;
@@ -9785,7 +10649,9 @@ void rebalanceBootEntriesSplitter(QTableWidget *table, QSplitter *splitter,
     const int budget = grubMenuBoxSplitterBudget(splitter);
     splitter->setSizes(bootEntriesSplitterDefaultSizes(
         budget, splitter->handleWidth(), details->minimumHeight(),
-        table->sizeHint().height(), rowHeight));
+        qMin(table->sizeHint().height(), cappedContent),
+        cappedContent,
+        rowHeight));
 }
 } // namespace
 
@@ -11761,7 +12627,13 @@ QWidget *MainWindow::buildFileCopyPage()
     scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    // Round 221 (plan §1 item 12c): the page scrolls vertically AS-NEEDED —
+    // the scrollbar appears exactly when the stacked content (the heading,
+    // the direction row and the splitter's floor) exceeds the viewport, and
+    // disappears when everything fits (the round-217/218 trigger discipline).
+    // The historical AlwaysOn policy left a permanent scrollbar gutter even
+    // when no scrolling was possible.
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
     auto *content = new QWidget;
     content->setMinimumWidth(0);
@@ -11866,7 +12738,17 @@ QWidget *MainWindow::buildFileCopyPage()
     sourceButtons->addWidget(clear);
     sourceLayout->addLayout(sourceButtons);
     m_fileCopySectionSplitter->addWidget(m_fileCopySourceBox);
-    m_fileCopySourceBox->setMinimumHeight(120);
+    // Round 221 (plan §1 item 12b): the source box's shrink FLOOR is its true
+    // content minimum — the file/folder list at its own floor (80, the
+    // unchanged round-214 constant) PLUS the full button row PLUS the layout
+    // chrome.  The historical fixed 120-px floor sat BELOW the content
+    // minimum (~161), so a squeezed box crushed the button row against the
+    // frame's lower border (the buttons crossed the frame edge).  The floor
+    // is measured ONCE at construction (the §2.1 discipline: a
+    // construction-time constant, never a runtime budget pass) — AFTER
+    // updateFileCopyDirection() below, because the group-box title that
+    // reserves its top chrome is only set there; the list's own floor is
+    // untouched.
 
     auto *fileCopyLowerPane = new QWidget;
     auto *lowerPaneLayout = new QVBoxLayout(fileCopyLowerPane);
@@ -11920,6 +12802,8 @@ QWidget *MainWindow::buildFileCopyPage()
                   QStringLiteral("INFO"), LogEntryKind::FileCopy);
     });
     updateFileCopyDirection();
+    m_fileCopySourceBox->setMinimumHeight(
+        qMax(120, m_fileCopySourceBox->minimumSizeHint().height()));
 
     // The heading (with the primary actions) and the staged
     // source/destination controls share the page scroll area.
@@ -12028,12 +12912,56 @@ protected:
 QWidget *MainWindow::buildLogsPage()
 {
     auto *page = new QWidget;
-    auto *layout = new QVBoxLayout(page);
+    auto *outerLayout = new QVBoxLayout(page);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    // Round 217 (the round-216 revert + the minimal fix): the page-level
+    // vertical scroll area.  The window minimum is the FIXED 480 × 500, so a
+    // window dragged small can no longer hand the stacked session-log splitter
+    // enough height for its panes' content floors; the scroll area guarantees
+    // the content widget never gets less than its layout minimum (the top
+    // title/action row + the splitter's own minimumSizeHint = its panes' real
+    // content floors + the handle), so the panes are never squeezed below
+    // their content — the handle always sits cleanly below the log's visible
+    // content and the lower section (the session list + the button rows)
+    // never overlaps the log window.  Whatever does not fit scrolls: the
+    // buttons and every section stay reachable down to the 480 × 500 floor.
+    // The scroll area follows the Settings/File Copy house pattern
+    // (widgetResizable + NoFrame + horizontal off + the content widget pinned
+    // to the viewport width).
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // The stretch-1 fill (plan-adjacent-findings B3, the round-218 mirror):
+    // the scroll area is the page's ONLY outer child and must take the full
+    // page height (the house pattern — the round-217 comment below stays
+    // the construction reference).  The wide-state splitter share is
+    // byte-unchanged: the session-log splitter keeps its stretch-1 slot
+    // INSIDE the content layout.
+    outerLayout->addWidget(scroll, 1);
+
+    auto *content = new QWidget;
+    // Keep the inner frame pinned to the viewport width: the reflowing filter
+    // row and the stacked splitter must never expose a hidden horizontal
+    // scroll range when button rows are close to the available width (the
+    // File Copy rule).
+    content->setMinimumWidth(0);
+    content->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    scroll->setWidget(content);
+
+    auto *layout = new QVBoxLayout(content);
     layout->setContentsMargins(8, 12, 8, 8);
     layout->setSpacing(8);
 
     auto *top = new QHBoxLayout;
-    top->addWidget(sectionTitle(tr("Application log")));
+    // Round 215 (plan §1 item 7b): the eliding section title — the German
+    // "Anwendungsprotokoll" shares this row with the Save/Clear actions and
+    // hard-cut to "Anwendungspro" at narrow widths; ElidedLabel paints the
+    // ellipsis form instead (the complete text stays in text()).
+    top->addWidget(sectionTitleElided(tr("Application log")));
     top->addWidget(contextHelpButton(page, tr("Logs"),
         tr("Shows this application's session activity. Session files are listed on the left; Save a copy when you need to share troubleshooting details.")));
     top->addStretch(1);
@@ -12098,7 +13026,9 @@ QWidget *MainWindow::buildLogsPage()
     filterRow->setHorizontalSpacing(6);
     auto *filterLabel = new QLabel(tr("Search log:"));
     filterLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_logSearchEdit = new QLineEdit;
+    // Round 215 (plan §1 item 7c): the eliding line edit — the squeezed
+    // narrow state paints the at-rest content elided instead of hard-cut.
+    m_logSearchEdit = new ElidedLineEdit;
     m_logSearchEdit->setObjectName(QStringLiteral("logSearchEdit"));
     installAtlasClearAction(m_logSearchEdit);
     m_logSearchEdit->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -12110,7 +13040,15 @@ QWidget *MainWindow::buildLogsPage()
     filterRow->addWidget(filterLabel, 0, 0);
     filterRow->addWidget(m_logSearchEdit, 0, 1);
 
-    m_logFilterCombo = new QComboBox;
+    // Plan-adjacent-findings B4: the same DisciplinedMinimumComboBox as the
+    // Snapshots filter (the round-219 class) — the combo's horizontal
+    // minimum is a small floor, never Qt 6.10's widest-item minimumSizeHint
+    // (measured 229 px for the German "Alle Einträge" + section items),
+    // which pinned the filter row's squeeze budget at the 480-px window
+    // floor (the round-215 budget math counted on a 229-px combo minimum).
+    // The disciplined floor lets the combo yield toward 120 px before the
+    // search input gives up its usable width.
+    m_logFilterCombo = new DisciplinedMinimumComboBox;
     m_logFilterCombo->setObjectName(QStringLiteral("logFilterCombo"));
     m_logFilterCombo->addItem(tr("All entries"), QStringLiteral("all"));
     m_logFilterCombo->addItem(tr("Diagnostics"), QStringLiteral("diagnostics"));
@@ -12130,9 +13068,15 @@ QWidget *MainWindow::buildLogsPage()
     // Round 154 (ITEM 2): the responsive wrap — the search input keeps at
     // least its usable width (200 px) and wraps onto its own full-width row
     // below the label and the dropdown when the window narrows past the fit
-    // point.
+    // point.  Round 214 (plan §1 item 2): the fit test uses the pane layout
+    // budget (the session-log splitter), so the wrap is coordinated with the
+    // left pane's stacking instead of the viewer's own width.  Round 215
+    // (plan §1 item 7c): below the full-row fit point the input shrinks
+    // toward its floor so the row stays on ONE line (the wrapped form is now
+    // only the sub-floor safety net).
     new LogFilterRowReflow(m_sessionLogViewer, filterRow, filterLabel,
-                           m_logSearchEdit, m_logFilterCombo);
+                           m_logSearchEdit, m_logFilterCombo,
+                           m_sessionLogSplitter);
 
     m_priorLogBanner = new QLabel;
     m_priorLogBanner->setObjectName(QStringLiteral("priorLogBanner"));
@@ -12168,6 +13112,53 @@ QWidget *MainWindow::buildLogsPage()
     m_sessionLogSplitter->setStretchFactor(1, 1);
     m_sessionLogSplitter->setSizes({280, 800});
     layout->addWidget(m_sessionLogSplitter, 1);
+
+    // Round 217 (the round-216 revert + the minimal fix): the stacked floor.
+    // When the panes stack at narrow widths the splitter must never be
+    // squeezed below its panes' content floors (the round-216 pre-fix
+    // failure: the session buttons painted past the splitter's bottom edge
+    // and the splitter moved up into the log).  The floor is computed once
+    // from the widgets' own layout minimums, covering the WORST case — the
+    // filter row in its wrapped two-row arrangement (the round-215 safety
+    // net, engaged at the 480-px floor when the page's scrollbar gutter
+    // narrows the splitter) plus the log's floor plus the session panel's
+    // fixed content (title + list floor + both button rows) — so the floor
+    // is a constant: no dynamic budget pass, no chaser, and the scroll
+    // area's content minimum stays stable.  The wrapped filter row minimum
+    // is derived exactly (the combo and the input keep explicit minimum
+    // heights the layout honors — qSmartMinSize); the log floor takes the
+    // widget's construction-time minimum plus one full mono line, because
+    // the laid-out minimum grows a few pixels once the style polishes the
+    // scroll-bar chrome (measured: 58 px at construction -> 65 px laid
+    // out), and is never below the seven-line content floor plus one line
+    // of laid-out chrome (the round-223 item-19 earlier-trigger floor —
+    // was three lines).
+    {
+        const int comboMin = m_logFilterCombo->minimumSize().expandedTo(
+            m_logFilterCombo->minimumSizeHint()).height();
+        const int inputMin = m_logSearchEdit->minimumSize().expandedTo(
+            m_logSearchEdit->minimumSizeHint()).height();
+        const int wrappedFilterMin = comboMin + filterRow->verticalSpacing()
+            + inputMin;
+        const int monoLine = qMax(1, m_logView->fontMetrics().lineSpacing());
+        // Round 223 (plan §1 item 19): the log floor is ~SEVEN mono lines
+        // (was three) plus one line of laid-out chrome — at the minimum
+        // width the page's inner scrollbar now engages BEFORE the log
+        // window is squeezed below ~7 visible lines, so the log keeps
+        // showing its current content amount and the rest scrolls inside
+        // the log (its AlwaysOn bar).  The round-217 invariants stay: the
+        // construction-time constant (never a runtime budget), the splitter
+        // never overlaps the log, the fixed 480x500 minimum and the
+        // as-needed page scrollbar.
+        const int logFloor = qMax(m_logView->minimumSizeHint().height()
+                                      + monoLine,
+                                  7 * monoLine + 8 + monoLine);
+        const int viewerFloor = wrappedFilterMin + viewerLayout->spacing()
+            + logFloor;
+        const int panelFloor = m_sessionLogPanel->minimumSizeHint().height();
+        m_logsStackedSplitterFloor = viewerFloor
+            + m_sessionLogSplitter->handleWidth() + panelFloor;
+    }
 
     connect(m_logSearchEdit, &QLineEdit::textChanged, this, [this] { refreshLogView(); });
     connect(m_logFilterCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -12424,11 +13415,27 @@ QWidget *MainWindow::buildSettingsPage()
     // width at the default window width.
     capabilityHeader->resizeSection(1, qMax(270, qMax(capabilityMetrics.horizontalAdvance(tr("Command")),
                                                       capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version"))) + 24));
+    // Round 221 (plan §1 item 13d/13b/13c): the Scope column now also covers
+    // the TRANSLATED "Repair target" cell (the German "Reparaturziel" is wider
+    // than the English literal) so the cell never wraps; the Status column
+    // shrinks slightly (the German "Nicht verfügbar" wraps to two fully
+    // visible rows, the short states stay on one line); the Packages column
+    // shrinks slightly (a two-row wrap like "module-init-" + "tools" is fine,
+    // the text stays fully readable).  The header title floors stay covered.
     capabilityHeader->resizeSection(2, qMax(90, qMax(capabilityMetrics.horizontalAdvance(tr("Scope")),
-                                                     capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target"))) + 24));
-    capabilityHeader->resizeSection(3, qMax(110, qMax(capabilityMetrics.horizontalAdvance(tr("Status")),
-                                                      capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable"))) + 24));
-    capabilityHeader->resizeSection(4, qMax(150, capabilityMetrics.horizontalAdvance(tr("Packages")) + 24));
+                                                     qMax(capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target")),
+                                                          capabilityMetrics.horizontalAdvance(tr("Repair target")))) + 24));
+    capabilityHeader->resizeSection(3, qMax(96, qMax(capabilityMetrics.horizontalAdvance(tr("Status")),
+                                                     capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable"))) + 24));
+    // Round 222 (plan §1 item 15): the Packages column shrinks to the
+    // "btrfs-progs" cell — the widest Packages cell content (the snapshot
+    // capability's derived package set) — measured on its real character
+    // width so it fits on ONE line at the default window width, never wider
+    // than that (no arbitrary floor; the other columns' round-221 values
+    // stay byte-unchanged).  The translated header title stays covered by
+    // the same max().
+    capabilityHeader->resizeSection(4, qMax(capabilityMetrics.horizontalAdvance(tr("Packages")),
+                                             capabilityMetrics.horizontalAdvance(QStringLiteral("btrfs-progs"))) + 24);
     // Keep rows content-sized across desktop styles.  Wrapped rows are
     // explicitly enlarged by resizeCapabilityRows(); all others stay at the
     // compact one-line height.
@@ -12706,6 +13713,10 @@ void MainWindow::loadSettings()
     m_hostRebootSnapshotId = m_settings->value(QStringLiteral("host/rebootRequiredSnapshot")).toString();
     m_hostRebootRequiredAt = m_settings->value(QStringLiteral("host/rebootRequiredAt")).toString();
     m_hostRebootBootId = m_settings->value(QStringLiteral("host/rebootRequiredBootId")).toString();
+    // Round 189 (the robust cancel): the preserved undo-point NAME from the
+    // rollback transcript, persisted at staging time so the cancel verb can
+    // pass the GUI's staged record to the helper.
+    m_hostRebootUndoPoint = m_settings->value(QStringLiteral("host/rebootRequiredUndoPoint")).toString();
     reconcileHostRebootRequired();
     updateHostRebootBanner();
 
@@ -12755,6 +13766,7 @@ void MainWindow::saveSettings()
     m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), m_hostRebootSnapshotId);
     m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), m_hostRebootRequiredAt);
     m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), m_hostRebootBootId);
+    m_settings->setValue(QStringLiteral("host/rebootRequiredUndoPoint"), m_hostRebootUndoPoint);
 
     m_settings->sync();
 }
@@ -13014,8 +14026,8 @@ void MainWindow::addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node)
     // Numeric-aware sort keys: Status orders by the repair-likelihood rank
     // (the historical "most likely first" ordering) and Size by the real byte
     // count instead of the formatted "1.0 GiB" text.
-    item->setData(1, BootRepairSortKeyRole, repairLikelihoodScore(node));
-    item->setData(3, BootRepairSortKeyRole, QVariant::fromValue<qulonglong>(node.sizeBytes));
+    item->setData(1, BootBitchSortKeyRole, repairLikelihoodScore(node));
+    item->setData(3, BootBitchSortKeyRole, QVariant::fromValue<qulonglong>(node.sizeBytes));
 
     const QStringList fullValues = {
         nameText, statusText, connectionText, sizeText, fileSystemText, deviceText
@@ -13794,7 +14806,7 @@ bool MainWindow::buildPrivilegedInvocation(const QStringList &verbArguments,
     const QFileInfo helperInfo(helper);
     // The installed helper (/usr/libexec/ or /usr/lib/, protected by the
     // package manager) is an executable script with a valid shebang. Invoke it
-    // directly so pkexec selects the dedicated org.bootrepair.BootRepair.helper
+    // directly so pkexec selects the dedicated org.bootbitch.BootBitch.helper
     // Polkit action (matched via its org.freedesktop.policykit.exec.path
     // annotation) and the authorization prompt shows the friendly message
     // instead of the raw command line.
@@ -13807,7 +14819,7 @@ bool MainWindow::buildPrivilegedInvocation(const QStringList &verbArguments,
     const bool installedHelper = helper.startsWith(QStringLiteral("/usr/libexec/"))
         || helper.startsWith(QStringLiteral("/usr/lib/"));
     const bool invokeThroughShell = !installedHelper
-        && (helperInfo.fileName() == QStringLiteral("boot-repair-helper")
+        && (helperInfo.fileName() == QStringLiteral("boot-bitch-helper")
             || helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0);
     if (invokeThroughShell) {
         resolvedProgram = QStringLiteral("/bin/bash");
@@ -13928,12 +14940,12 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
 
     BusyOperationScope busy(this, tr("Requesting administrator authorization"));
 
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     // The production authorization path launches pkexec and waits for a real
     // Polkit conversation, which cannot complete in a headless UI test. Mirror
     // the offscreen diagnostics seam: count the request, honor the test's
     // granted/cancelled outcome, and never spawn a privileged process. This
-    // branch is compiled only into boot-repair-ui-tests.
+    // branch is compiled only into boot-bitch-ui-tests.
     if (m_privilegedSessionReady) {
         m_authorizationDeferredScope.clear();
         updateAuthorizationAffordance();
@@ -14202,7 +15214,7 @@ QString MainWindow::runOneShotSessionLogDelete(const QStringList &arguments)
                                    &invocationError)) {
         return QStringLiteral("ERROR: %1\n").arg(invocationError);
     }
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     if (!m_uiTestOneShotProgram.isEmpty()) {
         // Offscreen suite seam: the resolved launcher is replaced by a fake
         // program (the verb arguments stay appended) so the gate-exempt path
@@ -14910,7 +15922,8 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                                          const std::function<void(const QString &)> &outputLineSink,
                                          const QStringList &repairSuccessTerminalKeys,
                                          const std::function<void(const QString &)> &repairSuccessTerminalHook,
-                                         bool terminalHookOnProvenNoOp)
+                                         bool terminalHookOnProvenNoOp,
+                                         const std::function<void(const QString &)> &repairFailureTerminalHook)
 {
     if (succeeded) {
         *succeeded = false;
@@ -15064,6 +16077,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     // same repair flow — at most one regeneration pass per repair flow.
     if (repairSuccessTerminalHook) {
         m_repairSuccessTerminalHandled = false;
+        m_repairCancelTerminalHandled = false;
     }
     gate.armed = true;
     updateShellRunButtonState();
@@ -15182,6 +16196,13 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     bool requestDone = false;
     bool requestSucceeded = false;
     bool requestTimedOut = false;
+    // Round 196 (ITEM 3): the cancel/abort-marker terminal releases the
+    // single-request gate at the DONE record and GateGuard::release() clears
+    // the cancel flags — this latch captures the cancel state at the DONE
+    // record so the post-DONE classification (the abort status text and the
+    // post-frame cancel completion) still knows the request was
+    // user-cancelled.
+    bool userCancelledAtDone = false;
     // Round 119 (ITEM 1): set when the success terminal released the gate
     // early for the deferred scoped regeneration.  From that moment this
     // request's session reader must NOT drain the pipe anymore — the
@@ -15211,12 +16232,68 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 : capturedStatusLines.right(kCapturedStatusLinesCap);
         }
     };
-    // A6-03/A6-04: at most one prompt is active at a time, at most 8 prompts
-    // are answered per request, and prompts arriving after the DONE record are
-    // ignored.  A dropped prompt is answered with an empty ANSWER record so the
-    // helper fails closed instead of hanging.
+    // Round 203 (the split-read commit trap): the walk-through scoped-regen
+    // accumulation state lives at FUNCTION scope, never inside the
+    // consumeSessionOutput lambda — the lambda runs once per socket
+    // read-chunk, and in-lambda state was re-initialized on EVERY chunk, so a
+    // regen block that spans multiple reads (the live helper streams it over
+    // ~60 s) never accumulated and the at-marker commit never fired (the
+    // round-200 probe missed it: its fake block arrived in one burst).
+    bool walkthroughRegenActive = false;
+    QString walkthroughRegenBlock;
+    // Round 211 (the interactive-repair alignment): the session stage of this
+    // request, derived from the helper stage arguments — the commit of a
+    // generic scoped-regen block keys the accepted sections + the wording off
+    // it (the display walk-through keeps its settled behavior; an empty key
+    // means no interactive session emitted a block).
+    QString regenSessionKey;
+    {
+        static const QSet<QString> regenStages = {
+            QStringLiteral("display-walkthrough"), QStringLiteral("kernels"),
+            QStringLiteral("gpu"), QStringLiteral("input-devices"),
+            QStringLiteral("network")};
+        for (const QString &argument : arguments) {
+            if (regenStages.contains(argument)) {
+                regenSessionKey = argument;
+                break;
+            }
+        }
+    }
+    // Round 208 (ITEM C) + round 210 (ITEM 1): the terminal's activity text
+    // follows the scoped refresh — while the walk-through's in-helper
+    // regeneration runs, the terminal status and the main-window progress
+    // detail read the SAME GENERIC diagnostic-run activity the app uses for
+    // any diagnostic run (the existing request title "Running Host/Target
+    // diagnostics" + the existing progress-detail "Running … diagnostics…"
+    // lines — the coordinator's rule: never a bespoke activity label for the
+    // scoped refresh), and both switch BACK to the repair activity the moment
+    // the refresh completes.  The captured previous texts make the switch-back
+    // exact for both surfaces; the abnormal exit paths (helper death,
+    // watchdog) restore them too.
+    QString regenPreStatus;
+    QString regenPreProgressDetail;
+    bool regenActivityOverridden = false;
+    // A6-03/A6-04: at most one prompt is active at a time, at most 8
+    // PROMPT-class records (CONFIRM + shell questions) are answered per
+    // request, and prompts arriving after the DONE record are ignored.
+    // Round 204: the MENU class (the 600 s numbered action menus — the
+    // kernel/GPU/input/network menus and the display walk-through) rides a
+    // SEPARATE per-request budget.  The menus' legitimate multi-round
+    // re-prompt loop consumes several MENU records per round (level-1 menu ->
+    // level-2 candidate menu -> CONFIRM -> re-prompt), so the display
+    // walk-through exhausted the flat 8-prompt budget at its THIRD round's
+    // CONFIRM (the coordinator's greetd error — twice).  The precedent is the
+    // kernel menu's re-prompt loop: its prompts are the same 600 s MENU class
+    // and must survive a multi-action session; the walk-through mirrors that
+    // accounting.  Each MENU wait is bounded by the 600 s answer window, and
+    // the 48-menu budget still bounds a runaway helper's decoded payloads
+    // (48 x 16384 bytes ~ 768 KiB, the same reasoning as the PROMPT budget).
+    // A dropped prompt is answered with an empty ANSWER record so the helper
+    // fails closed instead of hanging.
     bool promptActive = false;
     int promptCount = 0;
+    int menuCount = 0;
+    constexpr int kMenuPromptBudget = 48;
     // A6-07: bound the per-request transcript and the raw wire buffer so a
     // runaway helper can never exhaust memory.  Protocol records (PROMPT,
     // DONE, SESSION_ERROR) keep parsing after the caps are hit; only the
@@ -15263,6 +16340,10 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             }
             requestTimedOut = true;
             const QString limitText = timeoutLimitText();
+            if (regenActivityOverridden) {
+                setProgressDetail(regenPreProgressDetail);
+                regenActivityOverridden = false;
+            }
             appendLog(tr("Privileged request '%1' exceeded the %2 safety limit; aborting the request and closing the unresponsive helper session so the UI cannot stay busy indefinitely.")
                           .arg(title, limitText),
                       QStringLiteral("ERROR"), kind);
@@ -15352,8 +16433,19 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 appendShellOutput(text);
                 return;
             }
+            // Round 201 (the walk-through outcome feedback): the repair
+            // terminal renders the helper's own `msg:` lines as localized
+            // prose (the report-pane treatment), so the per-action outcome
+            // ("Display manager switched: …", "Display manager restored: …",
+            // the no-change line, the failure reason) is readable IN this
+            // window at the marker — never only from the later diagnostics
+            // or the result summary.  The machine-parsed contract lines
+            // (Repair change status / Repair tool / ERROR / evidence lines)
+            // pass through byte-identical, and the captured transcript (the
+            // parsing surface) stays raw.
+            const QString displayText = localizeHelperLogLine(text);
             output->moveCursor(QTextCursor::End);
-            output->insertPlainText(text + QLatin1Char('\n'));
+            output->insertPlainText(displayText + QLatin1Char('\n'));
             output->moveCursor(QTextCursor::End);
             if (output->blockCount() > kPaneBlockCap + kPaneTrimHeadroom) {
                 QTextCursor trim(output->document());
@@ -15393,6 +16485,14 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             captured += text;
             captured += QLatin1Char('\n');
         };
+        // Round 200 (ITEM 3): the display walk-through re-emits its scoped
+        // diagnostic sections between the dm-scoped-regen marker lines at
+        // the per-switch/restore success marker; buffer them here and commit
+        // them into the diagnostic cache while the walk-through stays open
+        // (the helper holds the single-request gate for the whole menu
+        // session, so the regeneration must arrive through its transcript).
+        // Round 203: the buffer state is function-scoped (see above) — the
+        // block may span any number of socket reads.
         while (true) {
             const qsizetype newline = wireBuffer.indexOf('\n', wireBufferOffset);
             if (newline < 0) {
@@ -15418,8 +16518,89 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
 
             if (tag == QByteArrayLiteral("OUT")) {
                 const QString text = QString::fromUtf8(payload);
+                // Round 206 (REFINEMENT 2): the captured transcript keeps
+                // every line of the scoped-regen block (the Logs register
+                // stays raw and complete), while the WALK-THROUGH TERMINAL
+                // suppresses the block's diagnostic-section bodies: the
+                // re-generation runs in the background and the terminal
+                // shows the ONE status line at the begin marker (the
+                // localized "Refreshing the affected diagnostic sections
+                // …" line) plus the completion line at the end marker
+                // ("…refreshed; the walk-through stays open.") — the
+                // coordinator's "just like the other interactive repairs —
+                // a waiting line" ruling.  The prompts keep flowing (the
+                // menu re-prompt arrives as its own record after the block)
+                // and the at-marker cache commit below stays byte-identical
+                // (the round-203 commit fix is untouched).
                 appendCapturedLine(text);
-                streamLine(text);
+                if (!walkthroughRegenActive) {
+                    streamLine(text);
+                }
+                // Round 200 (ITEM 3): the walk-through's scoped-regeneration
+                // markers.  The block between them carries the fresh
+                // display/package/backend/usage sections framed exactly like
+                // a diagnostic run; commit them at the end marker so the
+                // Diagnostics rows refresh while the walk-through stays open
+                // (the re-run never ends the menu loop — the helper owns it).
+                // Round 211 (the interactive-repair alignment): the generic
+                // scoped-regen marker pair (kernel/input/network sessions)
+                // rides the SAME accumulation/suppression/activity machinery;
+                // the commit derives the accepted sections from the request's
+                // session stage (the display walk-through keeps its exact
+                // settled behavior byte-identical).
+                if (!walkthroughRegenActive
+                    && (text.contains(QStringLiteral("msg:dm-scoped-regen-begin"))
+                        || text.contains(QStringLiteral("msg:scoped-regen-begin")))) {
+                    walkthroughRegenActive = true;
+                    walkthroughRegenBlock.clear();
+                    // Round 208 (ITEM C) + round 210 (ITEM 1): switch the
+                    // activity text to the GENERIC diagnostic-run activity for
+                    // the refresh window — the same labels a plain diagnostic
+                    // run shows (the request title for the status line, the
+                    // "Running … diagnostics…" progress detail), never a
+                    // bespoke scoped-refresh wording.  The walk-through runs
+                    // in the request's own scope, which is the active scope
+                    // while the single-request gate is held.
+                    if (!shellStreaming) {
+                        regenPreStatus = status->text();
+                        regenPreProgressDetail = m_progressDetailLabel
+                            ? m_progressDetailLabel->text() : QString();
+                        // The generic plural form: the "all" key is what a
+                        // full diagnostic run's request title uses on BOTH
+                        // scopes (the "report" key spells the singular
+                        // target-scope form).
+                        status->setText(diagnosticRequestTitle(
+                            m_hostMaintenanceMode, QStringLiteral("all")));
+                        setProgressDetail(m_hostMaintenanceMode
+                            ? tr("Running Host diagnostics…")
+                            : tr("Running Target diagnostics…"));
+                        regenActivityOverridden = true;
+                    }
+                }
+                if (walkthroughRegenActive) {
+                    walkthroughRegenBlock += text;
+                    walkthroughRegenBlock += QLatin1Char('\n');
+                    if (text.contains(QStringLiteral("msg:dm-scoped-regen-end"))
+                        || text.contains(QStringLiteral("msg:scoped-regen-end"))) {
+                        walkthroughRegenActive = false;
+                        // Round 211: the display session keeps its settled
+                        // commit (the exact scoped set + the walk-through
+                        // wording); the generic sessions commit their map-row
+                        // sections under their own stage key.
+                        commitWalkthroughScopedRegen(walkthroughRegenBlock, regenSessionKey);
+                        walkthroughRegenBlock.clear();
+                        // Round 206: the completion line renders in the
+                        // terminal after the sections committed.
+                        streamLine(text);
+                        // Round 208 (ITEM C): the refresh completed — the
+                        // activity text switches BACK to the repair activity.
+                        if (regenActivityOverridden) {
+                            status->setText(regenPreStatus);
+                            setProgressDetail(regenPreProgressDetail);
+                            regenActivityOverridden = false;
+                        }
+                    }
+                }
                 // Round 108 (0.2.30 #10): the optional per-line sink feeds
                 // the progressive diagnostic-section assembler of the
                 // combined Run All / regeneration runs; every other request
@@ -15441,16 +16622,17 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 // Round 17 (ITEM 3): MENU marks the interactive kernel/GPU
                 // action menus; PROMPT keeps the package-mutation CONFIRM
                 // prompts.  Both ride the same answer channel.
-                // A2-06: bound the decoded prompt payload. A PROMPT record
+                // A2-06: bound the decoded prompt payload. A PROMPT/MENU record
                 // whose base64 payload exceeds 16384 bytes is dropped with a
                 // protocol note and answered with an empty ANSWER record, so
                 // the helper fails closed instead of waiting forever and a
                 // runaway helper can never make the GUI allocate an unbounded
                 // base64 buffer.  The bound is generous enough for legitimate
-                // repair menus (kernel/GPU) — a real menu is a few hundred
-                // base64 bytes even with many kernels — while 16384 x the
-                // 8-prompt budget is ~128 KB, so a runaway helper still cannot
-                // make the GUI allocate unbounded memory.
+                // repair menus (kernel/GPU/walk-through) — a real menu is a few
+                // hundred base64 bytes even with many kernels — while 16384 x
+                // (the 8-prompt budget + the 48-menu budget) is ~896 KB, so a
+                // runaway helper still cannot make the GUI allocate unbounded
+                // memory.
                 if (payload.size() > 16384) {
                     const QString oversizedNote = tr(
                         "Protocol note: a PROMPT record exceeded the 16384-byte payload bound and was dropped; the helper was answered with an empty ANSWER record.");
@@ -15463,9 +16645,16 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 }
                 // A6-03/A6-04: no prompt handling after the DONE record,
                 // exactly one prompt dialog at a time, and a per-request
-                // prompt budget.  A dropped prompt is answered with an empty
-                // ANSWER record so the helper fails closed instead of waiting
-                // for an answer that never arrives.
+                // prompt budget.  Round 204: the two classes count separately —
+                // PROMPT (CONFIRM/shell question) against the 8-prompt budget,
+                // MENU (the 600 s numbered action menus) against the dedicated
+                // 48-menu budget — so a legitimate multi-round menu session
+                // (the display walk-through, a long kernel-menu session) never
+                // exhausts the flat budget, while the DECLINED/no-op paths and
+                // the ordinary single-prompt repairs keep the unchanged PROMPT
+                // budget.  A dropped prompt is answered with an empty ANSWER
+                // record so the helper fails closed instead of waiting for an
+                // answer that never arrives.
                 if (requestDone) {
                     continue;
                 }
@@ -15477,13 +16666,31 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                     // reaches the user without opening another prompt.  Never
                     // answer the record with an empty ANSWER, which would
                     // wrongly cancel the command.
-                    const QString refreshed = QString::fromUtf8(QByteArray::fromBase64(payload));
-                    appendCapturedLine(refreshed);
-                    streamLine(refreshed);
+                    // Round 197 (the doubled-prompt class): for the shell
+                    // kinds the refreshed payload is the trailing output the
+                    // pump already streamed live as OUT records, so it must
+                    // never be re-appended (the legacy GUI's round-70 E1
+                    // rule — re-appending duplicated every shell question in
+                    // the pane and the captured transcript).  Pin the pane to
+                    // the bottom instead so the arriving question line is
+                    // visible the moment the answer line arms.
+                    if (shellStreaming) {
+                        if (m_chrootShellOutput) {
+                            m_chrootShellOutput->moveCursor(QTextCursor::End);
+                        }
+                    } else {
+                        const QString refreshed = QString::fromUtf8(QByteArray::fromBase64(payload));
+                        appendCapturedLine(refreshed);
+                        streamLine(refreshed);
+                    }
                     continue;
                 }
-                ++promptCount;
-                if (promptCount > 8) {
+                if (tag == QByteArrayLiteral("MENU")) {
+                    ++menuCount;
+                } else {
+                    ++promptCount;
+                }
+                if (promptCount > 8 || menuCount > kMenuPromptBudget) {
                     const QString budgetError = tr(
                         "ERROR: The privileged request exceeded the interactive prompt budget; treating the request as a protocol failure.");
                     appendCapturedLine(budgetError);
@@ -15511,8 +16718,40 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 }
                 const QString promptText = QString::fromUtf8(QByteArray::fromBase64(payload));
 
-                appendCapturedLine(promptText);
-                streamLine(promptText);
+                // Round 212 (the activity switch-back at the re-prompt): the
+                // generic menu sessions (kernel/gpu/input/network) re-prompt
+                // AFTER the in-terminal scoped regeneration completed, so any
+                // still-pending activity override (a regen whose end-marker
+                // restore was missed, or whose re-prompt raced ahead) is
+                // restored HERE — the indicator switches BACK to the repair
+                // action the moment the re-prompt shows, exactly like the
+                // settled display walk-through (the same generic labels, no
+                // new strings).
+                if (regenActivityOverridden) {
+                    status->setText(regenPreStatus);
+                    setProgressDetail(regenPreProgressDetail);
+                    regenActivityOverridden = false;
+                }
+
+                // Round 197 (the doubled-prompt class): for the shell kinds the
+                // prompt payload is the trailing output the pump already
+                // streamed live into the shell pane (shell_pump_cleaned_byte
+                // echoes every byte to stdout before the PROMPT record goes
+                // out), so re-appending it printed every shell question TWICE
+                // — once live, once as the payload — and only the payload copy
+                // armed the input line, so the live copy read as a prompt the
+                // user never had a chance to answer ("skipped").  The payload
+                // is display-only here: never re-append it (the legacy GUI's
+                // round-70 E1 rule), and pin the pane to the bottom so the
+                // single question line is visible the moment the input line
+                // arms.  The repair-kind popup keeps its payload render (the
+                // payload is the only rendering there).
+                if (!shellStreaming) {
+                    appendCapturedLine(promptText);
+                    streamLine(promptText);
+                } else if (m_chrootShellOutput) {
+                    m_chrootShellOutput->moveCursor(QTextCursor::End);
+                }
                 promptActive = true;
                 // A5-13: pause the request watchdog while the prompt is
                 // waiting so the safety limit can never fire mid-prompt.
@@ -15589,6 +16828,9 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 requestDone = true;
                 requestWatchdog.stop();
                 requestSucceeded = requestExitCode == 0;
+                // Round 196 (ITEM 3): latch the cancel state at the DONE
+                // record (see the function-scope declaration above).
+                userCancelledAtDone = m_privilegedRequestUserCancelled;
                 // Round 119 (ITEM 1): an individual repair reached its CLEAN
                 // SUCCESS terminal.  When the transcript proves a change, the
                 // single-request gate is released NOW — the request is
@@ -15631,6 +16873,59 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                     QTimer::singleShot(20, this, [terminalHook, terminalTranscript] {
                         terminalHook(terminalTranscript);
                     });
+                } else if (!requestSucceeded && !m_privilegedRequestUserCancelled
+                           && !sharedDialogMode && showProgressDialog
+                           && kind == LogEntryKind::Repair
+                           && repairFailureTerminalHook
+                           && !repairSuccessTerminalKeys.isEmpty()
+                           && !explicitlyChangedRepairToolKeys(captured).isEmpty()) {
+                    // Round 194 (ITEM 3): the FAILURE marker terminal — the
+                    // round-188 pattern applied to the failed request's DONE
+                    // record: when the transcript explicitly reports a
+                    // changed stage (the cancelled/failed-install class), the
+                    // gate is released NOW (the request is complete — the
+                    // failure popup stays open for review) and the scoped
+                    // invalidation + the coalesced regeneration dispatch
+                    // deferred to the next event-loop turn, so the re-run
+                    // starts at the marker instead of waiting for the popup
+                    // close.  A failure whose transcript reports no change
+                    // (the unit-file-refusal class — nothing was mutated)
+                    // keeps the pre-round-119 gate lifetime and invalidates
+                    // NOTHING.
+                    gate.release();
+                    terminalReaderYielded = true;
+                    const QString terminalTranscript = captured;
+                    const auto terminalHook = repairFailureTerminalHook;
+                    QTimer::singleShot(20, this, [terminalHook, terminalTranscript] {
+                        terminalHook(terminalTranscript);
+                    });
+                } else if (!requestSucceeded && m_privilegedRequestUserCancelled
+                           && !sharedDialogMode && showProgressDialog
+                           && kind == LogEntryKind::Repair
+                           && repairFailureTerminalHook
+                           && !repairSuccessTerminalKeys.isEmpty()
+                           && repairTranscriptHasChangedStatus(captured)) {
+                    // Round 196 (ITEM 3): the CANCEL/abort marker terminal —
+                    // the round-188 pattern applied to the user force-stop's
+                    // DONE-143 record (the session force-stop / the CANCEL
+                    // record / the abort_mutating_request exit): when the
+                    // transcript explicitly reports a changed stage, the gate
+                    // is released NOW (the request is complete — nothing is
+                    // cancellable anymore, the abort popup stays open for
+                    // review) and the cancelled-repair scoped invalidation +
+                    // the coalesced regeneration dispatch deferred to the
+                    // next event-loop turn, so the re-run starts at the
+                    // cancel marker instead of waiting for the popup close.
+                    // A cancel whose transcript reports no change keeps the
+                    // pre-round-119 gate lifetime and invalidates NOTHING.
+                    gate.release();
+                    terminalReaderYielded = true;
+                    const QString cancelTerminalTranscript = captured;
+                    const QStringList cancelTerminalKeys = repairSuccessTerminalKeys;
+                    QTimer::singleShot(20, this, [this, cancelTerminalKeys, cancelTerminalTranscript, kind] {
+                        handleIndividualRepairCancelTerminal(
+                            cancelTerminalKeys, cancelTerminalTranscript, kind);
+                    });
                 }
                 // A12-02: the request is complete (or aborted) — nothing is
                 // cancellable anymore, so the dialog's Cancel button disarms
@@ -15646,7 +16941,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 // request loop (this request is finished).
                 promptWaitLoop.quit();
                 nonModalWaitLoop.quit();
-                if (m_privilegedRequestUserCancelled && !requestSucceeded) {
+                if (userCancelledAtDone && !requestSucceeded) {
                     // A9-01: the user force-stopped this request mid-run.  The
                     // popup switches to its post-abort state at once: the
                     // explicit abort status is shown, the Cancel button stays
@@ -15721,8 +17016,12 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     });
 
     connect(session, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &requestContext,
-            [status, closeButton, renderDialog, sharedDialogMode, &requestDone, &nonModalWaitLoop, &promptWaitLoop](int, QProcess::ExitStatus) {
+            [this, status, closeButton, renderDialog, sharedDialogMode, &requestDone, &nonModalWaitLoop, &promptWaitLoop, &regenActivityOverridden, &regenPreProgressDetail](int, QProcess::ExitStatus) {
         if (!requestDone) {
+            if (regenActivityOverridden) {
+                setProgressDetail(regenPreProgressDetail);
+                regenActivityOverridden = false;
+            }
             status->setText(tr("The privileged helper session ended unexpectedly. The next root action will require authorization again."));
             // A12-02: the session ended without a DONE record — nothing is
             // cancellable anymore, so the dialog's Cancel disarms too.
@@ -15899,7 +17198,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         appendShellTranscript(abortNotice);
         appendLog(tr("%1: aborted because the application is closing.").arg(title),
                   QStringLiteral("INFO"), kind);
-    } else if (requestDone && m_privilegedRequestUserCancelled && !requestSucceeded) {
+    } else if (requestDone && userCancelledAtDone && !requestSucceeded) {
         // A8-04: the user force-stopped this mutating request and the helper
         // reported a non-zero exit code.  Report the abort fail-closed —
         // NEVER claim success.  A10-02: the scope's diagnostic cache is
@@ -15940,7 +17239,14 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             if (m_fullRepairPlanInProgress) {
                 // The plan owns its single post-plan invalidation;
                 // runRepairHelper accumulates the per-tool union there.
-            } else {
+            } else if (!m_repairCancelTerminalHandled) {
+                // Round 196 (ITEM 3): the cancel terminal (the DONE-143
+                // record, while the abort popup was still open) already
+                // applied the scoped invalidation + the coalesced
+                // regeneration — the post-frame completion must not apply it
+                // twice.  (The terminal fires only for a dialog-backed
+                // individual repair with an explicitly-changed transcript;
+                // shells, plans and no-change cancels never latch it.)
                 // Round 20 (ITEM 3): a cancelled SHELL command uses its own
                 // class map (package-manager/boot-config/missing -> the
                 // conservative complete set) instead of the repair verb map;
@@ -15954,6 +17260,27 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                     affectedSections = cancelledShellAffectedSections(captured);
                 } else {
                     affectedSections = cancelledRepairAffectedSectionsForArguments(arguments);
+                    // Round 194 (ITEM 3): the transcript's EXPLICITLY-changed
+                    // keys refine the verb-derived set — the display
+                    // walk-through's install publishes its pre-apply change
+                    // evidence under the install-target-package key, so a
+                    // cancelled install adds the package/backend/usage/
+                    // capabilities set to the display row's set (the
+                    // package/display scoped set only, never the complete
+                    // set).
+                    const QStringList changedKeys = explicitlyChangedRepairToolKeys(captured);
+                    for (const QString &key : changedKeys) {
+                        const QStringList mapped = cancelledRepairAffectedSections(key);
+                        if (mapped.contains(QStringLiteral("all"))) {
+                            affectedSections = mapped;
+                            break;
+                        }
+                        for (const QString &section : mapped) {
+                            if (!affectedSections.contains(section)) {
+                                affectedSections.append(section);
+                            }
+                        }
+                    }
                 }
                 if (affectedSections.contains(QStringLiteral("all"))) {
                     invalidateAllActiveScopeDiagnostics();
@@ -16543,13 +17870,20 @@ void MainWindow::clearSnapshotResults()
     if (m_snapshotDetails) {
         m_snapshotDetails->clear();
     }
+    // Round 174 (ITEM 1): the staged banner describes THIS scope's last
+    // successful rollback — a scope change (a different target, or the host
+    // round-trip) clears it together with the inventory it belongs to.
+    // Round 222 (plan §1 item 16): the preserved undo-point record clears
+    // with it (the shared teardown).
+    clearTargetRollbackStaged();
     updateTabVisibility();
 }
 
 void MainWindow::updateSnapshotControls()
 {
     if (!m_snapshotLoadButton || !m_snapshotInspectButton || !m_snapshotRollbackButton
-        || !m_snapshotCreateButton || !m_snapshotFilterCombo || !m_snapshotTable) {
+        || !m_snapshotCreateButton || !m_snapshotDeleteButton
+        || !m_snapshotFilterCombo || !m_snapshotTable) {
         return;
     }
 
@@ -16621,7 +17955,7 @@ void MainWindow::updateSnapshotControls()
     // Round 146 (ITEM 2): the manual Create Snapshot button.  It fails
     // closed on the cached capability evidence like the rollback, but only
     // the prerequisites the CREATION needs block it — a rollback-only
-    // refusal (timeshift, pinned-subvolid; the round-149 /boot capture
+    // refusal (pinned-subvolid; the round-149 /boot capture
     // lifted the separate-boot refusal) still allows creating a snapshot.
     bool createCandidate = ready;
     QString createReason;
@@ -16640,6 +17974,63 @@ void MainWindow::updateSnapshotControls()
             ? tr("Create one single-type 'Boot Bitch manual snapshot' on the running host after the confirmation prompt.")
             : tr("Create one single-type 'Boot Bitch manual snapshot' on the repair target after the confirmation prompt."))
         : createReason);
+
+    // Round 220 (ITEM 3): the Delete Selected button.  The DELETABLE rows are
+    // the selected VISIBLE rows whose id is a numeric Snapper snapshot and
+    // whose type is NOT the rollback-backup undo marker (the preserved-root
+    // rows are recovery artifacts, never deletable).  The capability gate is
+    // the create verb's prerequisite ladder (the deletion preflights need the
+    // same snapper/config/store state), so a rollback-only refusal still
+    // allows deleting; the runtime preflights stay authoritative.  The
+    // enabled hint follows the round-32 per-selection pattern; the disabled
+    // hint names the gating reason.
+    bool deleteCandidate = ready;
+    QString deleteReason;
+    int deletableSelected = 0;
+    int undoSelected = 0;
+    if (deleteCandidate) {
+        QString capabilityReason;
+        if (!manualSnapshotCreateAvailable(&capabilityReason)) {
+            deleteCandidate = false;
+            deleteReason = capabilityReason;
+        } else {
+            const QList<QTableWidgetItem *> selected = m_snapshotTable->selectedItems();
+            for (const QTableWidgetItem *selectedItem : selected) {
+                if (selectedItem->column() != 0) {
+                    continue;
+                }
+                const int row = selectedItem->row();
+                if (m_snapshotTable->isRowHidden(row)) {
+                    continue;
+                }
+                const QString id = selectedItem->data(Qt::UserRole).toString();
+                bool numeric = false;
+                id.toULongLong(&numeric);
+                if (numeric) {
+                    const QTableWidgetItem *typeItem = m_snapshotTable->item(row, 2);
+                    const QString type = typeItem
+                        ? typeItem->data(Qt::UserRole).toString() : QString();
+                    if (type != QStringLiteral("rollback-backup")) {
+                        ++deletableSelected;
+                    }
+                } else {
+                    ++undoSelected;
+                }
+            }
+            deleteCandidate = deletableSelected >= 1;
+            if (!deleteCandidate) {
+                deleteReason = undoSelected > 0
+                    ? tr("Rollback undo points are recovery artifacts and cannot be deleted.")
+                    : (ready ? tr("Select one or more snapshots first.") : reason);
+            }
+        }
+    } else {
+        deleteReason = reason;
+    }
+    m_snapshotDeleteButton->setEnabled(deleteCandidate);
+    m_snapshotDeleteButton->setToolTip(deleteCandidate
+        ? tr("Delete %1 snapshot(s)…").arg(deletableSelected)
+        : deleteReason);
 }
 
 // ---- MainWindow: snapshot scope accessors -----------------------------------
@@ -17086,9 +18477,85 @@ void MainWindow::loadSnapshots(bool background)
                   : tr("Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.").arg(count),
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
     updateSnapshotControls();
+    // Round 228 (ITEM 2): the staged state must survive an app restart — the
+    // target banner + Cancel are session-scoped GUI state while the staging
+    // itself is on disk.  Re-resolve it through the helper's read-only
+    // staged-state probe after every completed inventory load.  (The
+    // running-host banner needs no probe: the round-152.3
+    // host/rebootRequired* QSettings record persists it across sessions.)
+    if (!hostScope) {
+        probeTargetRollbackStagedState();
+    }
     // The scope is satisfied: automatic preloads for this generation are
     // deduped until the next target/scope change.
     m_snapshotLoadedGeneration = m_snapshotScopeGeneration;
+}
+
+// Round 228 (ITEM 2): the staged-state re-resolution probe (target scope).
+// The helper's read-only `snapshots staged-state` action reports `staged`
+// ONLY when the round-227 persisted staged-source record AND the current
+// preserved-root undo both resolve — the pending marker plus the on-disk
+// truth.  A `staged` result re-lights the staged banner + the Cancel button
+// (setTargetRollbackStaged) with the helper-resolved source id and undo
+// point; anything else — `none`, a failed request, a stale scope — fails
+// closed and changes nothing (no banner is ever guessed).
+void MainWindow::probeTargetRollbackStagedState()
+{
+    if (m_hostMaintenanceMode) {
+        return;
+    }
+    const QString identity = snapshotScopeIdentity();
+    const QString requestTargetPath = snapshotDiskPath();
+    const QString requestComponentPath = snapshotComponentPath();
+    if (identity.isEmpty() || requestTargetPath.isEmpty() || requestComponentPath.isEmpty()) {
+        return;
+    }
+    bool succeeded = false;
+    const QString output = runPrivilegedRequest(
+        tr("Resolve the staged target rollback state"),
+        {snapshotHelperCommand(), requestTargetPath, requestComponentPath,
+         QStringLiteral("staged-state")},
+        QByteArray(),
+        &succeeded,
+        false,
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        /* quiet = */ true);
+    // A scope change while the probe was in flight makes the result belong
+    // to another scope; drop it — the new scope's own load re-probes.
+    if (identity != snapshotScopeIdentity()
+        || requestTargetPath != snapshotDiskPath()
+        || requestComponentPath != snapshotComponentPath()) {
+        return;
+    }
+    if (!succeeded || !output.contains(QStringLiteral("SNAPSHOT_STAGED_STATE=staged"))) {
+        // No staging -> no banner: the byte-unchanged behavior.
+        return;
+    }
+    QString snapshotId;
+    QString undoPoint;
+    static const QRegularExpression stagedIdRe(
+        QStringLiteral("SNAPSHOT_STAGED_SNAPSHOT_ID=([^ \\t\\n\\r]+)"));
+    static const QRegularExpression stagedUndoRe(
+        QStringLiteral("SNAPSHOT_STAGED_UNDO_POINT=([^ \\t\\n\\r]+)"));
+    const QRegularExpressionMatch idMatch = stagedIdRe.match(output);
+    if (idMatch.hasMatch()) {
+        snapshotId = idMatch.captured(1);
+    }
+    const QRegularExpressionMatch undoMatch = stagedUndoRe.match(output);
+    if (undoMatch.hasMatch()) {
+        undoPoint = undoMatch.captured(1);
+    }
+    if (snapshotId.isEmpty()) {
+        // Fail closed: a staged marker without its source id never lights
+        // the banner (the banner names the snapshot id).
+        return;
+    }
+    setTargetRollbackStaged(snapshotId, undoPoint);
+    appendLog(tr("Re-resolved the staged repair-target rollback for %1: snapshot %2 is staged as the next root and the preserved undo point is %3. The staged banner and Cancel are restored.")
+                  .arg(requestTargetPath, snapshotId, undoPoint),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
 }
 
 void MainWindow::populateSnapshotTable(const QList<SnapshotInventoryRow> &rows)
@@ -17241,6 +18708,19 @@ void MainWindow::resizeSnapshotRows()
     }
 }
 
+// Round 226 (ITEM 2): the curated details-pane renderer.  The pane shows
+// ONLY the curated states — the selected snapshot's details (Inspect/
+// double-click) or, with nothing selected, the short inventory information
+// line the last load rendered (the round-146 state).  Raw operation
+// transcripts (the inspect output, the rollback/cancel logs — the "Gefangen:
+// …"/msg: duplication the user reported) never render here: they stay in the
+// log and the operation's terminal window.  The details are composed from
+// the visible table columns with the live header labels (no new strings).
+// Round 228 (ITEM 3) reverted the Inspect pane to the inspect output itself;
+// Round 229 (the user's TUXEDO ruling) refined that: the pane renders the
+// PURE snapshot details — the inspect output from its first "Snapshot: <id>"
+// line onward — and the log-style prefix (the "Gefangen:"/"Captured:" header
+// + the timestamped msg: protocol lines) never renders here.
 void MainWindow::inspectSelectedSnapshot()
 {
     if (!m_snapshotTable || !m_snapshotDetails) {
@@ -17276,8 +18756,38 @@ void MainWindow::inspectSelectedSnapshot()
         false,
         LogEntryKind::Snapshot);
 
-    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    m_snapshotDetails->setPlainText(tr("Captured: %1\n\n%2").arg(stamp, output));
+    // Round 226 (ITEM 2) REPLACED the pane content with the curated table
+    // short form — REVERTED round 228 (ITEM 3, the user's ruling): the pane
+    // shows the ORIGINAL rich presentation again — the inspect OUTPUT (the
+    // btrfs info, the root validation and the fstab/crypttab sections the
+    // user's earlier log showed).  The round-226 leak suppression is KEPT:
+    // the rollback/cancel operation transcripts never render into the pane
+    // (they stay in the log and the operation's terminal window) — only
+    // this deliberate Inspect write populates it.
+    // Round 229 (the user's TUXEDO ruling): the pane shows the PURE snapshot
+    // details — the inspect output from its first "Snapshot: <id>" line
+    // onward (the details always start there; the closing "Inspection is
+    // read-only…" line stays).  The log-style prefix the session emits
+    // BEFORE that line (the "Captured:"/"Gefangen:" header and the
+    // timestamped `[HH:MM:SS] msg:…` protocol lines) is log-related and
+    // never renders here.  A failed inspect whose output carries no
+    // "Snapshot:" line keeps the previous honest rendering (the
+    // "Captured:" stamp + the raw output) so the failure reason stays
+    // visible.
+    const QStringList outputLines = output.split(QLatin1Char('\n'));
+    int detailsStart = -1;
+    for (int index = 0; index < outputLines.size(); ++index) {
+        if (outputLines.at(index).startsWith(QStringLiteral("Snapshot: "))) {
+            detailsStart = index;
+            break;
+        }
+    }
+    if (detailsStart >= 0) {
+        m_snapshotDetails->setPlainText(outputLines.mid(detailsStart).join(QLatin1Char('\n')));
+    } else {
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Captured: %1\n\n%2").arg(stamp, output));
+    }
     appendLog(succeeded
                   ? tr("Snapshot %1 read-only inspection completed.").arg(snapshotId)
                   : tr("Snapshot %1 read-only inspection failed.").arg(snapshotId),
@@ -17324,6 +18834,24 @@ void MainWindow::rollbackSelectedSnapshot()
         return;
     }
 
+    // Round 230 (ITEM 2): the already-staged rollback no-op.  When the
+    // selected snapshot IS the currently-staged target rollback's source
+    // (the round-227 persisted staged-source record, resolved by the
+    // round-228 staged-state probe on the Snapshots-tab load — the same
+    // staged id the banner names), there is nothing to plan, confirm or
+    // invalidate: the short-circuit shows the honest informational message
+    // and returns.  The staged banner already shows the state; the message
+    // confirms the no-op.  Nothing changed, so no plan runs, no CONFIRM
+    // prompts, no busy scope and no diagnostic invalidation/regeneration.
+    // The non-staged snapshots' flow below stays byte-unchanged.
+    if (m_targetRollbackStaged && m_targetRollbackSnapshotId == snapshotId) {
+        runOkDialog(this, tr("Rollback already staged"),
+                    tr("Snapshot %1 is already staged for rollback — no action or change is necessary.")
+                        .arg(snapshotId),
+                    QString(), QMessageBox::Information);
+        return;
+    }
+
     BusyOperationScope busy(this, tr("Rolling back snapshot %1").arg(snapshotId));
 
     // Round 134 (ITEM R1/R2): ONE plan-owned dialog carries the whole flow —
@@ -17358,8 +18886,6 @@ void MainWindow::rollbackSelectedSnapshot()
         QString(),
         planDialog);
 
-    const QString captured = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    m_snapshotDetails->setPlainText(tr("Rollback preflight captured: %1\n\n%2").arg(captured, plan));
     if (!planSucceeded || !plan.contains(QStringLiteral("PLAN_OK=1"))) {
         appendLog(tr("Snapshot %1 rollback preflight failed; no target data was changed.").arg(snapshotId),
                   QStringLiteral("ERROR"), LogEntryKind::Snapshot);
@@ -17377,9 +18903,10 @@ void MainWindow::rollbackSelectedSnapshot()
     // The helper re-runs the complete read-only plan (PLAN_OK=1) and then emits
     // the CONFIRM prompt, which the prompt machinery renders inside this popup
     // (the package-stage channel — no second popup).  The round-119/120
-    // completion terminal is carried by this dialog's completion path below:
-    // the complete-set invalidation and the scheduled regeneration run while
-    // the popup is still open for review.
+    // completion terminal is carried by this dialog's completion path below —
+    // the shared-dialog request returns at the DONE record (the success
+    // marker), so the round-188 scoped invalidation + the regeneration
+    // schedule dispatch while the popup stays open for review.
     const QString output = runPrivilegedRequest(
         tr("Roll back to Btrfs snapshot %1").arg(snapshotId),
         {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath,
@@ -17391,40 +18918,67 @@ void MainWindow::rollbackSelectedSnapshot()
         QString(),
         planDialog);
 
-    const QString finished = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     if (succeeded && output.contains(QStringLiteral("ROLLBACK_RESULT=SUCCESS"))) {
-        // Round 134 (ITEM R2): the round-120 success terminal moved to this
-        // plan popup's completion path — the complete set is invalidated and
-        // the coalesced regeneration is scheduled while the popup stays open
-        // for review (the pre-round-134 terminal semantics preserved).
-        invalidateAllTargetDiagnostics();
-        updateFullRepairSummary();
-        // Same re-entrancy rule as clearSnapshotResults(): publish the new
-        // scope identity BEFORE removing the rows, so the selection-driven
-        // updateSnapshotControls() that fires while the selected row is
-        // dropped cannot clear the half-removed table a second time.
+        // Round 188 (the success-marker timing fix): the STAGING changed the
+        // ON-DISK snapshot/btrfs/boot-evidence state (the default subvolume
+        // re-pointed at the promoted snapshot root, the .snapshots store
+        // migrated with it, the boot-stack reconcile re-generated the GRUB
+        // configuration) while the target keeps the current root until it
+        // next boots — the round-187.2 cancel rationale applies identically,
+        // so the invalidation is exactly the scoped set {btrfs, usage,
+        // boot-evidence} + the capability preamble (never the pre-round-188
+        // complete set) and the regeneration is scheduled HERE, at the
+        // success marker (the shared plan dialog's DONE-record return) — the
+        // scoped re-run starts while the popup stays open for review.
+        invalidateRollbackSuccessDiagnostics(/*hostScope=*/false);
+        // Round 171 (the user's Fedora regression — the round-152.3 host
+        // keep-catalogue behavior, target-side; GENERIC for every Btrfs
+        // target, no per-system/per-distribution special-casing): a
+        // successful rollback does NOT delete the snapshots (the .snapshots
+        // store was preserved with the promoted root), so the table is NOT
+        // cleared and the inventory count is NOT reset — the rows keep their
+        // ids, paths and statuses, and a re-entry into the target is no
+        // longer needed to see them.  The promoted root takes effect when
+        // the repair target next boots.  (Round 171 evaluation: NO reboot
+        // button for the target — the recovery host cannot reboot the
+        // offline target's operating system; the informational next-boot
+        // wording is the honest affordance, mirroring the host's staged
+        // wording without its Reboot Now/Later action.)
         m_snapshotResultIdentity = currentTargetDiagnosticCacheIdentity();
-        // The rollback empties the snapshot inventory: reset the inventory
-        // count beside the row removal so snapshotsTabVisible() stops
-        // reporting the now-empty table as a populated inventory.
-        m_snapshotInventoryCount = 0;
-        if (m_snapshotTable) {
-            m_snapshotTable->setRowCount(0);
-        }
-        m_snapshotDetails->setPlainText(tr("Rollback completed: %1\n\n%2\n\nSnapshot inventory was cleared because the active root changed. Choose Load Snapshots to refresh it.")
-                                            .arg(finished, output));
-        appendLog(QStringLiteral("STALE DIAGNOSTICS: ")
-                      + tr("snapshot %1 rollback changed the active root; snapshot inventory and cached diagnostics were invalidated. Regenerate diagnostics before the next repair.").arg(snapshotId),
-                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
-        refreshDevices();
         updateSnapshotControls();
-        // The rollback emptied the inventory: re-apply tab visibility so the
-        // Snapshots tab hides instead of staying visible with an empty table.
+        // The kept catalogue keeps the Snapshots tab populated — the
+        // round-134 hide applied to the CLEARED inventory, which no longer
+        // happens here.
         updateTabVisibility();
-        scheduleEvidenceRefresh(QStringLiteral("snapshot rollback completed"));
+        // Round 174 (ITEM 1): show the below-title staged message — the
+        // host's banner presentation without the reboot affordance (the
+        // recovery host never reboots the offline target).
+        // Round 222 (plan §1 item 16): the preserved undo-point NAME is
+        // extracted from the rollback transcript (the helper's stable
+        // `msg:snapshot-previous-root|param:<name>` line) and recorded with
+        // the staged state — the round-189 host record pattern, so the
+        // Cancel verb can pass the GUI's staged record to the helper and an
+        // older/chained staging resolves even when the strict re-detection
+        // fails.
+        QString undoPoint;
+        static const QRegularExpression targetUndoPointRe(
+            QStringLiteral("msg:snapshot-previous-root\\|param:([^ \\t\\n\\r]+)"));
+        const QRegularExpressionMatch targetUndoMatch = targetUndoPointRe.match(output);
+        if (targetUndoMatch.hasMatch()) {
+            undoPoint = targetUndoMatch.captured(1);
+        }
+        setTargetRollbackStaged(snapshotId, undoPoint);
         finalizeSnapshotRollbackDialog(planDialog, tr(
-            "Snapshot rollback complete. Review the output, then close this window."));
-        runOkDialog(this, tr("Snapshot rollback complete"), tr("Snapshot %1 was promoted to a writable @ root and the boot stack passed reconciliation.\n\nThe previous @ was retained under a timestamped @rollback-before-* name. Reboot using the normal boot path when ready.")
+            "Snapshot rollback staged. Review the output, then close this window."));
+        // Round 174 (ITEM 1): the popup KEEPS the OK-only informational
+        // behavior — no reboot buttons (the agreed ruling: the recovery host
+        // never reboots the target).  The wording is aligned to the host
+        // popup's "staged as the next root" claim and made name-agnostic:
+        // the preserved-root undo point is named generically (the round-143
+        // machinery names it <root>-rollback-before-<stamp>, so the
+        // "@rollback-before-*" hardcode is wrong on any non-@ layout such as
+        // the stock anaconda subvol=root).
+        runOkDialog(this, tr("Snapshot rollback staged"), tr("Snapshot %1 is staged as the repair target's next root.\n\nThe previous root was retained as a timestamped rollback undo point and the boot stack passed reconciliation. The promoted root takes effect when the repair target next boots — reboot the target normally when ready (the recovery host never reboots it).")
                                      .arg(snapshotId), QString(), QMessageBox::Information);
         return;
     }
@@ -17434,8 +18988,6 @@ void MainWindow::rollbackSelectedSnapshot()
         // prompt was declined or expired BEFORE any mutation, so nothing
         // changed, nothing is invalidated and no failure dialog is shown (the
         // round-97 rule: declined is neither success nor failure).
-        m_snapshotDetails->setPlainText(tr("Rollback skipped: %1\n\n%2\n\nThe rollback confirmation was declined or expired; no target data was changed.")
-                                            .arg(finished, output));
         appendLog(tr("Snapshot %1 rollback was declined at the confirmation prompt; no target data was changed.").arg(snapshotId),
                   QStringLiteral("INFO"), LogEntryKind::Snapshot);
         finalizeSnapshotRollbackDialog(planDialog, tr(
@@ -17476,15 +19028,9 @@ void MainWindow::rollbackSelectedSnapshot()
             updateTabVisibility();
             scheduleEvidenceRefresh(QStringLiteral("snapshot rollback cancelled after a change"));
             scheduleSnapshotPreload();
-            // The preload's queued "Loading …" pane text is transient; the
-            // cancelled-wording below is the authoritative pane content.
-            m_snapshotDetails->setPlainText(tr("Rollback cancelled: %1\n\n%2\n\nThe rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically.")
-                                                .arg(finished, output));
             appendLog(tr("Snapshot %1 rollback was stopped at your request after the mutation intent was set; the affected cached diagnostics were invalidated and the snapshot inventory was cleared.").arg(snapshotId),
                       QStringLiteral("WARNING"), LogEntryKind::Snapshot);
         } else {
-            m_snapshotDetails->setPlainText(tr("Rollback cancelled: %1\n\n%2\n\nThe rollback was cancelled before any change; nothing was modified.")
-                                                .arg(finished, output));
             appendLog(tr("Snapshot %1 rollback was cancelled before any change; nothing was modified.").arg(snapshotId),
                       QStringLiteral("INFO"), LogEntryKind::Snapshot);
             updateSnapshotControls();
@@ -17522,10 +19068,6 @@ void MainWindow::rollbackSelectedSnapshot()
     updateTabVisibility();
     scheduleEvidenceRefresh(QStringLiteral("snapshot rollback failed"));
     scheduleSnapshotPreload();
-    // The preload's queued "Loading …" pane text is transient; the failure
-    // wording below is the authoritative pane content.
-    m_snapshotDetails->setPlainText(tr("Rollback attempt finished: %1\n\n%2\n\nCached diagnostics and snapshot inventory were cleared because the rollback request may have changed and/or restored target state.")
-                                        .arg(finished, output));
     appendLog(QStringLiteral("STALE DIAGNOSTICS: ")
                   + tr("snapshot %1 rollback did not complete; cached diagnostics and snapshots were invalidated. Regenerate diagnostics and review the operation output before the next repair or reboot.").arg(snapshotId),
               QStringLiteral("ERROR"), LogEntryKind::Snapshot);
@@ -17657,7 +19199,7 @@ static bool manualSnapshotCreationBlockedByReason(const QString &detail)
 // cached capability evidence, but only the prerequisites the CREATION needs
 // block it: missing packages/config/store (the capabilities Enable/Install
 // completes them), a non-Btrfs root, an unusable layout or insufficient
-// space.  A rollback-only refusal (timeshift-present, pinned-subvolid,
+// space.  A rollback-only refusal (pinned-subvolid,
 // nested-subvolumes, snapper-running, package-lock-active — the round-149
 // /boot capture lifted the separate-boot refusal) still allows creating a
 // snapshot — the helper's runtime preflights remain the authoritative gate.
@@ -17894,8 +19436,6 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
         QString(),
         planDialog);
 
-    const QString captured = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    m_snapshotDetails->setPlainText(tr("Running-host rollback preflight captured: %1\n\n%2").arg(captured, plan));
     if (!planSucceeded || !plan.contains(QStringLiteral("PLAN_OK=1"))) {
         appendLog(tr("Running-host snapshot %1 rollback preflight failed; no host data was changed.").arg(snapshotId),
                   QStringLiteral("ERROR"), LogEntryKind::Snapshot);
@@ -17913,10 +19453,10 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
     // The helper re-runs the complete read-only plan (PLAN_OK=1) and then emits
     // the CONFIRM prompt, which the prompt machinery renders inside this popup
     // (the package-stage channel — no second popup).  The round-119/120
-    // completion terminal is carried by this dialog's completion path below:
-    // the complete-set invalidation (WITHOUT the auto-regeneration schedule —
-    // the running system keeps serving the old root until reboot) runs while
-    // the popup is still open for review.
+    // completion terminal is carried by this dialog's completion path below —
+    // the shared-dialog request returns at the DONE record (the success
+    // marker), so the round-188 scoped invalidation + the regeneration
+    // schedule dispatch while the popup stays open for review.
     const QString output = runPrivilegedRequest(
         tr("Roll back the running host to snapshot %1").arg(snapshotId),
         {QStringLiteral("host-snapshots"), m_hostPrimaryPath, m_hostPrimaryComponentPath,
@@ -17928,18 +19468,23 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
         QString(),
         planDialog);
 
-    const QString finished = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    m_snapshotDetails->setPlainText(tr("Running-host rollback finished: %1\n\n%2").arg(finished, output));
     if (succeeded && output.contains(QStringLiteral("HOST_ROLLBACK_RESULT=SUCCESS"))) {
-        // The running system still serves the old root; diagnostics describe
-        // the old boot and are invalidated. The reboot-required state is
-        // persisted and reconciled against the kernel boot id.  Round 134
-        // (ITEM R2): the round-120 success terminal moved to this plan popup's
-        // completion path — the complete set is invalidated while the popup
-        // stays open (no auto-regeneration: the pre-round-120 no-schedule
-        // semantics preserved).
-        invalidateAllActiveScopeDiagnostics();
-        updateFullRepairSummary();
+        // The running system still serves the old root until the next
+        // reboot; the reboot-required state is persisted and reconciled
+        // against the kernel boot id.  Round 188 (the success-marker timing
+        // fix): the STAGING changed the ON-DISK snapshot/btrfs/boot-evidence
+        // state (the default subvolume re-pointed at the promoted snapshot
+        // root, the .snapshots store migrated with it, the boot-stack
+        // reconcile re-generated the GRUB configuration) while the RUNNING
+        // system keeps executing the same root — the round-187.2 cancel
+        // rationale applies identically, so the invalidation is exactly the
+        // scoped set {btrfs, usage, boot-evidence} + the capability preamble
+        // (never the pre-round-188 complete set) and the regeneration is
+        // scheduled HERE, at the success marker (the shared plan dialog's
+        // DONE-record return) — the scoped re-run starts while the popup
+        // stays open instead of the pre-round-188 no-schedule behavior that
+        // left the cache empty (the round-187.2 probe-2 symptom).
+        invalidateRollbackSuccessDiagnostics(/*hostScope=*/true);
         // Round 152.3 (the chained replacement rollback): the snapshot
         // CATALOGUE stays displayed — a successful rollback does not delete
         // the snapshots (the .snapshots store migrated into the promoted
@@ -17951,12 +19496,20 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
         // (The round-152.1 clear+reload was removed from THIS success branch
         // only; the round-135 cancel/failure branches are untouched.)
         m_snapshotResultIdentity = snapshotScopeIdentity();
-        setHostRebootRequired(snapshotId);
-        m_snapshotDetails->setPlainText(tr("Running-host rollback staged: %1\n\n%2\n\nThe snapshot catalogue stays listed — the snapshots were preserved with the promoted root. Cached running-host diagnostics were cleared because the next boot will start the promoted root. Reboot when ready; the reboot is never automatic.")
-                                            .arg(finished, output));
-        appendLog(QStringLiteral("STALE DIAGNOSTICS: ")
-                      + tr("running-host snapshot %1 rollback staged the promoted root for the next reboot; cached host diagnostics were invalidated. The snapshot catalogue is kept (the snapshots are preserved with the promoted root) and another snapshot can replace this staged rollback. The running host keeps the current root until reboot.").arg(snapshotId),
-                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        // Round 189 (the robust cancel): extract the preserved undo-point
+        // NAME from the rollback transcript (the helper's stable
+        // `msg:rollback-preserved-name|param:<name>` line) and persist it
+        // with the reboot-required record, so the Cancel verb can pass the
+        // GUI's staged record to the helper and an older/chained staging
+        // resolves even when the strict re-detection fails.
+        QString undoPoint;
+        static const QRegularExpression undoPointRe(
+            QStringLiteral("msg:rollback-preserved-name\\|param:([^ \\t\\n\\r]+)"));
+        const QRegularExpressionMatch undoMatch = undoPointRe.match(output);
+        if (undoMatch.hasMatch()) {
+            undoPoint = undoMatch.captured(1);
+        }
+        setHostRebootRequired(snapshotId, undoPoint);
         updateSnapshotControls();
         updateTabVisibility();
         updateHostRebootBanner();
@@ -17975,7 +19528,11 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
         success.setDefaultButton(later);
         success.exec();
         if (success.clickedButton() == rebootNow) {
-            confirmAndRebootHost();
+            // Round 231 (plan §1 item 23): the click IS the confirmation —
+            // dispatch the reboot request directly (exactly one prompt for
+            // this flow).  The banner's Reboot Now keeps its separate
+            // confirmation guard in confirmAndRebootHost().
+            requestHostReboot();
         }
         return;
     }
@@ -17986,8 +19543,6 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
         // changed, nothing is invalidated and no failure dialog is shown (the
         // round-97 rule: declined is neither success nor failure).  A
         // previously staged rollback stays in effect.
-        m_snapshotDetails->setPlainText(tr("Running-host rollback skipped: %1\n\n%2\n\nThe rollback confirmation was declined or expired; no host data was changed.")
-                                            .arg(finished, output));
         appendLog(tr("Running-host snapshot %1 rollback was declined at the confirmation prompt; no host data was changed.").arg(snapshotId),
                   QStringLiteral("INFO"), LogEntryKind::Snapshot);
         finalizeSnapshotRollbackDialog(planDialog, tr(
@@ -18028,15 +19583,9 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
             updateTabVisibility();
             scheduleEvidenceRefresh(QStringLiteral("running-host snapshot rollback cancelled after a change"));
             scheduleSnapshotPreload();
-            // The preload's queued "Loading …" pane text is transient; the
-            // cancelled-wording below is the authoritative pane content.
-            m_snapshotDetails->setPlainText(tr("Running-host rollback cancelled: %1\n\n%2\n\nThe rollback was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and will be regenerated automatically.")
-                                                .arg(finished, output));
             appendLog(tr("Running-host snapshot %1 rollback was stopped at your request after the mutation intent was set; the affected cached host diagnostics were invalidated and the snapshot inventory was cleared.").arg(snapshotId),
                       QStringLiteral("WARNING"), LogEntryKind::Snapshot);
         } else {
-            m_snapshotDetails->setPlainText(tr("Running-host rollback cancelled: %1\n\n%2\n\nThe rollback was cancelled before any change; nothing was modified.")
-                                                .arg(finished, output));
             appendLog(tr("Running-host snapshot %1 rollback was cancelled before any change; nothing was modified.").arg(snapshotId),
                       QStringLiteral("INFO"), LogEntryKind::Snapshot);
             updateSnapshotControls();
@@ -18075,10 +19624,6 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
     updateTabVisibility();
     scheduleEvidenceRefresh(QStringLiteral("running-host snapshot rollback failed"));
     scheduleSnapshotPreload();
-    // The preload's queued "Loading …" pane text is transient; the failure
-    // wording below is the authoritative pane content.
-    m_snapshotDetails->setPlainText(tr("Running-host rollback attempt finished: %1\n\n%2\n\nCached running-host diagnostics and snapshot inventory were cleared. Do not reboot until you review the Snapshots output and Logs.")
-                                        .arg(finished, output));
     appendLog(QStringLiteral("STALE DIAGNOSTICS: ")
                   + tr("running-host snapshot %1 rollback did not complete; cached host diagnostics and snapshots were invalidated. Review the operation output before the next repair or reboot.").arg(snapshotId),
               QStringLiteral("ERROR"), LogEntryKind::Snapshot);
@@ -18130,20 +19675,49 @@ void MainWindow::createSnapshot()
         QByteArray(),
         &succeeded,
         true,
-        LogEntryKind::Snapshot);
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        false,
+        nullptr,
+        {},
+        // Round 225 (the C1 follow-up): the create completion's scoped
+        // invalidation — the round-188 DONE-record success terminal armed
+        // with the snapshots-create map row (btrfs usage capabilities),
+        // the same shape the round-220 delete flow uses: the scoped
+        // invalidation + the coalesced regeneration dispatch at the DONE
+        // record while the progress popup stays open, alongside the X3
+        // inventory reload below (the inventory is not a diagnostic
+        // section).  The hook gates itself on the transcript's SUCCESS
+        // marker (the round-188 handleHostRollbackCancelTerminal pattern):
+        // the create decline path publishes no skipped change status, so
+        // the fail-safe invalidating-key rule alone would fire the
+        // terminal on a DECLINED create too — a decline must invalidate
+        // nothing (the round-134 decline semantics).
+        QStringList{QStringLiteral("snapshots-create")},
+        [this](const QString &transcript) {
+            if (!transcript.contains(QStringLiteral("SNAPSHOT_CREATE_RESULT=SUCCESS"))) {
+                return;
+            }
+            handleIndividualRepairSuccessTerminal(
+                {QStringLiteral("snapshots-create")}, transcript,
+                LogEntryKind::Snapshot);
+        });
 
-    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     if (succeeded && output.contains(QStringLiteral("SNAPSHOT_CREATE_RESULT=SUCCESS"))) {
         // Round 147 (ITEM 1): the create completion follows the round-119/120
-        // discipline — NO secondary popup.  The result is inline in the
-        // details pane and the transcript/Logs, and the snapshot inventory
-        // refreshes in the BACKGROUND immediately on the create completion
+        // discipline — NO secondary popup.  The result is in the operation
+        // transcript and the Logs, and the snapshot inventory refreshes in
+        // the BACKGROUND immediately on the create completion
         // (the round-135 X3 pattern: the generation bump defeats the
         // "already loaded" dedupe so the new snapshot is listed without
-        // leaving and re-entering the scope).
-        if (m_snapshotDetails) {
-            m_snapshotDetails->setPlainText(tr("Manual snapshot created: %1\n\n%2").arg(stamp, output));
-        }
+        // leaving and re-entering the scope).  Round 228 (ITEM 3): the pane
+        // outcome write restored — the round-226 curated-only sweep removed
+        // it; the details pane carries the pre-round-226 outcome
+        // presentation again.
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Manual snapshot created: %1\n\n%2")
+                                            .arg(stamp, output));
         appendLog(tr("The manual snapshot was created; the snapshot inventory is reloaded in the background."),
                   QStringLiteral("INFO"), LogEntryKind::Snapshot);
         ++m_snapshotScopeGeneration;
@@ -18151,17 +19725,20 @@ void MainWindow::createSnapshot()
         return;
     }
     if (output.contains(QStringLiteral("SNAPSHOT_CREATE_RESULT=DECLINED"))) {
-        if (m_snapshotDetails) {
-            m_snapshotDetails->setPlainText(tr("Snapshot creation skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.")
-                                                .arg(stamp, output));
-        }
+        // Round 228 (ITEM 3): the pane outcome write restored (the round-226
+        // curated-only sweep removed it).
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Snapshot creation skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.")
+                                            .arg(stamp, output));
         appendLog(tr("The manual snapshot creation was declined at the confirmation prompt; nothing was changed."),
                   QStringLiteral("INFO"), LogEntryKind::Snapshot);
         return;
     }
-    if (m_snapshotDetails) {
-        m_snapshotDetails->setPlainText(tr("Manual snapshot creation failed: %1\n\n%2").arg(stamp, output));
-    }
+    // Round 228 (ITEM 3): the pane outcome write restored (the round-226
+    // curated-only sweep removed it).
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    m_snapshotDetails->setPlainText(tr("Manual snapshot creation failed: %1\n\n%2")
+                                        .arg(stamp, output));
     appendLog(tr("The manual snapshot creation failed."),
               QStringLiteral("ERROR"), LogEntryKind::Snapshot);
     runOkDialog(this, tr("Snapshot creation failed"),
@@ -18169,15 +19746,249 @@ void MainWindow::createSnapshot()
                 QString(), QMessageBox::Critical);
 }
 
+// Round 220 (ITEM 3): the guarded snapshot-deletion flow (single + batch).
+// The helper verb (snapshots/host-snapshots delete <id>…) preflights
+// fail-closed, emits ONE round-134 CONFIRM naming the resolved ids (the
+// prompt machinery renders it in the progress popup — no separate dialog),
+// then the per-id outcomes and the SNAPSHOT_DELETE_RESULT marker.  A success
+// re-loads the snapshot inventory via the round-135 X3 pattern (the
+// generation bump + scheduleSnapshotPreload) so the deleted rows disappear
+// while the tab stays open; the scoped invalidation rides the snapshot-delete
+// map row (btrfs usage capabilities) at the DONE-record success terminal, so
+// the regeneration starts while the popup stays open.
+void MainWindow::deleteSelectedSnapshots()
+{
+    if (!m_snapshotTable || !m_snapshotDetails) {
+        return;
+    }
+    const bool hostScope = m_hostMaintenanceMode;
+    QString reason;
+    if (!(hostScope ? hostMaintenanceReady(&reason) : repairTargetReady(&reason))) {
+        runOkDialog(this, tr("Snapshot deletion unavailable"), reason);
+        return;
+    }
+    if (!manualSnapshotCreateAvailable(&reason)) {
+        runOkDialog(this, tr("Snapshot deletion unavailable"), reason);
+        return;
+    }
+
+    // Collect the selected VISIBLE numeric snapshots in row order.  Undo
+    // rows (non-numeric ids / the rollback-backup type) are never deletable;
+    // a selection without any numeric snapshot refuses here with the honest
+    // reason and re-evaluates the button state.
+    QStringList ids;
+    for (int row = 0; row < m_snapshotTable->rowCount(); ++row) {
+        if (m_snapshotTable->isRowHidden(row)) {
+            continue;
+        }
+        QTableWidgetItem *item = m_snapshotTable->item(row, 0);
+        if (!item || !item->isSelected()) {
+            continue;
+        }
+        const QString id = item->data(Qt::UserRole).toString();
+        bool numeric = false;
+        id.toULongLong(&numeric);
+        if (!numeric) {
+            continue;
+        }
+        const QTableWidgetItem *typeItem = m_snapshotTable->item(row, 2);
+        if (typeItem
+            && typeItem->data(Qt::UserRole).toString() == QStringLiteral("rollback-backup")) {
+            continue;
+        }
+        if (!ids.contains(id)) {
+            ids.append(id);
+        }
+    }
+    if (ids.isEmpty()) {
+        runOkDialog(this, tr("Snapshot deletion unavailable"),
+                    tr("Select one or more snapshots first; rollback undo points cannot be deleted."));
+        updateSnapshotControls();
+        return;
+    }
+
+    BusyOperationScope busy(this, hostScope
+        ? tr("Deleting running-host snapshots")
+        : tr("Deleting snapshots"));
+
+    bool succeeded = false;
+    QStringList arguments{snapshotHelperCommand(), snapshotDiskPath(), snapshotComponentPath(),
+                          QStringLiteral("delete")};
+    arguments += ids;
+    appendLog(hostScope
+                  ? tr("Deleting %1 running-host Btrfs snapshot(s): %2.")
+                        .arg(ids.size()).arg(ids.join(QStringLiteral(", ")))
+                  : tr("Deleting %1 Btrfs snapshot(s) for the repair target: %2.")
+                        .arg(ids.size()).arg(ids.join(QStringLiteral(", "))),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
+    const QString output = runPrivilegedRequest(
+        hostScope ? tr("Delete running-host Btrfs snapshots")
+                  : tr("Delete Btrfs snapshots"),
+        arguments,
+        QByteArray(),
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        false,
+        nullptr,
+        {},
+        // Round 119/120 (ITEM 3) + round 188: the success terminal — the
+        // scoped invalidation (the snapshot-delete map row) + the coalesced
+        // regeneration dispatch at the DONE record while the popup stays
+        // open.  A proven no-op (declined / already-gone) transcript carries
+        // no changed status, so the terminal never fires for it.
+        QStringList{QStringLiteral("snapshot-delete")},
+        [this](const QString &transcript) {
+            handleIndividualRepairSuccessTerminal(
+                {QStringLiteral("snapshot-delete")}, transcript,
+                LogEntryKind::Snapshot);
+        });
+
+    // One localized summary line from the parsed per-id outcomes; the raw
+    // transcript below stays authoritative.
+    int deleted = 0;
+    int unchanged = 0;
+    int failedCount = 0;
+    QStringList failedDetails;
+    const QStringList outcomeLines = output.split(QLatin1Char('\n'));
+    for (const QString &line : outcomeLines) {
+        if (!line.startsWith(QStringLiteral("SNAPSHOT_DELETE_OUTCOME="))) {
+            continue;
+        }
+        const QString record = line.mid(QStringLiteral("SNAPSHOT_DELETE_OUTCOME=").size());
+        const int colon = record.indexOf(QLatin1Char(':'));
+        if (colon < 0) {
+            continue;
+        }
+        const QString id = record.left(colon);
+        const QString verdict = record.mid(colon + 1);
+        if (verdict.startsWith(QStringLiteral("deleted"))) {
+            ++deleted;
+        } else if (verdict.startsWith(QStringLiteral("unchanged"))) {
+            ++unchanged;
+        } else if (verdict.startsWith(QStringLiteral("failed"))) {
+            ++failedCount;
+            const int reasonPos = record.indexOf(QStringLiteral("reason:"), colon);
+            failedDetails << (reasonPos >= 0
+                                  ? tr("%1 (%2)").arg(id, localizedReason(record.mid(reasonPos)))
+                                  : id);
+        }
+    }
+    const QString summary = tr("Deleted: %1 · Already gone: %2 · Failed: %3")
+                                .arg(deleted).arg(unchanged).arg(failedCount);
+
+    if (succeeded && output.contains(QStringLiteral("SNAPSHOT_DELETE_RESULT=SUCCESS"))) {
+        // Round 135 (X3): the generation bump defeats the "already loaded"
+        // dedupe so the deleted rows disappear without leaving and re-entering
+        // the scope (the create completion's pattern).
+        // Round 228 (ITEM 3): the pane outcome write restored — the round-226
+        // curated-only sweep removed it; the details pane carries the
+        // pre-round-226 outcome presentation again.
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Snapshot deletion complete: %1\n\n%2\n\n%3")
+                                            .arg(stamp, summary, output));
+        appendLog(tr("The snapshot deletion completed (%1); the snapshot inventory is reloaded in the background.").arg(summary),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        ++m_snapshotScopeGeneration;
+        updateSnapshotControls();
+        scheduleSnapshotPreload();
+        return;
+    }
+    if (output.contains(QStringLiteral("SNAPSHOT_DELETE_RESULT=DECLINED"))) {
+        // Round 134 (ITEM R1): the honest skipped outcome — the CONFIRM was
+        // declined or expired BEFORE any mutation; nothing changed, nothing is
+        // invalidated, no failure dialog.
+        // Round 228 (ITEM 3): the pane outcome write restored (the round-226
+        // curated-only sweep removed it).
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Snapshot deletion skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.")
+                                            .arg(stamp, output));
+        appendLog(tr("The snapshot deletion was declined at the confirmation prompt; nothing was changed."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        updateSnapshotControls();
+        return;
+    }
+    if (succeeded && output.contains(QStringLiteral("SNAPSHOT_DELETE_RESULT=PARTIAL"))) {
+        // Round 220 (D6): the batch applied some deletions but at least one
+        // id failed — the honest PARTIAL outcome with the per-id reasons.
+        QString failedList;
+        if (!failedDetails.isEmpty()) {
+            failedList = tr("Failed: %1").arg(failedDetails.join(QStringLiteral(", ")));
+        }
+        // Round 228 (ITEM 3): the pane outcome write restored (the round-226
+        // curated-only sweep removed it).
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m_snapshotDetails->setPlainText(tr("Snapshot deletion partially completed: %1\n\n%2\n\n%3\n\n%4")
+                                            .arg(stamp, summary, failedList, output));
+        appendLog(tr("The snapshot deletion partially completed: %1. Review the per-id outcomes in the Snapshots details pane and Logs.").arg(summary),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        statusBar()->showMessage(tr("Snapshot deletion partially completed: %1").arg(summary), 8000);
+        ++m_snapshotScopeGeneration;
+        updateSnapshotControls();
+        scheduleSnapshotPreload();
+        return;
+    }
+    if (m_lastPrivilegedRequestUserCancelled) {
+        // Round 135 (X1/X2): the deletion was stopped at the user's request.
+        // A cancel BEFORE the first applied deletion modified nothing (the
+        // pre-apply evidence is published only at the first success, so a
+        // no-change transcript invalidates NOTHING — the generic cancel
+        // branch handles the scoped invalidation when the evidence exists);
+        // a cancel after the first deletion applies the scoped set + this
+        // branch schedules the X3 reload.
+        // Round 228 (ITEM 3): the pane outcome writes restored (the round-226
+        // curated-only sweep removed them).
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        const bool anyDeleteChange = repairTranscriptHasChangedStatus(output);
+        if (anyDeleteChange) {
+            m_snapshotDetails->setPlainText(tr("Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was stopped at your request after the first deletion; the affected cached diagnostics were invalidated and the snapshot inventory is reloaded.")
+                                                .arg(stamp, output));
+            ++m_snapshotScopeGeneration;
+            updateSnapshotControls();
+            scheduleSnapshotPreload();
+        } else {
+            m_snapshotDetails->setPlainText(tr("Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was cancelled before any change; nothing was modified.")
+                                                .arg(stamp, output));
+            updateSnapshotControls();
+        }
+        return;
+    }
+    // Genuine failure.  A failure whose transcript reports no change deleted
+    // nothing (the round-194/195 rule — nothing is invalidated); a hard stop
+    // after the first applied deletion carries the changed evidence and fails
+    // closed with the scoped set + the X3 reload.
+    // Round 228 (ITEM 3): the pane outcome write restored (the round-226
+    // curated-only sweep removed it).
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    m_snapshotDetails->setPlainText(tr("Snapshot deletion failed: %1\n\n%2").arg(stamp, output));
+    const bool anyDeleteChange = repairTranscriptHasChangedStatus(output);
+    if (anyDeleteChange) {
+        invalidateDiagnosticsForRepair({QStringLiteral("snapshot-delete")},
+                                       /*failed=*/false,
+                                       QStringLiteral("snapshot deletion failed"),
+                                       LogEntryKind::Snapshot,
+                                       /*modified=*/true);
+        ++m_snapshotScopeGeneration;
+        scheduleSnapshotPreload();
+    }
+    appendLog(tr("The snapshot deletion failed."),
+              QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+    runOkDialog(this, tr("Snapshot deletion failed"),
+                tr("The snapshot deletion did not complete. Review the Snapshots details pane and Logs."),
+                QString(), QMessageBox::Critical);
+}
+
 // ---- MainWindow: running-host reboot-required state -------------------------
 
 QString MainWindow::currentBootId() const
 {
-#ifdef BOOT_REPAIR_UI_TEST
-    // Read-only test seam: BOOT_REPAIR_BOOT_ID overrides the kernel boot id so
+#ifdef BOOT_BITCH_UI_TEST
+    // Read-only test seam: BOOT_BITCH_BOOT_ID overrides the kernel boot id so
     // the boot-id reconciliation can be exercised without rebooting. Compiled
     // into the UI-test binary only; production always reads the kernel value.
-    const QByteArray override = qgetenv("BOOT_REPAIR_BOOT_ID").trimmed();
+    const QByteArray override = qgetenv("BOOT_BITCH_BOOT_ID").trimmed();
     if (!override.isEmpty()) {
         return QString::fromUtf8(override);
     }
@@ -18189,18 +20000,25 @@ QString MainWindow::currentBootId() const
     return QString::fromUtf8(bootId.readAll()).trimmed();
 }
 
-void MainWindow::setHostRebootRequired(const QString &snapshotId)
+void MainWindow::setHostRebootRequired(const QString &snapshotId, const QString &undoPoint)
 {
     m_hostRebootRequired = true;
     m_hostRebootSnapshotId = snapshotId;
     m_hostRebootRequiredAt = QDateTime::currentDateTime().toString(Qt::ISODate);
     m_hostRebootBootId = currentBootId();
+    // Round 189 (the robust cancel): persist the preserved undo-point NAME
+    // alongside the staged snapshot id — the cancel verb passes this record
+    // to the helper so an older/chained staging resolves even when the
+    // strict re-detection fails (the round-152.3 chained replace also
+    // re-records the fresh undo point here).
+    m_hostRebootUndoPoint = undoPoint;
     m_hostRebootBannerDismissed = false;
     if (m_settings) {
         m_settings->setValue(QStringLiteral("host/rebootRequired"), true);
         m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), m_hostRebootSnapshotId);
         m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), m_hostRebootRequiredAt);
         m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), m_hostRebootBootId);
+        m_settings->setValue(QStringLiteral("host/rebootRequiredUndoPoint"), m_hostRebootUndoPoint);
         m_settings->sync();
     }
     updateHostRebootBanner();
@@ -18212,12 +20030,14 @@ void MainWindow::clearHostRebootRequired()
     m_hostRebootSnapshotId.clear();
     m_hostRebootRequiredAt.clear();
     m_hostRebootBootId.clear();
+    m_hostRebootUndoPoint.clear();
     m_hostRebootBannerDismissed = false;
     if (m_settings) {
         m_settings->setValue(QStringLiteral("host/rebootRequired"), false);
         m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), QString());
         m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), QString());
         m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), QString());
+        m_settings->setValue(QStringLiteral("host/rebootRequiredUndoPoint"), QString());
         m_settings->sync();
     }
     updateHostRebootBanner();
@@ -18258,14 +20078,105 @@ void MainWindow::updateHostRebootBanner()
     if (!visible) {
         return;
     }
-    const QString snapshot = m_hostRebootSnapshotId.isEmpty()
-        ? QStringLiteral("the rolled-back snapshot")
-        : QStringLiteral("snapshot %1").arg(m_hostRebootSnapshotId);
-    const QString text = QStringLiteral("Reboot required — the running host will start %1 after the next reboot. The current root is preserved as an @rollback-before-* undo point.").arg(snapshot);
+    // Round 189 (the robust cancel): when the cached running-host evidence
+    // shows the staging was already reversed (the helper's probe reports a
+    // canonical running root while the record claims staged), the banner
+    // shows the HONEST state instead of the phantom "will start snapshot N"
+    // claim the helper refuses.  The Cancel button stays enabled either way:
+    // the robust path resolves the already-un-staged truth and clears the
+    // stale banner + record.
+    QString text;
+    if (hostRebootRecordStaleAgainstEvidence()) {
+        text = tr("Staged rollback already reversed — the running root is the Btrfs default root again, so nothing is pending. Cancel clears this stale reminder.");
+    } else {
+        const QString snapshot = m_hostRebootSnapshotId.isEmpty()
+            ? QStringLiteral("the rolled-back snapshot")
+            : QStringLiteral("snapshot %1").arg(m_hostRebootSnapshotId);
+        text = QStringLiteral("Reboot required — the running host will start %1 after the next reboot. The current root is preserved as an @rollback-before-* undo point.").arg(snapshot);
+    }
     m_hostRebootBannerLabel->setText(text);
     m_hostRebootBannerLabel->setAccessibleDescription(text);
     m_hostRebootNowButton->setAccessibleDescription(QStringLiteral("Reboots the running host after a separate confirmation; all users are signed out."));
     m_hostRebootLaterButton->setAccessibleDescription(QStringLiteral("Hides the reboot reminder until Host Maintenance is re-entered; the staged rollback stays in effect."));
+    m_hostRebootCancelButton->setAccessibleDescription(QStringLiteral("Un-stages the pending running-host rollback after an in-window confirmation; the preserved pre-rollback root is restored as the default root."));
+}
+
+// Round 189 (the robust cancel): the record-vs-helper cross-check.  The
+// persisted rebootRequired* record claims a staged rollback; the cached
+// running-host capability preamble carries the helper's own read-only probe
+// (`Host snapshot rollback evidence: ... running root <name>; ...`).  When
+// the evidence is present and reports a canonical running root (no
+// -rollback-before- marker — the round-152.3 staged state always runs from
+// the preserved <name>-rollback-before-<stamp> subvolume), the staging was
+// already reversed on disk and the record is stale.  Missing or unresolvable
+// evidence fails closed to the record's claim (the pending wording).
+bool MainWindow::hostRebootRecordStaleAgainstEvidence() const
+{
+    if (!m_hostRebootRequired) {
+        return false;
+    }
+    const QString evidence = m_hostDiagnosticCache.value(QStringLiteral("capabilities"));
+    if (evidence.isEmpty()) {
+        return false;
+    }
+    static const QRegularExpression runningRootRe(
+        QStringLiteral("Host snapshot rollback evidence:[^\\n]*running root ([^ ;\\n]+)"));
+    const QRegularExpressionMatch match = runningRootRe.match(evidence);
+    if (!match.hasMatch()) {
+        return false;
+    }
+    const QString running = match.captured(1);
+    if (running.isEmpty() || running == QStringLiteral("unknown")) {
+        return false;
+    }
+    // Match BOTH staging name shapes: the @-era `@rollback-before-` (no dash
+    // between @ and rollback — the round-176 anchored gate) and the
+    // round-143 name-agnostic `<name>-rollback-before-`.
+    return !running.contains(QStringLiteral("rollback-before-"));
+}
+
+// Round 174 (ITEM 1): the target-side staged-rollback informational state.
+// Session-scoped and name-agnostic — no persistence, no reboot affordance
+// (the round-171 ruling), and the undo point is named generically so any
+// Btrfs layout (the @ convention or the stock anaconda subvol=root) reads
+// truthfully.  Round 222 (plan §1 item 16): the preserved undo-point NAME
+// (the round-189 record pattern) rides along so the Cancel verb can pass it
+// to the helper.
+void MainWindow::setTargetRollbackStaged(const QString &snapshotId,
+                                         const QString &undoPoint)
+{
+    m_targetRollbackStaged = true;
+    m_targetRollbackSnapshotId = snapshotId;
+    m_targetRollbackUndoPoint = undoPoint;
+    updateTargetRollbackBanner();
+}
+
+void MainWindow::clearTargetRollbackStaged()
+{
+    m_targetRollbackStaged = false;
+    m_targetRollbackSnapshotId.clear();
+    m_targetRollbackUndoPoint.clear();
+    updateTargetRollbackBanner();
+}
+
+void MainWindow::updateTargetRollbackBanner()
+{
+    if (!m_targetRollbackBanner) {
+        return;
+    }
+    const bool visible = m_targetRollbackStaged && !m_hostMaintenanceMode;
+    m_targetRollbackBanner->setVisible(visible);
+    if (!visible) {
+        return;
+    }
+    const QString text = tr("Snapshot rollback staged — the repair target will start snapshot %1 when it next boots. The previous root is preserved as a timestamped rollback undo point; reboot the target normally when ready (the recovery host never reboots it).")
+                             .arg(m_targetRollbackSnapshotId);
+    m_targetRollbackBannerLabel->setText(text);
+    m_targetRollbackBannerLabel->setAccessibleDescription(text);
+    // Round 222 (plan §1 item 16): the Cancel button's accessible
+    // description sits next to the banner label's, exactly like the host
+    // banner's trio (the Reboot Now/Later descriptions stay host-only).
+    m_targetRollbackCancelButton->setAccessibleDescription(QStringLiteral("Un-stages the pending target rollback after an in-window confirmation; the preserved pre-rollback root is restored as the default root."));
 }
 
 void MainWindow::confirmAndRebootHost()
@@ -18285,9 +20196,22 @@ void MainWindow::confirmAndRebootHost()
         return;
     }
 
+    requestHostReboot();
+}
+
+// Round 231 (plan §1 item 23, the double-reboot-popup dedupe): the
+// reboot-request core — the busy scope, the `host-reboot` privileged request
+// and the HOST_REBOOT_SCHEDULED=1 / not-scheduled handling.  The persistent
+// banner's Reboot Now reaches it only through confirmAndRebootHost() above
+// (its single confirmation guard — that path is one prompt, never two); the
+// rollback-success popup's Reboot Now calls it DIRECTLY — the click is the
+// confirmation.  The log wording therefore never claims a "second
+// confirmation".
+void MainWindow::requestHostReboot()
+{
     BusyOperationScope busy(this, tr("Rebooting running host"));
     bool succeeded = false;
-    appendLog(tr("Requesting an explicit running-host reboot after the second confirmation."),
+    appendLog(tr("Requesting an explicit running-host reboot."),
               QStringLiteral("WARNING"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
         tr("Reboot the running host"),
@@ -18309,6 +20233,438 @@ void MainWindow::confirmAndRebootHost()
                              ? tr("The running host did not schedule a reboot. The staged rollback and its reminder remain in effect.")
                              : output);
     updateHostRebootBanner();
+}
+
+// Round 185 (ITEM 1): the deliberate un-stage — Cancel next to Reboot Now |
+// Later.  The helper's in-window CONFIRM (the round-134 channel, rendered in
+// the request's progress popup — kind Snapshot arms the PROMPT/ANSWER input)
+// is the SINGLE confirmation: no separate pre-dialog (the round-134 one-popup
+// invariant).  A success clears the staged banner + the persisted
+// host/rebootRequired* record and re-loads the snapshot inventory (the store
+// moved back into the restored root and the undo row is gone); the declined
+// and cancelled paths keep the staging.
+void MainWindow::confirmAndCancelHostRollback()
+{
+    if (!m_hostMaintenanceMode || !m_hostRebootRequired) {
+        return;
+    }
+
+    BusyOperationScope busy(this, tr("Cancelling the staged running-host rollback"));
+    bool succeeded = false;
+    appendLog(tr("Requesting the staged running-host rollback to be un-staged: the preserved pre-rollback root is restored as the default root and the boot stack is re-reconciled."),
+              QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+    // Round 189 (the robust cancel): the GUI passes its persisted staged
+    // record to the helper — the preserved undo-point NAME when the
+    // round-189 record carries one, else the staged snapshot id — so an
+    // older/chained staging whose preserved name the GUI knows resolves
+    // through the round-175/176 machinery even when the strict
+    // re-detection fails, and the ALREADY-UN-STAGED truth (the default
+    // already IS the restored preserved root) reports success instead of
+    // the confusing NOT_STAGED against the GUI's own banner.
+    QStringList cancelArgs{QStringLiteral("host-snapshots"), m_hostPrimaryPath,
+                           m_hostPrimaryComponentPath, QStringLiteral("cancel")};
+    const QString recordRef = !m_hostRebootUndoPoint.isEmpty()
+        ? m_hostRebootUndoPoint
+        : (!m_hostRebootSnapshotId.isEmpty() ? m_hostRebootSnapshotId : QString());
+    if (!recordRef.isEmpty()) {
+        cancelArgs.append(recordRef);
+    }
+    const QString output = runPrivilegedRequest(
+        tr("Cancel the staged running-host rollback"),
+        cancelArgs,
+        QByteArray(),
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        false,
+        nullptr,
+        nullptr,
+        // Round 188 (the success-marker timing fix): the round-119/120
+        // success terminal fires at the DONE record — the gate is released
+        // there and the hook dispatches the scoped invalidation + the
+        // regeneration schedule while the terminal window stays open
+        // showing the done transcript, instead of waiting for the
+        // terminal close / the informational popup (the round-42
+        // Install-completion pattern).  The hook gates itself on the
+        // transcript's SUCCESS marker, so a DECLINED/NOT_STAGED exit-0
+        // outcome invalidates nothing.
+        QStringList{QStringLiteral("host-snapshots")},
+        [this](const QString &transcript) {
+            handleHostRollbackCancelTerminal(transcript);
+        },
+        /*terminalHookOnProvenNoOp=*/false);
+
+    if (succeeded && output.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=SUCCESS"))) {
+        // Round 187 (the post-cancel state), refined round 187.1 and round
+        // 187.2: the un-stage DID change the ON-DISK snapshot/btrfs/boot-
+        // evidence state — the Btrfs default subvolume is re-pointed at the
+        // restored preserved root, the staged content is retained under a
+        // @rollback-failed-<stamp> tombstone, the .snapshots store moved
+        // back into the restored root, and the boot-stack reconcile
+        // re-generated the GRUB configuration (the live log's
+        // `Repair change status grub: changed` — the grub-btrfs snapshot-
+        // menu rows changed: the @rollback-failed-<stamp> row appeared, the
+        // @rollback-before-* rows were rewritten) — while the RUNNING system
+        // itself stays untouched: it keeps executing the same root, so no
+        // packages, no drivers, no graphical stack and no kernels changed
+        // (the coordinator's rationale).  The cancel therefore invalidates
+        // exactly the SCOPED evidence of that on-disk change — the btrfs
+        // section, the usage section (round 187.1), the boot-evidence
+        // section (round 187.2) and the capability preamble — never the
+        // rollback success's old complete set (that swap changes the future
+        // root; the cancel restores the root the running system already
+        // executes).  Round 188 (the success-marker timing fix): the scoped
+        // invalidation and the immediate regeneration are dispatched by the
+        // success terminal AT THE DONE RECORD (the round-119/120 pattern) —
+        // while the terminal window can stay open showing the done
+        // transcript — not by this post-close completion.  The round-146
+        // Create Snapshot capability gate re-opens when the refreshed
+        // evidence lands, without leaving and re-entering Host Maintenance.
+        if (m_repairSuccessTerminalHandled) {
+            // The success terminal already applied the scoped invalidation
+            // and scheduled the regeneration while the terminal window was
+            // still open; consume the latch so the next flow starts clean.
+            m_repairSuccessTerminalHandled = false;
+        } else {
+            // Fallback: the terminal did not fire (an unexpected transport
+            // path) — keep the round-187 post-close invalidation.
+            invalidateHostRollbackCancelDiagnostics();
+        }
+        // The staged banner and the persisted record are torn down, and the
+        // snapshot inventory is re-loaded in the background (the round-135
+        // X3 pattern).
+        clearHostRebootRequired();
+        m_snapshotResultIdentity = snapshotScopeIdentity();
+        ++m_snapshotScopeGeneration;
+        scheduleSnapshotPreload();
+        updateSnapshotControls();
+        updateTabVisibility();
+        appendLog(tr("The staged running-host rollback was un-staged: the preserved pre-rollback root is the default root again, the reboot reminder was cleared and the snapshot inventory was reloaded."),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        statusBar()->showMessage(tr("Staged running-host rollback cancelled; the next reboot starts the original root."), 8000);
+        runOkDialog(this, tr("Staged rollback cancelled"),
+                    tr("The staged running-host rollback was un-staged.\n\nThe preserved pre-rollback root was restored as the default root and its boot stack passed reconciliation; the next reboot starts the ORIGINAL root. The staged snapshot root stays on disk under a timestamped name."),
+                    QString(), QMessageBox::Information);
+        return;
+    }
+
+    if (succeeded && output.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=ALREADY_UNSTAGED"))) {
+        // Round 189 (the robust cancel, the idempotent case): the helper
+        // resolved the GUI's record and found the Btrfs default ALREADY IS
+        // the restored preserved root (the default and the running root
+        // agree) — the staging was already reversed and NOTHING is pending.
+        // The cancel reports success with the honest already-un-staged
+        // wording and performed NO btrfs mutation, so NOTHING is invalidated
+        // and the snapshot inventory needs no reload (the on-disk state did
+        // not change).  The stale banner + the persisted record clear (the
+        // round-189 terminal hook already cleared them at the success
+        // marker; this post-close clear is idempotent).
+        clearHostRebootRequired();
+        appendLog(tr("The staged running-host rollback was already un-staged: the running root is the Btrfs default root again. Nothing was changed and the stale reboot reminder was cleared."),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        statusBar()->showMessage(tr("Staged running-host rollback was already un-staged; the stale reboot reminder was cleared."), 8000);
+        runOkDialog(this, tr("Staged rollback already un-staged"),
+                    tr("The staged running-host rollback was already reversed — the running root is the Btrfs default root again.\n\nNothing was pending and nothing was changed. The stale reboot reminder and its banner were cleared."),
+                    QString(), QMessageBox::Information);
+        return;
+    }
+
+    if (output.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=DECLINED"))) {
+        // The honest skipped/aborted outcome (the round-97 rule): the CONFIRM
+        // was declined or expired before any mutation, so the staging stays
+        // and nothing is invalidated or re-loaded.
+        appendLog(tr("The running-host rollback cancel was declined at the confirmation prompt; the staged rollback remains in effect."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        return;
+    }
+
+    if (succeeded && output.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=NOT_STAGED"))) {
+        // Round 189 (the robust cancel): with the GUI's record passed to the
+        // helper, NOT_STAGED now means the staging is GENUINELY unresolvable
+        // (no staged state, no resolvable preserved name, no recognizable
+        // shape) — the persisted record is proven stale.  The banner and the
+        // record clear so the phantom row the helper refuses does not stay
+        // up (the pre-round-189 O1 fail-closed reading is superseded by the
+        // robust-cancel design; the undo points themselves stay on disk and
+        // visible in the Snapshots tab).
+        clearHostRebootRequired();
+        appendLog(tr("The helper found no resolvable staged running-host rollback; the stale reboot reminder and its banner were cleared. Review the Snapshots output and Logs."),
+                  QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+        runOkDialog(this, tr("No staged rollback detected"),
+                    tr("The privileged helper found no staged running-host rollback to cancel.\n\nNothing was changed, and the stale reboot reminder and its banner were cleared. Review the Snapshots output and Logs."),
+                    QString(), QMessageBox::Warning);
+        return;
+    }
+
+    if (m_lastPrivilegedRequestUserCancelled) {
+        // Round 135: the cancel was stopped at the user's request (the CANCEL
+        // protocol).  Before any mutation nothing changed and the staging
+        // stays; after the mutation intent was set the inventory re-loads
+        // (the on-disk state may have changed mid-transaction).
+        const bool anyCancelChange = repairTranscriptHasChangedStatus(output)
+            || output.contains(QStringLiteral("TARGET_WRITE_INTENT=1"));
+        if (anyCancelChange) {
+            m_snapshotResultIdentity = snapshotScopeIdentity();
+            ++m_snapshotScopeGeneration;
+            scheduleSnapshotPreload();
+            updateSnapshotControls();
+            updateTabVisibility();
+            appendLog(tr("The running-host rollback cancel was stopped at your request after the mutation began; the snapshot inventory was reloaded."),
+                      QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        } else {
+            appendLog(tr("The running-host rollback cancel was stopped at your request before any change; the staged rollback remains in effect."),
+                      QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        }
+        statusBar()->showMessage(tr("Running-host rollback cancel stopped at your request."), 8000);
+        return;
+    }
+
+    // Genuine failure (a real mutation happened and/or the restore-BACK ran):
+    // reload the inventory (the on-disk state may have changed) and surface
+    // the helper's recovery evidence verbatim.  The staged banner state is
+    // kept — a failed un-stage leaves either the staged state (restore-BACK
+    // ok) or CRITICAL evidence.
+    m_snapshotResultIdentity = snapshotScopeIdentity();
+    ++m_snapshotScopeGeneration;
+    scheduleSnapshotPreload();
+    updateSnapshotControls();
+    updateTabVisibility();
+    const bool recoveryFailed = output.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RECOVERY=failed"))
+        || output.contains(QStringLiteral("CRITICAL"));
+    appendLog(tr("The staged running-host rollback could not be cancelled; the snapshot inventory was reloaded. Review the operation output before the next repair or reboot."),
+              QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+    runOkDialog(this, tr("Rollback cancel failed"),
+                recoveryFailed
+                    ? tr("The staged running-host rollback could not be cancelled and automatic recovery could not be proven. DO NOT REBOOT until you review the Snapshots output and Logs, and repair the boot stack from another system if needed.\n\nThe helper output carries HOST_ROLLBACK_CANCEL_RECOVERY and any CRITICAL lines verbatim.")
+                    : tr("The staged running-host rollback could not be cancelled. The helper reports the staged root was re-promoted automatically; the staged rollback remains in effect. Review the Snapshots output and Logs."),
+                QString(), QMessageBox::Critical);
+}
+
+// Round 222 (plan §1 item 16): the TARGET-side deliberate un-stage — the
+// round-189 host cancel machinery extended to the target scope (the user's
+// ruling: the CANCEL is not a reboot, so it comes to the target while the
+// Reboot Now/Later affordances stay HOST-only).  The helper's in-window
+// CONFIRM (the round-134 channel, rendered in the request's progress popup —
+// kind Snapshot arms the PROMPT/ANSWER input) is the SINGLE confirmation: no
+// separate pre-dialog (the round-134 one-popup invariant).  A success clears
+// the staged banner + the session record and re-loads the snapshot inventory
+// (the store moved back into the restored root and the undo row is gone);
+// the declined and cancelled paths keep the staging.
+void MainWindow::confirmAndCancelTargetRollback()
+{
+    if (m_hostMaintenanceMode || !m_targetRollbackStaged) {
+        return;
+    }
+
+    BusyOperationScope busy(this, tr("Cancelling the staged target rollback"));
+    bool succeeded = false;
+    appendLog(tr("Requesting the staged repair-target rollback to be un-staged: the preserved pre-rollback root is restored as the default root and the boot stack is re-reconciled."),
+              QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+    // The GUI passes its staged record to the helper — the preserved
+    // undo-point NAME when the round-222 record carries one, else the staged
+    // snapshot id (the round-189 record pattern) — so an older staging whose
+    // preserved name the GUI knows resolves through the round-175/176
+    // machinery even when the strict re-detection fails, and the
+    // ALREADY-UN-STAGED truth (the default already IS the restored original
+    // root) reports success instead of the confusing NOT_STAGED against the
+    // GUI's own banner.
+    QStringList cancelArgs{QStringLiteral("snapshots"), m_previewTargetPath,
+                           m_previewTargetComponentPath, QStringLiteral("cancel")};
+    const QString recordRef = !m_targetRollbackUndoPoint.isEmpty()
+        ? m_targetRollbackUndoPoint
+        : (!m_targetRollbackSnapshotId.isEmpty() ? m_targetRollbackSnapshotId : QString());
+    if (!recordRef.isEmpty()) {
+        cancelArgs.append(recordRef);
+    }
+    const QString output = runPrivilegedRequest(
+        tr("Cancel the staged target rollback"),
+        cancelArgs,
+        QByteArray(),
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        false,
+        nullptr,
+        nullptr,
+        // Round 188 (the success-marker timing fix, target scope): the
+        // success terminal fires at the DONE record — the gate is released
+        // there and the hook dispatches the scoped invalidation + the
+        // regeneration schedule while the terminal window stays open showing
+        // the done transcript, instead of waiting for the terminal close.
+        // The hook gates itself on the transcript's SUCCESS marker, so a
+        // DECLINED/NOT_STAGED exit-0 outcome invalidates nothing.
+        QStringList{QStringLiteral("snapshots")},
+        [this](const QString &transcript) {
+            handleTargetRollbackCancelTerminal(transcript);
+        },
+        /*terminalHookOnProvenNoOp=*/false);
+
+    if (succeeded && output.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=SUCCESS"))) {
+        // The un-stage DID change the ON-DISK snapshot/btrfs/boot-evidence
+        // state — the round-187/187.1/187.2 rationale, target scope: the
+        // Btrfs default subvolume is re-pointed at the restored preserved
+        // root, the staged content is retained under a
+        // <name>-rollback-failed-<stamp> tombstone, the .snapshots store
+        // moved back and the boot-stack reconcile re-generated the GRUB
+        // configuration — while the RUNNING system (the recovery host) stays
+        // untouched.  The cancel therefore invalidates exactly the SCOPED
+        // target evidence {btrfs, usage, boot-evidence} + the capability
+        // preamble (the shared target set), never the complete register.
+        // Round 188: the scoped invalidation and the immediate regeneration
+        // are dispatched by the success terminal AT THE DONE RECORD while
+        // the terminal window can stay open showing the done transcript —
+        // not by this post-close completion.
+        if (m_repairSuccessTerminalHandled) {
+            // The success terminal already applied the scoped invalidation
+            // and scheduled the regeneration while the terminal window was
+            // still open; consume the latch so the next flow starts clean.
+            m_repairSuccessTerminalHandled = false;
+        } else {
+            // Fallback: the terminal did not fire (an unexpected transport
+            // path) — keep the round-187 post-close invalidation.
+            invalidateRollbackSuccessDiagnostics(/*hostScope=*/false);
+        }
+        // The staged banner and the session record are torn down, and the
+        // snapshot inventory is re-loaded in the background (the round-135
+        // X3 pattern).
+        clearTargetRollbackStaged();
+        m_snapshotResultIdentity = snapshotScopeIdentity();
+        ++m_snapshotScopeGeneration;
+        scheduleSnapshotPreload();
+        updateSnapshotControls();
+        updateTabVisibility();
+        appendLog(tr("The staged repair-target rollback was un-staged: the preserved pre-rollback root is the default root again and the snapshot inventory was reloaded."),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        statusBar()->showMessage(tr("Staged target rollback cancelled; the target starts the original root the next time it boots."), 8000);
+        runOkDialog(this, tr("Staged rollback cancelled"),
+                    tr("The staged repair-target rollback was un-staged.\n\nThe preserved pre-rollback root was restored as the default root and its boot stack passed reconciliation; the repair target starts the ORIGINAL root the next time it boots. The staged snapshot root stays on disk under a timestamped name."),
+                    QString(), QMessageBox::Information);
+        return;
+    }
+
+    if (succeeded && output.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=ALREADY_UNSTAGED"))) {
+        // The round-189 idempotent case, target scope: the helper resolved
+        // the GUI's record and found the preserved name already consumed and
+        // the Btrfs default IS the restored original root — the staging was
+        // already reversed and NOTHING is pending.  The cancel reports
+        // success with the honest already-un-staged wording and performed NO
+        // btrfs mutation, so NOTHING is invalidated and the snapshot
+        // inventory needs no reload (the on-disk state did not change).  The
+        // stale banner + the session record clear (the terminal hook already
+        // cleared them at the success marker; this post-close clear is
+        // idempotent).
+        clearTargetRollbackStaged();
+        appendLog(tr("The staged repair-target rollback was already un-staged: the restored original root is the Btrfs default root again. Nothing was changed and the stale staged banner was cleared."),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        statusBar()->showMessage(tr("Staged target rollback was already un-staged; the stale banner was cleared."), 8000);
+        runOkDialog(this, tr("Staged rollback already un-staged"),
+                    tr("The staged repair-target rollback was already reversed — the restored original root is the Btrfs default root again.\n\nNothing was pending and nothing was changed. The stale staged banner was cleared."),
+                    QString(), QMessageBox::Information);
+        return;
+    }
+
+    if (output.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=DECLINED"))) {
+        // The honest skipped/aborted outcome (the round-97 rule): the CONFIRM
+        // was declined or expired before any mutation, so the staging stays
+        // and nothing is invalidated or re-loaded.
+        appendLog(tr("The repair-target rollback cancel was declined at the confirmation prompt; the staged rollback remains in effect."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        return;
+    }
+
+    if (succeeded && output.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=NOT_STAGED"))) {
+        // With the GUI's record passed to the helper, NOT_STAGED now means
+        // the staging is GENUINELY unresolvable (no preserved name, no
+        // resolvable record, no recognizable shape) — the session record is
+        // proven stale.  The banner clears so the phantom claim the helper
+        // refuses does not stay up (the round-189 target twin).
+        clearTargetRollbackStaged();
+        appendLog(tr("The helper found no resolvable staged repair-target rollback; the stale staged banner was cleared. Review the Snapshots output and Logs."),
+                  QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+        runOkDialog(this, tr("No staged rollback detected"),
+                    tr("The privileged helper found no staged repair-target rollback to cancel.\n\nNothing was changed, and the stale staged banner was cleared. Review the Snapshots output and Logs."),
+                    QString(), QMessageBox::Warning);
+        return;
+    }
+
+    if (m_lastPrivilegedRequestUserCancelled) {
+        // Round 135: the cancel was stopped at the user's request (the CANCEL
+        // protocol).  Before any mutation nothing changed and the staging
+        // stays; after the mutation intent was set the inventory re-loads
+        // (the on-disk state may have changed mid-transaction).
+        const bool anyCancelChange = repairTranscriptHasChangedStatus(output)
+            || output.contains(QStringLiteral("TARGET_WRITE_INTENT=1"));
+        if (anyCancelChange) {
+            m_snapshotResultIdentity = snapshotScopeIdentity();
+            ++m_snapshotScopeGeneration;
+            scheduleSnapshotPreload();
+            updateSnapshotControls();
+            updateTabVisibility();
+            appendLog(tr("The repair-target rollback cancel was stopped at your request after the mutation began; the snapshot inventory was reloaded."),
+                      QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        } else {
+            appendLog(tr("The repair-target rollback cancel was stopped at your request before any change; the staged rollback remains in effect."),
+                      QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        }
+        statusBar()->showMessage(tr("Target rollback cancel stopped at your request."), 8000);
+        return;
+    }
+
+    // Genuine failure (a real mutation happened and/or the restore-BACK ran):
+    // reload the inventory (the on-disk state may have changed) and surface
+    // the helper's recovery evidence verbatim.  The staged banner state is
+    // kept — a failed un-stage leaves either the staged state (restore-BACK
+    // ok) or CRITICAL evidence.
+    m_snapshotResultIdentity = snapshotScopeIdentity();
+    ++m_snapshotScopeGeneration;
+    scheduleSnapshotPreload();
+    updateSnapshotControls();
+    updateTabVisibility();
+    const bool recoveryFailed = output.contains(QStringLiteral("ROLLBACK_CANCEL_RECOVERY=failed"))
+        || output.contains(QStringLiteral("CRITICAL"));
+    appendLog(tr("The staged repair-target rollback could not be cancelled; the snapshot inventory was reloaded. Review the operation output before the next repair."),
+              QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+    runOkDialog(this, tr("Rollback cancel failed"),
+                recoveryFailed
+                    ? tr("The staged repair-target rollback could not be cancelled and automatic recovery could not be proven. Review the Snapshots output and Logs, and repair the boot stack from another system if needed.\n\nThe helper output carries ROLLBACK_CANCEL_RECOVERY and any CRITICAL lines verbatim.")
+                    : tr("The staged repair-target rollback could not be cancelled. The helper reports the staged root was re-promoted automatically; the staged rollback remains in effect. Review the Snapshots output and Logs."),
+                QString(), QMessageBox::Critical);
+}
+
+// Round 222 (plan §1 item 16): the target-cancel success terminal — the
+// round-188/189 hook pattern, target scope.  runPrivilegedRequest() fires the
+// hook at the DONE record (the gate is already released, the terminal window
+// stays open) — the scoped invalidation and the regeneration schedule
+// therefore dispatch at the operation's SUCCESS marker, never waiting for
+// the terminal close or the informational popup.  The hook fires for every
+// exit-0 outcome (the fail-safe invalidating-key rule), so it gates itself on
+// the transcript's SUCCESS marker: a DECLINED / NOT_STAGED outcome (helper
+// exit 0, no change) must invalidate nothing (the round-97/187 declined
+// semantics).  The record-clear + banner teardown also move to the success
+// marker (the round-188/189 timing), so a close/kill between the DONE record
+// and the terminal close leaves no stale staged banner.  The ALREADY_UNSTAGED
+// outcome clears the stale record the same way but invalidates NOTHING (the
+// helper performed no btrfs mutation).  The post-close branches repeat the
+// clear idempotently.
+void MainWindow::handleTargetRollbackCancelTerminal(const QString &transcript)
+{
+    if (transcript.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=SUCCESS"))) {
+        m_repairSuccessTerminalHandled = true;
+        invalidateRollbackSuccessDiagnostics(/*hostScope=*/false);
+        clearTargetRollbackStaged();
+        return;
+    }
+    if (transcript.contains(QStringLiteral("ROLLBACK_CANCEL_RESULT=ALREADY_UNSTAGED"))) {
+        // No mutation happened: no invalidation, no regeneration schedule.
+        // The stale record still clears at the success marker so a close/kill
+        // between the DONE record and the terminal close cannot re-stale it.
+        clearTargetRollbackStaged();
+        return;
+    }
 }
 
 // ---- MainWindow: File Copy --------------------------------------------------
@@ -19621,7 +21977,7 @@ void MainWindow::refreshCapabilities()
     }
     m_distributionLabel->setText(CapabilityChecker::distributionLabel());
     m_packageManagerLabel->setText(CapabilityChecker::packageManagerLabel());
-#ifdef BOOT_REPAIR_HAVE_KAUTH
+#ifdef BOOT_BITCH_HAVE_KAUTH
     m_authBuildLabel->setText(tr("Available — KF6 KAuth linked"));
 #else
     m_authBuildLabel->setText(tr("Not compiled — optional integration unavailable"));
@@ -20771,7 +23127,7 @@ QString MainWindow::runTargetDiagnosticHelper(const QString &key, bool *succeede
         return runFilesystemDiagnostic(false, succeeded, showProgressDialog);
     }
 
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     Q_UNUSED(showProgressDialog);
     Q_UNUSED(outputLineSink);
     // The production target diagnostic path uses the privileged helper so it
@@ -20779,7 +23135,7 @@ QString MainWindow::runTargetDiagnosticHelper(const QString &key, bool *succeede
     // complete a Polkit conversation. Use the same in-process read-only
     // formatter that the Running Host UI-test path uses so automatic and
     // manual Run All remain fully exercisable offscreen. This branch is
-    // compiled only into boot-repair-ui-tests.
+    // compiled only into boot-bitch-ui-tests.
     const QString diagnosticKey = key == QStringLiteral("all")
         ? QStringLiteral("report")
         : key;
@@ -20856,7 +23212,7 @@ QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
         return runFilesystemDiagnostic(true, succeeded, showProgressDialog);
     }
 
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     Q_UNUSED(showProgressDialog);
     Q_UNUSED(outputLineSink);
     // The production host diagnostic path intentionally goes through the
@@ -20865,7 +23221,7 @@ QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
     // Polkit conversation, however.  Keep the test focused on the scope,
     // cache, clipboard and action-register behavior by using the same
     // read-only in-process formatter that supplies the unprivileged preview
-    // data.  This branch is compiled only into boot-repair-ui-tests.
+    // data.  This branch is compiled only into boot-bitch-ui-tests.
     const QString diagnosticKey = key == QStringLiteral("all")
         ? QStringLiteral("report")
         : key;
@@ -21126,6 +23482,11 @@ void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
 {
     clearHostDiagnosticCache();
     cacheDiagnosticBundle(m_hostDiagnosticCache, m_hostDiagnosticTimes, bundle);
+    // Round 189 (the robust cancel): fresh running-host evidence re-runs the
+    // record-vs-helper cross-check so the reboot banner flips to the honest
+    // already-reversed wording (or back to the pending wording) the moment
+    // the capability preamble lands.
+    updateHostRebootBanner();
 }
 
 void MainWindow::mergeDiagnosticReportSection(bool hostScope, const QString &key,
@@ -21208,6 +23569,95 @@ void MainWindow::revertProgressiveDiagnosticSections(bool targetScope,
             m_hostDiagnosticTimes.remove(key);
         }
     }
+}
+
+// Round 200 (ITEM 3): the display walk-through re-emits its scoped
+// diagnostic sections at the per-switch/restore success marker (the
+// helper holds the single-request gate for the whole menu session, so the
+// scoped regeneration runs INSIDE the helper — the round-188/194/195
+// at-marker contract — and this commit keeps the Diagnostics rows and the
+// repair gates fresh while the walk-through stays open; the menu loop is
+// never ended by the re-run).  Only the display-switch map row's set is
+// accepted (display, package, backend, usage + the capability preamble);
+// a section missing from the block keeps its previous cache entry (fail
+// closed — the walk-through's own completion may still invalidate and
+// re-run the set at its terminal for the final state).
+void MainWindow::commitWalkthroughScopedRegen(const QString &block, const QString &sessionKey)
+{
+    // Round 211 (the interactive-repair alignment): the display walk-through
+    // session keeps its exact settled scoped set (display, package, backend,
+    // usage); the generic sessions (kernel/input/network) commit the map-row
+    // sections the helper re-emitted — any runnable diagnostic section
+    // present in the block (the helper controls the set from the map rows).
+    const bool displaySession = sessionKey.isEmpty()
+        || sessionKey == QStringLiteral("display-walkthrough");
+    const QStringList scopedKeys = displaySession
+        ? QStringList{QStringLiteral("display"), QStringLiteral("package"),
+                      QStringLiteral("backend"), QStringLiteral("usage")}
+        : orderedDiagnosticSectionKeys();
+    QString remaining;
+    QString capabilityPreamble;
+    splitDiagnosticCapabilityPreamble(block, &remaining, &capabilityPreamble);
+    const QMap<QString, QString> sections = extractDiagnosticSections(block);
+    const bool targetScope = !diagnosticHostScope();
+    const QDateTime capturedAt = QDateTime::currentDateTime();
+    int committed = 0;
+    QStringList committedKeys;
+    for (const QString &key : scopedKeys) {
+        const QString body = sections.value(key);
+        if (body.trimmed().isEmpty()) {
+            continue;
+        }
+        if (targetScope) {
+            m_targetDiagnosticCache.insert(key, body);
+            m_targetDiagnosticTimes.insert(key, capturedAt);
+            m_targetDiagnosticsStaleSections.remove(key);
+            mergeDiagnosticReportSection(false, key, body, capturedAt);
+        } else {
+            m_hostDiagnosticCache.insert(key, body);
+            m_hostDiagnosticTimes.insert(key, capturedAt);
+            m_hostDiagnosticsStaleSections.remove(key);
+            mergeDiagnosticReportSection(true, key, body, capturedAt);
+        }
+        // Round 210 (ITEM 2): record the committed key so the walk-through
+        // completion can treat it as FRESH — the in-terminal commit plus this
+        // latch is what stops the post-close stale-marking/autoRefresh from
+        // re-running the already-refreshed sections.  Round 211: the same
+        // latch serves the kernel/input/network sessions.
+        m_walkthroughCommittedSections.insert(key);
+        committedKeys.append(key);
+        appendDiagnosticLog(key, diagnosticSectionTitle(key),
+                            targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
+                            body, /*ok=*/true);
+        ++committed;
+    }
+    if (!capabilityPreamble.isEmpty()) {
+        auto &cache = targetScope ? m_targetDiagnosticCache : m_hostDiagnosticCache;
+        auto &times = targetScope ? m_targetDiagnosticTimes : m_hostDiagnosticTimes;
+        cache.insert(QStringLiteral("capabilities"), capabilityPreamble);
+        times.insert(QStringLiteral("capabilities"), capturedAt);
+        // The fresh capability preamble re-runs the record-vs-helper
+        // cross-check on the host banner (the same hook as the scoped
+        // regeneration paths).
+        if (!targetScope) {
+            updateHostRebootBanner();
+        }
+        m_walkthroughCommittedSections.insert(QStringLiteral("capabilities"));
+    }
+    if (committed == 0) {
+        return;
+    }
+    if (displaySession) {
+        appendLog(tr("Display walk-through: the affected diagnostic sections were regenerated in place (%1).")
+                      .arg(scopedKeys.join(QStringLiteral(", "))),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    } else {
+        appendLog(tr("Interactive repair session: the affected diagnostic sections were regenerated in place (%1).")
+                      .arg(committedKeys.join(QStringLiteral(", "))),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    }
+    updateDiagnosticDetails();
+    updateFullRepairSummary();
 }
 
 // Round 118 (performance UX): the running-row display.  While a combined
@@ -21961,6 +24411,23 @@ QStringList MainWindow::cancelledRepairAffectedSectionsForArguments(const QStrin
         || verb == QStringLiteral("install-host-package")) {
         return cancelledRepairAffectedSections(verb);
     }
+    // Round 220 (ITEM 3): a cancelled snapshot-deletion batch maps through
+    // its own scoped row (btrfs usage capabilities) — the round-16 per-tool
+    // rule, now that the delete verb carries a map row.  A cancel before the
+    // first applied deletion reports no change and never reaches this branch.
+    if ((verb == QStringLiteral("snapshots") || verb == QStringLiteral("host-snapshots"))
+        && arguments.size() > 3 && arguments.at(3) == QStringLiteral("delete")) {
+        return cancelledRepairAffectedSections(QStringLiteral("snapshot-delete"));
+    }
+    // Round 225 (the C1 follow-up): a cancelled manual snapshot creation maps
+    // through its own scoped row (btrfs usage capabilities) — the round-220
+    // delete branch's parity twin, now that the create verb carries the map
+    // row.  A cancel before the create's success marker reports no change and
+    // never reaches this branch.
+    if ((verb == QStringLiteral("snapshots") || verb == QStringLiteral("host-snapshots"))
+        && arguments.size() > 3 && arguments.at(3) == QStringLiteral("create")) {
+        return cancelledRepairAffectedSections(QStringLiteral("snapshots-create"));
+    }
     if (verb != QStringLiteral("repair") && verb != QStringLiteral("host-repair")) {
         return {QStringLiteral("all")};
     }
@@ -22024,6 +24491,7 @@ QString MainWindow::repairToolKeyForStage(const QString &stage)
         {QStringLiteral("apt-update"), QStringLiteral("aptupdate")},
         {QStringLiteral("apt-upgrade"), QStringLiteral("upgrade")},
         {QStringLiteral("display-manager"), QStringLiteral("display")},
+        {QStringLiteral("display-walkthrough"), QStringLiteral("display")},
         {QStringLiteral("boot-stack"), QStringLiteral("bootstack")},
         // The interactive kernel repair sub-actions all roll up to the single
         // `kernels` capability/UI key.
@@ -22034,13 +24502,30 @@ QString MainWindow::repairToolKeyForStage(const QString &stage)
         {QStringLiteral("kernel-remove-orphaned-support"), QStringLiteral("kernels")},
         {QStringLiteral("kernel-install-headers"), QStringLiteral("kernels")},
         {QStringLiteral("kernel-reinstall"), QStringLiteral("kernels")},
-        {QStringLiteral("kernel-install-repo-latest"), QStringLiteral("kernels")}
+        {QStringLiteral("kernel-install-repo-latest"), QStringLiteral("kernels")},
+        // Round 213 (the interactive-repair alignment — the named deviation
+        // CLOSED): the GPU session's one-boot nomodeset action belongs to
+        // the gpu sub-action family (the map's own note), so it folds onto
+        // the session key like the kernel family.  The `gpu:*`/`nomodeset`
+        // map rows keep the round-17 complete-set fail-safe as the map data
+        // (untouched); the SESSION's completion/cancel resolve the session's
+        // own scoped row so the round-203/211 in-terminal commit (the
+        // fresh-set consumption) applies — the GPU session joins the
+        // generic session stages.
+        {QStringLiteral("nomodeset"), QStringLiteral("gpu")}
     };
     QString result = stageToTool.value(stage, stage);
     // The helper reports each kernel sub-action as `kernels:<step>`; normalize
     // the change-status key to the same capability key.
     if (result.startsWith(QStringLiteral("kernels:"))) {
         result = QStringLiteral("kernels");
+    }
+    // Round 213: the GPU session's sub-actions report `gpu:<step>`; fold
+    // them onto the single `gpu` key exactly like the kernel family (the
+    // round-212 cancel fold's upstream home — the completion and every
+    // other consumer of the change-status keys now share it).
+    if (result.startsWith(QStringLiteral("gpu:"))) {
+        result = QStringLiteral("gpu");
     }
     return result;
 }
@@ -22114,6 +24599,29 @@ QStringList MainWindow::invalidatingRepairToolKeys(const QStringList &requestedK
             continue;
         }
         keys.append(it.key());
+    }
+    return keys;
+}
+
+// Round 194 (ITEM 3): the keys whose status the helper EXPLICITLY reported
+// changed (a bare `changed` or `changed|<reason>`), never the missing-status
+// fail-safe of invalidatingRepairToolKeys().  The failure/cancel completions
+// derive their scoped invalidation from exactly this evidence: a failure or
+// abort with no explicit changed status changed nothing and invalidates
+// NOTHING (the unit-file-refusal class), while the cancelled/failed install
+// class carries the pre-apply install change evidence and invalidates the
+// package/display scoped set only.
+QStringList MainWindow::explicitlyChangedRepairToolKeys(const QString &output)
+{
+    const QMap<QString, QString> statuses = parseRepairChangeStatuses(output);
+    QStringList keys;
+    for (auto it = statuses.constBegin(); it != statuses.constEnd(); ++it) {
+        if (repairChangeStatusIsUnchanged(it.value()) || repairChangeStatusIsSkipped(it.value())) {
+            continue;
+        }
+        if (!keys.contains(it.key())) {
+            keys.append(it.key());
+        }
     }
     return keys;
 }
@@ -22720,7 +25228,8 @@ void MainWindow::markDiagnosticSectionsStale(bool hostScope, const QStringList &
 
 void MainWindow::invalidateDiagnosticsForRepair(const QStringList &toolKeys, bool failed,
                                                 const QString &reason, LogEntryKind kind,
-                                                bool modified)
+                                                bool modified,
+                                                const QSet<QString> &freshSections)
 {
     QSet<QString> sectionSet;
     bool full = failed;
@@ -22761,6 +25270,42 @@ void MainWindow::invalidateDiagnosticsForRepair(const QStringList &toolKeys, boo
             }
         }
     }
+    // Round 210 (ITEM 2): the walk-through completion subtracts the sections
+    // the in-terminal scoped re-generation already committed (the round-203
+    // commit + latch) — those are FRESH, so the post-close path must reuse
+    // them instead of re-marking them stale and re-running them.  A section
+    // the block failed to commit stays in the set (fail closed — it keeps its
+    // pre-switch cache entry and is re-run here).  The skip applies only to
+    // the scoped path: a completion mapping to the complete set is never
+    // thinned by it.
+    if (!freshSections.isEmpty() && !full) {
+        for (const QString &section : freshSections) {
+            sectionSet.remove(section);
+        }
+        if (sectionSet.isEmpty()) {
+            // The mapped set is fully covered by the in-terminal commit: the
+            // walk-through's completion invalidates NOTHING and schedules NO
+            // regeneration (the no-change-invalidates-nothing rule's fresh
+            // sibling — the evidence IS fresh, the walk-through just proved
+            // the change).  The round-188/194/195/196 semantics for the
+            // success/failure/cancel markers of every other repair stay
+            // untouched (they never pass fresh sections).  Round 211: the
+            // wording names the session honestly (the display walk-through
+            // keeps its settled string; the kernel/input/network sessions
+            // read the generic form).
+            const bool displaySession = toolKeys.contains(QStringLiteral("display"));
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            displaySession
+                                ? tr("Display walk-through: the affected diagnostic sections were regenerated in place (%1).")
+                                      .arg(orderedDiagnosticSections(freshSections.values()).join(QStringLiteral(", ")))
+                                : tr("Interactive repair session: the affected diagnostic sections were regenerated in place (%1).")
+                                      .arg(orderedDiagnosticSections(freshSections.values()).join(QStringLiteral(", "))),
+                            QStringLiteral("INFO"), kind);
+            updateFullRepairSummary();
+            updateDiagnosticDetails();
+            return;
+        }
+    }
     const QStringList sections = orderedDiagnosticSections(sectionSet.values());
     // Round 18: the mapped set may carry the capabilities pseudo-entry (the
     // package tools map to package/backend/usage/capabilities); pass the raw
@@ -22796,13 +25341,17 @@ void MainWindow::invalidateDiagnosticsForRepair(const QStringList &toolKeys, boo
 // Round 119 (ITEM 1/2): the single completion-side entry point for a FINISHED
 // individual repair — the success terminal (the DONE record, invoked through
 // the deferred hook while the review popup is still open) and the
-// genuine-failure completion (after the request frame) both route here, so
-// the success and failure paths share one scoped-regeneration mechanism.
-// Semantics (the map's conditional invalidation, §2.4.4):
-//   - failed: the fail-safe COMPLETE set (a failed modifying run may have
-//     left any stage half-applied — the round-16/19 contract; the round-86
-//     input/network targeted exception lives inside
-//     invalidateDiagnosticsForRepair());
+// genuine-failure completion (the round-194 failure terminal, or after the
+// request frame) both route here, so the success and failure paths share one
+// scoped-regeneration mechanism.
+// Semantics (the map's conditional invalidation, §2.4.4; refined round 194):
+//   - failed: exactly the map's scoped set for the stages the transcript
+//     EXPLICITLY reported changed (the round-194 ruling — the pre-round-194
+//     fail-safe complete set is retired: the display walk-through's
+//     unit-file refusal class, a failure before any mutation, invalidates
+//     NOTHING, while the cancelled/failed install class carries the
+//     pre-apply install change evidence and invalidates the package/display
+//     scoped set only);
 //   - success with a proven change: exactly the map's scoped set for the
 //     changed stages, one coalesced regeneration (never Run All);
 //   - success with a proven no-op (unchanged/skipped verdicts, the verified
@@ -22821,7 +25370,18 @@ void MainWindow::scheduleRepairCompletionRegeneration(const QStringList &toolKey
                                                       const QString &reason)
 {
     if (failed) {
-        invalidateDiagnosticsForRepair(toolKeys, /*failed=*/true, reason, kind);
+        // Round 194 (ITEM 3): the failure invalidation follows the explicit
+        // change evidence — the scoped set for the stages the transcript
+        // reports changed, NOTHING when the failure happened before any
+        // stage reported a change (no mutation, the cache stays fresh).
+        const QStringList changedKeys = explicitlyChangedRepairToolKeys(transcript);
+        if (changedKeys.isEmpty()) {
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            tr("No system changes were detected; cached diagnostics remain valid."),
+                            QStringLiteral("INFO"), kind);
+            return;
+        }
+        invalidateDiagnosticsForRepair(changedKeys, /*failed=*/false, reason, kind);
         return;
     }
     const QStringList invalidatingKeys =
@@ -22832,7 +25392,35 @@ void MainWindow::scheduleRepairCompletionRegeneration(const QStringList &toolKey
                         QStringLiteral("INFO"), kind);
         return;
     }
-    invalidateDiagnosticsForRepair(invalidatingKeys, /*failed=*/false, reason, kind);
+    // Round 210 (ITEM 2): the display walk-through's completion passes the
+    // in-terminal commit set (the round-203 latch) as the fresh sections, so
+    // the post-close stale-marking/autoRefresh reuses the already-refreshed
+    // cache instead of re-running the committed sections.  Round 211 (the
+    // interactive-repair alignment): the same consumption now serves the
+    // kernel/input/network sessions.  Round 213: the GPU session joined them
+    // (the named deviation CLOSED — its per-action regen commits the gpu map
+    // row's set in-terminal, so its latch carries the committed sections and
+    // the completion consumes them like every other session).  Every other
+    // repair passes nothing (the gating is the session stage only).
+    QSet<QString> freshSections;
+    {
+        static const QSet<QString> regenSessionStages = {
+            QStringLiteral("display-walkthrough"), QStringLiteral("kernels"),
+            QStringLiteral("gpu"), QStringLiteral("input-devices"),
+            QStringLiteral("network")};
+        bool regenSession = false;
+        for (const QString &toolKey : toolKeys) {
+            if (regenSessionStages.contains(toolKey)) {
+                regenSession = true;
+                break;
+            }
+        }
+        if (regenSession) {
+            freshSections = m_walkthroughCommittedSections;
+        }
+    }
+    invalidateDiagnosticsForRepair(invalidatingKeys, /*failed=*/false, reason, kind,
+                                    /*modified=*/true, freshSections);
 }
 
 // Round 119 (ITEM 1): the success-terminal handler.  runPrivilegedRequest()
@@ -22851,6 +25439,157 @@ void MainWindow::handleIndividualRepairSuccessTerminal(const QStringList &toolKe
     scheduleRepairCompletionRegeneration(toolKeys, transcript, kind,
                                          /*failed=*/false,
                                          QStringLiteral("modifying repair completed"));
+}
+
+// Round 194 (ITEM 3): the failure-terminal handler — the round-188 pattern
+// applied to the FAILURE marker.  The failed request's DONE record released
+// the gate early (the failure popup stays open for review) and this hook,
+// deferred one event-loop turn, applies the scoped failure invalidation +
+// the coalesced regeneration while the popup is still open.  The latch keeps
+// the post-frame failure completion path (runRepairHelper) from applying it
+// twice.
+void MainWindow::handleIndividualRepairFailureTerminal(const QStringList &toolKeys,
+                                                       const QString &transcript,
+                                                       LogEntryKind kind)
+{
+    m_repairSuccessTerminalHandled = true;
+    scheduleRepairCompletionRegeneration(toolKeys, transcript, kind,
+                                         /*failed=*/true,
+                                         QStringLiteral("modifying repair failed"));
+}
+
+// Round 196 (ITEM 3): the cancel/abort-marker terminal handler.  A user
+// force-stop (the DONE-143 record) whose transcript explicitly reports a
+// changed stage releases the gate at the CANCEL marker and applies the
+// cancelled-repair scoped invalidation + the coalesced regeneration while
+// the abort popup is still open — the round-188 pattern, per the
+// coordinator's standing rule (the scope diagnostics start right away on the
+// success, failure and abort markers, never waiting for the terminal close).
+// The scoped set is the round-194/195 cancel union: the verb-derived set for
+// each stage key, refined with the transcript's explicitly-changed keys (the
+// cancelled-install class adds the install row's set).  The latch keeps the
+// post-frame cancel completion in runPrivilegedRequest from applying the
+// invalidation twice.
+void MainWindow::handleIndividualRepairCancelTerminal(const QStringList &toolKeys,
+                                                      const QString &transcript,
+                                                      LogEntryKind kind)
+{
+    m_repairCancelTerminalHandled = true;
+    QStringList keys;
+    for (const QString &key : toolKeys) {
+        const QString toolKey = repairToolKeyForStage(key);
+        if (!keys.contains(toolKey)) {
+            keys.append(toolKey);
+        }
+    }
+    // Round 212 (the cancel alignment): the interactive menu sessions' cancel
+    // path follows the display-login semantics exactly (the round-194/195
+    // contract) — a changed sub-action key of the session's OWN family folds
+    // onto the session key so the cancelled session invalidates the session's
+    // scoped map row, never the prefix-row complete-set fail-safe.  The live
+    // TUXEDO divergence: a cancelled GPU session's `gpu:<sub-action>` changed
+    // key matched the round-17 `gpu:*` row ("all") and the cancel regenerated
+    // ALL diagnostics, while the display walk-through's cancel ends with the
+    // scoped set.  The input/network sessions' implemented sub-actions already
+    // carry exact scoped rows (the round-89 rows win over their `:*` rows) and
+    // `kernels:*` already folds in repairToolKeyForStage.  Round 213: the GPU
+    // family (and its nomodeset member) folds in repairToolKeyForStage too —
+    // the lambda below is the belt-and-braces guard (a transcript whose keys
+    // predate the fold can never re-open the complete-set cancel).
+    QString cancelSessionKey;
+    {
+        static const QSet<QString> cancelSessionStages = {
+            QStringLiteral("display"), QStringLiteral("kernels"),
+            QStringLiteral("gpu"), QStringLiteral("input-devices"),
+            QStringLiteral("network")};
+        for (const QString &key : keys) {
+            if (cancelSessionStages.contains(key)) {
+                cancelSessionKey = key;
+                break;
+            }
+        }
+    }
+    const auto foldSessionChangedKey = [&cancelSessionKey](const QString &key) -> QString {
+        if (cancelSessionKey == QStringLiteral("gpu")
+            && (key.startsWith(QStringLiteral("gpu:"))
+                || key == QStringLiteral("nomodeset"))) {
+            return QStringLiteral("gpu");
+        }
+        return key;
+    };
+    const QStringList changedKeys = explicitlyChangedRepairToolKeys(transcript);
+    for (const QString &key : changedKeys) {
+        const QString folded = foldSessionChangedKey(key);
+        if (!keys.contains(folded)) {
+            keys.append(folded);
+        }
+    }
+    QStringList affected;
+    for (const QString &key : keys) {
+        const QStringList mapped = cancelledRepairAffectedSections(key);
+        if (mapped.contains(QStringLiteral("all"))) {
+            affected = mapped;
+            break;
+        }
+        for (const QString &section : mapped) {
+            if (!affected.contains(section)) {
+                affected.append(section);
+            }
+        }
+    }
+    if (affected.isEmpty()) {
+        appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                        tr("No system changes were detected; cached diagnostics remain valid."),
+                        QStringLiteral("INFO"), kind);
+        return;
+    }
+    // Round 212 (the cancel alignment, the fresh-set consumption): the
+    // interactive session's in-terminal scoped regeneration already COMMITTED
+    // fresh post-mutation sections while the menu stayed open — the cancel's
+    // invalidation subtracts them (the round-210 fresh-set pattern extended to
+    // the cancel marker) so the terminal close never re-runs the
+    // already-refreshed cache.  Round 213: the GPU session commits
+    // in-terminal too (the named deviation CLOSED), so its changed cancel
+    // consumes the refreshed set exactly like the input/network cancels (the
+    // live TUXEDO divergence: the cancel re-ran the scoped set because
+    // nothing had been committed); a cancel that interrupted an action
+    // BEFORE its regen also keeps the set (nothing was committed for it) —
+    // the partial-state re-run rule stays intact.  Every non-session repair
+    // keeps the pre-round-212 cancel semantics byte-identical (the latch is
+    // session-gated and empty).
+    if (!cancelSessionKey.isEmpty() && !affected.contains(QStringLiteral("all"))) {
+        for (const QString &section : m_walkthroughCommittedSections) {
+            affected.removeAll(section);
+        }
+        if (affected.isEmpty()) {
+            const bool displaySession = cancelSessionKey == QStringLiteral("display");
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            displaySession
+                                ? tr("Display walk-through: the affected diagnostic sections were regenerated in place (%1).")
+                                      .arg(orderedDiagnosticSections(m_walkthroughCommittedSections.values()).join(QStringLiteral(", ")))
+                                : tr("Interactive repair session: the affected diagnostic sections were regenerated in place (%1).")
+                                      .arg(orderedDiagnosticSections(m_walkthroughCommittedSections.values()).join(QStringLiteral(", "))),
+                            QStringLiteral("INFO"), kind);
+            return;
+        }
+    }
+    if (affected.contains(QStringLiteral("all"))) {
+        invalidateAllActiveScopeDiagnostics();
+        updateDiagnosticDetails();
+        updateFullRepairSummary();
+        scheduleEvidenceRefresh(
+            QStringLiteral("cancelled repair reported a change before the abort"));
+        return;
+    }
+    markDiagnosticSectionsStale(m_hostMaintenanceMode, affected);
+    updateDiagnosticDetails();
+    updateFullRepairSummary();
+    appendStatusLog(statusEntryIdentity(QStringLiteral("stale-repair-modified")),
+                    QStringLiteral("STALE DIAGNOSTICS: ") + tr("a cancelled repair reported a change before the abort. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.")
+                        .arg(affected.join(QStringLiteral(", "))),
+                    QStringLiteral("WARNING"), kind);
+    scheduleEvidenceRefresh(
+        QStringLiteral("cancelled repair reported a change before the abort"));
 }
 
 // Round 120 (ITEM 2): the Boot entries Save batch's success-terminal handler —
@@ -22903,6 +25642,106 @@ void MainWindow::invalidateBootEntrySaveDiagnostics(bool isHost)
                     QStringLiteral("INFO"), LogEntryKind::Repair);
     scheduleEvidenceRefresh(isHost ? QStringLiteral("running-host firmware boot entries changed")
                                    : QStringLiteral("repair-target firmware boot entries changed"));
+}
+
+// Round 188 (the success-marker timing fix): the host-rollback-cancel scoped
+// invalidation + the coalesced-regeneration scheduling — the round-187/187.1/
+// 187.2 set ({btrfs, usage, boot-evidence} + the capability preamble).  Shared
+// by the success terminal (fired at the DONE record while the terminal window
+// stays open showing the done transcript) and the post-close completion (the
+// fallback for when the terminal did not fire).  The reason string is the
+// existing generic repair-completion reason (no new string).
+void MainWindow::invalidateHostRollbackCancelDiagnostics()
+{
+    // Round 187 (the post-cancel state), refined round 187.1 and round
+    // 187.2: the un-stage DID change the ON-DISK snapshot/btrfs/boot-
+    // evidence state — the Btrfs default subvolume is re-pointed at the
+    // restored preserved root, the staged content is retained under a
+    // @rollback-failed-<stamp> tombstone, the .snapshots store moved
+    // back into the restored root, and the boot-stack reconcile
+    // re-generated the GRUB configuration (the grub-btrfs snapshot-menu
+    // rows changed) — while the RUNNING system itself stays untouched:
+    // it keeps executing the same root, so no packages, no drivers, no
+    // graphical stack and no kernels changed.  The invalidation is
+    // therefore exactly the SCOPED evidence of that on-disk change: the
+    // btrfs section, the usage section (round 187.1), the boot-evidence
+    // section (round 187.2 — its payload carries the grub.cfg menuentry
+    // rows and the "Snapshot selection evidence" sub-block), and the
+    // capability preamble — never the complete set.
+    markDiagnosticSectionsStale(/*hostScope=*/true,
+                                {QStringLiteral("btrfs"), QStringLiteral("usage"),
+                                 QStringLiteral("boot-evidence"),
+                                 QStringLiteral("capabilities")});
+    appendStatusLog(statusEntryIdentity(QStringLiteral("stale-repair-modified")),
+                    QStringLiteral("STALE DIAGNOSTICS: ")
+                        + tr("selected system was modified by repair action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.")
+                              .arg(QStringLiteral("boot-evidence, usage, btrfs")),
+                    QStringLiteral("INFO"), LogEntryKind::Snapshot);
+    updateFullRepairSummary();
+    updateDiagnosticDetails();
+    scheduleEvidenceRefresh(QStringLiteral("modifying repair completed"));
+}
+
+// Round 188 (the success-marker timing fix): the round-119/120 success
+// terminal of the staged-rollback CANCEL request.  runPrivilegedRequest()
+// fires the hook at the DONE record (the gate is already released, the
+// terminal window stays open) — the invalidation and the regeneration
+// schedule therefore dispatch at the operation's SUCCESS marker, never
+// waiting for the terminal close or the informational popup.  The hook fires
+// for every exit-0 outcome (the fail-safe invalidating-key rule), so it gates
+// itself on the transcript's SUCCESS marker: a DECLINED / NOT_STAGED outcome
+// (helper exit 0, no change) must invalidate nothing (the round-97/187
+// declined semantics).  Round 189 (the robust cancel): the record-clear +
+// banner teardown also move to the success marker — the round-188 refactor
+// left them ONLY in the post-close branch, so a close/kill between the DONE
+// record and the terminal close left the un-staged host with a stale
+// rebootRequired* record (the live TUXEDO state).  The ALREADY_UNSTAGED
+// outcome clears the stale record the same way but invalidates NOTHING (the
+// helper performed no btrfs mutation — the on-disk state was already
+// un-staged).  The post-close branches repeat the clear idempotently.
+void MainWindow::handleHostRollbackCancelTerminal(const QString &transcript)
+{
+    if (transcript.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=SUCCESS"))) {
+        m_repairSuccessTerminalHandled = true;
+        invalidateHostRollbackCancelDiagnostics();
+        clearHostRebootRequired();
+        return;
+    }
+    if (transcript.contains(QStringLiteral("HOST_ROLLBACK_CANCEL_RESULT=ALREADY_UNSTAGED"))) {
+        // No mutation happened: no invalidation, no regeneration schedule.
+        // The stale record still clears at the success marker so a close/kill
+        // between the DONE record and the terminal close cannot re-stale it.
+        clearHostRebootRequired();
+        return;
+    }
+}
+
+// Round 188: the rollback-success scoped invalidation + regeneration
+// scheduling — the shared {btrfs, usage, boot-evidence} + capability
+// preamble set, the round-187.2 cancel rationale applied identically to the
+// STAGING: the promote re-points the Btrfs default subvolume at the snapshot
+// root, migrates the .snapshots store with it and reconciles the boot stack
+// (the GRUB configuration's snapshot-menu rows are regenerated) — while the
+// running system keeps executing the same root until the next reboot, so no
+// packages/drivers/graphical-stack/kernels evidence changed.  The complete
+// set (the pre-round-188 behavior) is over-broad for that on-disk change; the
+// regeneration is scheduled at the success marker (the shared plan dialog's
+// DONE-record return) so the scoped re-run starts while the popup stays open
+// instead of leaving the cache empty.
+void MainWindow::invalidateRollbackSuccessDiagnostics(bool hostScope)
+{
+    markDiagnosticSectionsStale(hostScope,
+                                {QStringLiteral("btrfs"), QStringLiteral("usage"),
+                                 QStringLiteral("boot-evidence"),
+                                 QStringLiteral("capabilities")});
+    updateFullRepairSummary();
+    updateDiagnosticDetails();
+    appendStatusLog(statusEntryIdentity(QStringLiteral("stale-repair-modified")),
+                    QStringLiteral("STALE DIAGNOSTICS: ")
+                        + tr("selected system was modified by repair action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.")
+                              .arg(QStringLiteral("boot-evidence, usage, btrfs")),
+                    QStringLiteral("INFO"), LogEntryKind::Snapshot);
+    scheduleEvidenceRefresh(QStringLiteral("snapshot rollback completed"));
 }
 
 // Round 120 (ITEM 3): the capability-table Install completion — shared by the
@@ -23230,6 +26069,13 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
                 auto &times = targetScope ? m_targetDiagnosticTimes : m_hostDiagnosticTimes;
                 cache.insert(QStringLiteral("capabilities"), capabilityPreamble);
                 times.insert(QStringLiteral("capabilities"), capturedAt);
+                // Round 189 (the robust cancel): the scoped regeneration's
+                // fresh capability preamble re-runs the record-vs-helper
+                // cross-check on the host banner (the same hook as
+                // cacheHostDiagnosticBundle).
+                if (!targetScope) {
+                    updateHostRebootBanner();
+                }
             }
         }
     } else {
@@ -23298,6 +26144,11 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
             QString body;
             QString capabilityPreamble;
             splitDiagnosticCapabilityPreamble(captured, &body, &capabilityPreamble);
+            // Round 204: the individual section's cached body must not carry
+            // the session framing (the protected-host check, the target-disk/
+            // root-component and mount lines) — keep only the section's own
+            // frame (the same trim as the manual per-diagnostic run).
+            body = trimDiagnosticSessionFraming(body, key);
             const QDateTime capturedAt = QDateTime::currentDateTime();
             // Keep the cached combined report coherent with a scoped regeneration
             // as well: replace just this section so the Full report never shows a
@@ -23328,6 +26179,15 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
             appendDiagnosticLog(key, diagnosticSectionTitle(key),
                                 targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
                                 body, ok);
+            // Round 204: the session-framing trim above removed the lines the
+            // root-component-fallback reconciliation parses; feed it the
+            // untrimmed capture once here so the target adoption behavior is
+            // unchanged (it only ever ran for a successful Repair Target
+            // entry).  appendDiagnosticLog's own reconciliation over the
+            // trimmed body is a no-op by design.
+            if (ok && targetScope) {
+                reconcileResolvedTargetComponent(displayLocalizedHelperOutput(captured));
+            }
             appendLog(tr("%1 diagnostic run: %2")
                           .arg(targetScope ? tr("Target") : tr("Host"),
                                diagnosticSectionTitle(key)),
@@ -23518,6 +26378,12 @@ void MainWindow::runSelectedDiagnostic()
     QString capabilityPreamble;
     if (key != QStringLiteral("report")) {
         splitDiagnosticCapabilityPreamble(result, &diagnosticBody, &capabilityPreamble);
+        // Round 204: drop the session framing (the protected-host check, the
+        // target-disk/root-component and mount lines) so the cached section
+        // and the merged report embed ONLY the diagnostic's own output — the
+        // preamble belongs to the session, not the section.  The consumers
+        // that parse the session lines are fed the untrimmed capture below.
+        diagnosticBody = trimDiagnosticSessionFraming(diagnosticBody, key);
     }
     // The framed section the merged combined report embeds. The diagnose-based
     // sections already carry the helper frame; the preamble-less fs-inspect
@@ -23627,6 +26493,13 @@ void MainWindow::runSelectedDiagnostic()
     }
 
     updateDiagnosticDetails();
+    // Round 189 (the robust cancel): a host diagnostic's capability preamble
+    // can refresh the record-vs-helper cross-check (the running-root
+    // evidence), so the reboot banner re-evaluates its honest wording after
+    // every successful host run.
+    if (!targetScope) {
+        updateHostRebootBanner();
+    }
     // Capability evidence can arrive with any individual diagnostic; refresh
     // the repair gates immediately instead of leaving the Settings/Full Repair
     // stages stale until the next unrelated summary update.
@@ -23636,6 +26509,15 @@ void MainWindow::runSelectedDiagnostic()
     // the hint too.
     updateChrootShellMode();
     refreshCapabilities();
+    // Round 204: the session-framing trim above removed the lines the
+    // root-component-fallback reconciliation parses (they are session
+    // framing); feed it the untrimmed capture once here so the target
+    // adoption behavior is unchanged (it only ever ran for a successful
+    // Repair Target entry).  appendDiagnosticLog's own reconciliation over
+    // the trimmed body is a no-op by design.
+    if (ok && !targetScope && key != QStringLiteral("report")) {
+        reconcileResolvedTargetComponent(displayLocalizedHelperOutput(result));
+    }
     appendDiagnosticLog(key, item->text(),
                        targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
                        diagnosticBody, ok);
@@ -24571,7 +27453,7 @@ void MainWindow::saveDiagnosticResults()
     const QString path = QFileDialog::getSaveFileName(
         this,
         QStringLiteral("Save diagnostic results"),
-        QDir::homePath() + QStringLiteral("/boot-repair-diagnostics.txt"),
+        QDir::homePath() + QStringLiteral("/boot-bitch-diagnostics.txt"),
         QStringLiteral("Text files (*.txt *.log);;All files (*)"),
         nullptr, portableFileDialogOptions());
 
@@ -24594,7 +27476,7 @@ void MainWindow::saveDiagnosticResults()
 
 void MainWindow::saveLogAs()
 {
-    const QString defaultPath = QDir::homePath() + QStringLiteral("/boot-repair.log");
+    const QString defaultPath = QDir::homePath() + QStringLiteral("/boot-bitch.log");
     const QString path = QFileDialog::getSaveFileName(
         this, tr("Save application log"), defaultPath,
         QStringLiteral("Log files (*.log *.txt);;All files (*)"),
@@ -24666,11 +27548,11 @@ void MainWindow::clearActionRegister()
 
 QString MainWindow::sessionLogDirectory() const
 {
-#ifdef BOOT_REPAIR_UI_TEST
-    // Read-only test seam: BOOT_REPAIR_LOG_DIR redirects the session log
+#ifdef BOOT_BITCH_UI_TEST
+    // Read-only test seam: BOOT_BITCH_LOG_DIR redirects the session log
     // directory for the UI regression tests. Compiled into the UI-test binary
     // only; production always writes under AppDataLocation.
-    const QByteArray override = qgetenv("BOOT_REPAIR_LOG_DIR");
+    const QByteArray override = qgetenv("BOOT_BITCH_LOG_DIR");
     if (!override.isEmpty()) {
         return QString::fromLocal8Bit(override);
     }
@@ -25476,7 +28358,7 @@ void MainWindow::createSessionLogFile(const QString &scopeLabel, const QString &
     }
     // A7-02: session logs carry command evidence, so a log directory the app
     // itself creates is private (0700).  A pre-existing directory (including
-    // a UI-test BOOT_REPAIR_LOG_DIR override pointing at one) keeps its
+    // a UI-test BOOT_BITCH_LOG_DIR override pointing at one) keeps its
     // administrator-chosen mode.
     if (!directoryExisted) {
         QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner
@@ -26622,7 +29504,7 @@ void MainWindow::refreshLogView()
             // misleading when a common word (such as “update”) appears in
             // embedded metadata like updateURL.
             if (line.size() > 512
-                || line.startsWith(QStringLiteral("/run/boot-repair/"))
+                || line.startsWith(QStringLiteral("/run/boot-bitch/"))
                 || line.startsWith(QStringLiteral("/var/"))
                 || line.startsWith(QStringLiteral("/home/"))) {
                 continue;
@@ -26981,7 +29863,7 @@ void MainWindow::appendDiagnosticLog(const QString &key, const QString &title,
     const QString requestKey = key == QStringLiteral("report") ? QStringLiteral("all") : key;
     const QString command = scope == QStringLiteral("Repair Target")
         ? QStringLiteral("%1 diagnose %2 %3 %4")
-            .arg(repairHelperPath().isEmpty() ? QStringLiteral("boot-repair-helper") : repairHelperPath(),
+            .arg(repairHelperPath().isEmpty() ? QStringLiteral("boot-bitch-helper") : repairHelperPath(),
                  m_previewTargetPath, m_previewTargetComponentPath, requestKey)
         : QStringLiteral("Boot Bitch host diagnostic implementation (read-only): %1").arg(requestKey);
 
@@ -27182,7 +30064,9 @@ void MainWindow::showAboutDialog()
 // current size (a fifth by default) so dragging left/right or up/down can never
 // hide a pane behind its neighbour. The pixel minimum scales with the window
 // instead of a fixed row count; each pane's original minimum stays as its floor.
-static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1, int minimumPercent = 20)
+static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1,
+                                       int minimumPercent = 20,
+                                       bool clearHorizontalPinWhenStacked = false)
 {
     if (!splitter) {
         return;
@@ -27219,6 +30103,17 @@ static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1, 
             const int wanted = qMax(qMax(base.height(), minimum), pane->minimumSizeHint().height());
             if (pane->minimumHeight() != wanted) {
                 pane->setMinimumHeight(wanted);
+            }
+            // T3.6 (round 215, plan §1 item 7a): the stacked layout keeps
+            // only its VERTICAL minimum — a horizontal minimum captured
+            // while the splitter was horizontal (the session-log viewer's
+            // ~523-px single-row filter minimum) must not outlive the
+            // stacking, or it pins the panes past the window frame at the
+            // 480-px floor.  Restore the pane's authored minimum width; the
+            // hint-derived content minimum (minimumSizeHint) is untouched
+            // and still floors the stacked arrangement.
+            if (clearHorizontalPinWhenStacked && pane->minimumWidth() != base.width()) {
+                pane->setMinimumWidth(base.width());
             }
         }
     }
@@ -27270,7 +30165,7 @@ MainWindow::ColorSchemeValue MainWindow::effectiveColorScheme()
 MainWindow::ColorSchemeValue MainWindow::colorSchemeFromPortalValue(const QVariant &value)
 {
     QVariant inner = value;
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
     while (inner.metaType() == QMetaType::fromType<QDBusVariant>()) {
         inner = inner.value<QDBusVariant>().variant();
     }
@@ -27437,7 +30332,7 @@ QString colorSchemeName(MainWindow::ColorSchemeValue scheme)
     }
 }
 
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
 // One synchronous portal read with a short timeout. GNOME's settings namespace
 // is tried first and the cross-desktop appearance key second, mirroring the
 // asynchronous fallback chain. The timeout only bounds a hung portal; a
@@ -27535,7 +30430,7 @@ void MainWindow::logColorSchemeResolution(ColorSchemeValue scheme, ColorSchemeSo
     }
     const QString message = QStringLiteral("Desktop color scheme: %1 (source: %2; %3)")
                                 .arg(schemeName, sourceName, detail);
-    qInfo().noquote() << "[boot-repair]" << message;
+    qInfo().noquote() << "[boot-bitch]" << message;
 }
 
 // Coalesces a deferred scheme re-resolution into one event-loop turn so the
@@ -27569,7 +30464,7 @@ void MainWindow::refreshColorScheme()
 // SettingChanged subscription keeps the value current afterwards.
 void MainWindow::queryPortalColorScheme()
 {
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
     if (m_portalColorSchemeQueryStarted) {
         return;
     }
@@ -27609,7 +30504,7 @@ void MainWindow::queryPortalColorScheme()
 // afterwards.
 void MainWindow::requestPortalColorScheme(const QString &settingsNamespace, const QString &key)
 {
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
     QDBusMessage call = QDBusMessage::createMethodCall(
         QStringLiteral("org.freedesktop.portal.Desktop"),
         QStringLiteral("/org/freedesktop/portal/desktop"),
@@ -27652,7 +30547,7 @@ void MainWindow::requestPortalColorScheme(const QString &settingsNamespace, cons
 // trusted from the signal payload.
 void MainWindow::portalSettingsChanged()
 {
-#ifdef BOOT_REPAIR_HAVE_DBUS
+#ifdef BOOT_BITCH_HAVE_DBUS
     requestPortalColorScheme(QStringLiteral("org.gnome.desktop.interface"),
                              QStringLiteral("color-scheme"));
 #endif
@@ -27730,7 +30625,6 @@ void MainWindow::updateResponsiveLayout()
     const bool narrowSystems = availableWidth < 900;
     const bool narrowDiagnostics = availableWidth < 820;
     const bool narrowRepair = availableWidth < 820;
-    const bool narrowSnapshots = availableWidth < 700;
     const bool narrowLogs = availableWidth < 820;
 
     if (m_tabs) {
@@ -27843,12 +30737,35 @@ void MainWindow::updateResponsiveLayout()
             if (changed) {
                 m_diagnosticSplitter->setSizes({125, 230});
             }
+            // Round 218 (plan §1 item 9): the stacked content floor (the
+            // construction-time constant computed in buildDiagnosticsPage)
+            // feeds the page scroll area's trigger timing only — the
+            // vertical scrollbar engages exactly when the viewport can no
+            // longer fit the stacked panes' content, before anything below
+            // the Copy/Save buttons is cut off.  The splitter's 350-px
+            // stacked floor and the fractional pane minimums stay
+            // byte-unchanged (the round-217 Logs-tab companion pattern:
+            // a construction-time constant applied at the switch, never a
+            // runtime budget pass).  Round 222 (plan §1 item 14): that
+            // constant is now only the BASE — the scroll-content minimum is
+            // additionally raised to the REAL laid-out requirement at the
+            // current width (the wrapped header's live height + the panes'
+            // real minimums, re-measured on every wrap-state change), so
+            // scroll-to-bottom reveals the FULL last button row + the box
+            // frame border at every width.
+            applyDiagnosticsStackedContentFloor();
         } else {
             m_diagnosticSplitter->setMinimumHeight(330);
             m_diagnosticSplitter->setStretchFactor(0, 2);
             m_diagnosticSplitter->setStretchFactor(1, 5);
             if (changed) {
                 m_diagnosticSplitter->setSizes({280, 760});
+            }
+            // The side-by-side layout keeps no stacked content floor: its
+            // content minimum is the natural layout minimum, exactly like
+            // before (the wide/tall states stay byte-unchanged).
+            if (m_diagnosticsScrollContent) {
+                m_diagnosticsScrollContent->setMinimumHeight(0);
             }
         }
     }
@@ -27890,19 +30807,11 @@ void MainWindow::updateResponsiveLayout()
         QTimer::singleShot(0, this, [this] { resizeSnapshotRows(); });
     }
 
-    if (m_snapshotButtonLayout) {
-        m_snapshotButtonLayout->setDirection(narrowSnapshots
-            ? QBoxLayout::TopToBottom
-            : QBoxLayout::LeftToRight);
-        if (m_snapshotLoadButton && m_snapshotInspectButton && m_snapshotRollbackButton) {
-            const QSizePolicy policy = narrowSnapshots
-                ? QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed)
-                : QSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-            m_snapshotLoadButton->setSizePolicy(policy);
-            m_snapshotInspectButton->setSizePolicy(policy);
-            m_snapshotRollbackButton->setSizePolicy(policy);
-        }
-    }
+    // Round 214 (plan §1 item 1): the snapshot button row's old binary
+    // single-row/vertical-stack flip (the direction switch + the Expanding
+    // button policy below the 700-px breakpoint) is GONE — the staged
+    // StagedButtonRowReflow owns the row's wrap stages and the buttons stay
+    // on their shrinkable eliding policy at every width.
 
     if (m_sessionLogSplitter && m_sessionLogPanel && m_sessionLogViewer) {
         const Qt::Orientation desired = narrowLogs ? Qt::Vertical : Qt::Horizontal;
@@ -27924,12 +30833,24 @@ void MainWindow::updateResponsiveLayout()
         if (desired == Qt::Vertical) {
             m_sessionLogSplitter->setStretchFactor(0, 1);
             m_sessionLogSplitter->setStretchFactor(1, 0);
+            // Round 217 (the round-216 revert + the minimal fix): the stacked
+            // floor — the splitter never gets squeezed below its panes'
+            // content floors, so the handle always sits cleanly below the
+            // log's visible content and the lower section never overlaps it.
+            // The page's vertical scroll area provides the room on short
+            // windows (the m_repairSplitter pattern) instead of the round-216
+            // dynamic window-minimum machinery.
+            m_sessionLogSplitter->setMinimumHeight(m_logsStackedSplitterFloor);
             if (changed) {
                 m_sessionLogSplitter->setSizes({260, 160});
             }
         } else {
             m_sessionLogSplitter->setStretchFactor(0, 0);
             m_sessionLogSplitter->setStretchFactor(1, 1);
+            // The side-by-side layout keeps no stacked height floor: its
+            // content minimum is the taller pane's own (the layout-derived
+            // hint), exactly like before.
+            m_sessionLogSplitter->setMinimumHeight(0);
             if (changed) {
                 m_sessionLogSplitter->setSizes({280, 800});
             }
@@ -27947,10 +30868,17 @@ void MainWindow::updateResponsiveLayout()
     // and freezes the inner handle. The Settings splitter uses a quarter so
     // both the preferences/plan region and the capabilities region stay
     // visible.
-    applyFractionalPaneMinimum(m_systemSplitter);
-    applyFractionalPaneMinimum(m_diagnosticSplitter);
-    applyFractionalPaneMinimum(m_snapshotSplitter);
-    applyFractionalPaneMinimum(m_sessionLogSplitter);
+    applyFractionalPaneMinimum(m_systemSplitter, -1, 20, true);
+    applyFractionalPaneMinimum(m_diagnosticSplitter, -1, 20, true);
+    applyFractionalPaneMinimum(m_snapshotSplitter, -1, 20, true);
+    // Round 215 (plan §1 item 7a) + plan-adjacent-findings B2: every
+    // STACKING splitter clears its panes' horizontal minimums on the
+    // stacked path (the T3.6 discipline) so a wide-state horizontal
+    // minimum never pins a pane past the 480-px frame once the panes
+    // stack vertically.  The wide (horizontal) branch is untouched — the
+    // clear runs only while the splitter is vertical, and the wide-state
+    // fractional minimums are re-applied on every horizontal pass.
+    applyFractionalPaneMinimum(m_sessionLogSplitter, -1, 20, true);
     applyFractionalPaneMinimum(m_repairVerticalSplitter, 1);
     applyFractionalPaneMinimum(m_settingsSplitter, -1, 25);
     // The upper pane's natural (wrapped) height depends on the final viewport
@@ -27959,6 +30887,97 @@ void MainWindow::updateResponsiveLayout()
     // width can never pin the preferences row taller than its content. Mirrors
     // updateFullRepairPlanHeight() and the resizeCapabilityRows() deferral.
     QTimer::singleShot(0, this, &MainWindow::updateSettingsSplitterDefaults);
+}
+
+// Round 222 (plan §1 item 14): the Diagnostics stacked scroll-content
+// minimum — the round-218 construction-time constant (the
+// m_diagnosticsStackedContentFloor BASE) raised to the REAL laid-out
+// requirement at the current width, re-measured on every wrap-state change.
+//
+// The user's TUXEDO observation: at the minimum width (the wrapped header
+// state) scrolling the Diagnostics page to the very bottom hid half of the
+// last button row and the bottom of the detail box's frame border; at widths
+// where the header unwraps it scrolled correctly.  The round-218 floor is a
+// construction-time CONSTANT whose heading term estimates the reflowed
+// two-row form (the scope label's two-line floor) — it cannot know the REAL
+// wrapped header height at the current width: a committed target's long
+// scope line wraps to three rows at the minimum width, and the content
+// layout's own total minimum cannot cover the gap either (the splitter item
+// reports its explicit 350-px minimumSize, never its panes' real summed
+// minimumSizeHint).  The content widget then lays out below the scroll
+// range and the scroll-to-bottom can never reach the last rows.
+//
+// The requirement is therefore re-derived from the LIVE layout at the
+// current width: the heading grid's real minimum (the wrapped scope/action
+// rows — width-aware through the WrappedScopeLabel minimum) plus the
+// splitter's own minimumSizeHint (the panes' real minimums — the detail
+// description and availability are WrappedDialogLabel instances since
+// round 223, so their real wrapped heights ARE the pane minimum) plus
+// EVERY other layout row (the committed-target configuration row — the
+// round-223 REOPENED root cause: the round-222 formula assumed exactly
+// one row above the splitter and missed the config row, which only the
+// user's real committed-target flow shows).  All values are
+// width-driven, never height-driven, so the re-measure is convergent and
+// idempotent: it only ever RAISES the minimum above the round-218 constant,
+// and a pass that changed nothing schedules nothing (the deferred re-apply
+// self-terminates).  Only the scroll area's trigger timing moves: the
+// as-needed bar, the fixed 480x500 window minimum, the splitter's 350/330
+// floors and the construction-time floor computation all stay
+// byte-unchanged (the round-218 semantics).
+void MainWindow::applyDiagnosticsStackedContentFloor()
+{
+    if (!m_diagnosticsScrollContent || !m_diagnosticSplitter) {
+        return;
+    }
+    // The side-by-side layout keeps no stacked content floor (its content
+    // minimum is the natural layout minimum — the wide/tall states stay
+    // byte-unchanged).
+    if (m_diagnosticSplitter->orientation() != Qt::Vertical) {
+        return;
+    }
+    QLayout *contentLayout = m_diagnosticsScrollContent->layout();
+    const QMargins margins = contentLayout ? contentLayout->contentsMargins()
+                                           : QMargins(0, 0, 0, 0);
+    // Round 223 (plan §1 item 14 REOPENED): the requirement is the FULL
+    // content-layout minimum with the splitter's own contribution replaced by
+    // its REAL minimumSizeHint (the layout minimum reports only the explicit
+    // 350-px floor).  EVERY item between the margins counts — the heading AND
+    // the committed-target configuration row (visible only for a committed
+    // repair target, the user's real flow) AND anything else above/below the
+    // splitter — so a row the old formula did not know about can never push
+    // the splitter below its real minimum and clip the Copy/Save row.
+    int requirement = margins.top() + margins.bottom();
+    if (contentLayout) {
+        for (int i = 0; i < contentLayout->count(); ++i) {
+            if (i > 0) {
+                requirement += contentLayout->spacing();
+            }
+            QLayoutItem *item = contentLayout->itemAt(i);
+            if (item->widget() == m_diagnosticSplitter) {
+                requirement += m_diagnosticSplitter->minimumSizeHint().height();
+            } else {
+                requirement += item->minimumSize().height();
+            }
+        }
+    }
+    const int minimum = qMax(m_diagnosticsStackedContentFloor, requirement);
+    const bool raised = minimum != m_diagnosticsScrollContent->minimumHeight();
+    if (raised) {
+        m_diagnosticsScrollContent->setMinimumHeight(minimum);
+    }
+    // One deferred re-apply after the layout settles: the scope reflow and
+    // the scrollbar-gutter re-wrap change the heading's real height one turn
+    // after the pass that engaged them.  The deferred pass recomputes the
+    // same convergent value, so it terminates by itself (a no-change pass
+    // schedules nothing further).
+    if (raised) {
+        QTimer::singleShot(0, this, [this] {
+            if (m_diagnosticSplitter
+                && m_diagnosticSplitter->orientation() == Qt::Vertical) {
+                applyDiagnosticsStackedContentFloor();
+            }
+        });
+    }
 }
 
 void MainWindow::updateFullRepairPlanHeight()
@@ -28983,6 +32002,10 @@ void MainWindow::runKernelRepairSession()
                              m_previewTargetComponentPath, QStringLiteral("kernels")};
     arguments << QStringLiteral("--baseline")
               << QString::fromLatin1(section.toUtf8().toBase64());
+    // Round 211 (the interactive-repair alignment): a fresh kernel session
+    // owns its own in-terminal regen commits — clear the round-210 latch so a
+    // previous session's committed set can never be reused for this one.
+    m_walkthroughCommittedSections.clear();
     // The repair entry title carries the stable "Kernel repair" prefix so the
     // Logs kernel-repair topic filter matches every sub-action entry.
     runRepairHelper(tr("Kernel repair"), arguments, LogEntryKind::Repair, QStringLiteral("kernels"));
@@ -29118,11 +32141,11 @@ void MainWindow::updateRepairToolDetails()
         planText = tr("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("display")) {
         title = tr("Graphical login / display manager");
-        // Round 100 (ITEM 3, the conciseness contract): two sentences — the
-        // evidence-detected action, the in-window re-verify, the console
-        // routing, and the never-start-a-GUI boundary.
+        // Round 193 (the walk-through, the conciseness contract): the
+        // interactive session, the vendor-derived default, the confirmed
+        // switch, and the console-routing/never-start boundaries.
         description = tr(
-            "Restore the display manager detected from the running host or selected repair system's boot evidence and configuration, set graphical.target as the default and repair display-manager.service, each step re-verified in this window. "
+            "Walk an evidence-driven interactive session to repair the graphical login: restore the default graphical login manager (derived from the installed desktop packages' own dependency evidence, never a hardcoded map) or switch to another installed or installable manager behind a confirmation that names the switch, each step re-verified in this window. "
             "When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.");
         if (displayManagerName == QStringLiteral("GDM")) {
             appendDescriptionSentence(tr(
@@ -29134,7 +32157,7 @@ void MainWindow::updateRepairToolDetails()
             appendDescriptionSentence(tr("The detected backend is %1.").arg(displayManagerName));
         }
         appendDescriptionSentence(tr(
-            "With OpenRC the action restores the manager's default runlevel symlink without starting it."));
+            "With OpenRC the walk-through restores the manager's default runlevel symlink without starting it."));
         buttonText = tr("Restore Graphical Login");
         iconName = QStringLiteral("video-display");
         planText = tr("Full Repair plan: %1").arg(plan);
@@ -29409,7 +32432,7 @@ void MainWindow::updateRepairToolDetails()
 // Ordered privileged-helper resolution candidates for one application
 // directory. Installed layouts (/usr/bin, /usr/local/bin) must use the
 // installed libexec helper instead of a dev/source-tree helper that happens to
-// exist on the build machine (the compiled-in BOOT_REPAIR_SOURCE_DIR used to
+// exist on the build machine (the compiled-in BOOT_BITCH_SOURCE_DIR used to
 // win there); build/portable layouts prefer the helper beside or above the
 // executable so a source checkout keeps working. An explicit override always
 // wins.
@@ -29417,29 +32440,29 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
     const QString &appDir, const QByteArray &explicitOverride)
 {
     QList<HelperPathCandidate> candidates;
-    // A7-01: the BOOT_REPAIR_HELPER_PATH override is a test seam.  Production
+    // A7-01: the BOOT_BITCH_HELPER_PATH override is a test seam.  Production
     // never honors it (a launch environment must not be able to redirect the
     // privileged helper); only the UI-test binary reads it.
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     const QString overridePath = QString::fromLocal8Bit(explicitOverride).trimmed();
     if (!overridePath.isEmpty()) {
-        candidates.append({overridePath, QStringLiteral("explicit BOOT_REPAIR_HELPER_PATH override")});
+        candidates.append({overridePath, QStringLiteral("explicit BOOT_BITCH_HELPER_PATH override")});
     }
 #else
     Q_UNUSED(explicitOverride);
 #endif
 
     const QString appLibexec = QDir::cleanPath(QDir(appDir).absoluteFilePath(
-        QStringLiteral("../libexec/boot-repair/boot-repair-helper")));
+        QStringLiteral("../libexec/boot-bitch/boot-bitch-helper")));
     const QString appScripts = QDir::cleanPath(QDir(appDir).absoluteFilePath(
-        QStringLiteral("../scripts/boot-repair-helper.sh")));
+        QStringLiteral("../scripts/boot-bitch-helper.sh")));
     const QString appScriptsLocal = QDir::cleanPath(QDir(appDir).absoluteFilePath(
-        QStringLiteral("scripts/boot-repair-helper.sh")));
+        QStringLiteral("scripts/boot-bitch-helper.sh")));
     // A7-01: the working directory is attacker- or launcher-controlled and
     // therefore never a resolution source; the CWD-relative candidate was
     // removed.
-#if defined(BOOT_REPAIR_UI_TEST) && defined(BOOT_REPAIR_SOURCE_DIR)
-    const QString sourceScripts = QStringLiteral(BOOT_REPAIR_SOURCE_DIR "/scripts/boot-repair-helper.sh");
+#if defined(BOOT_BITCH_UI_TEST) && defined(BOOT_BITCH_SOURCE_DIR)
+    const QString sourceScripts = QStringLiteral(BOOT_BITCH_SOURCE_DIR "/scripts/boot-bitch-helper.sh");
 #else
     const QString sourceScripts;
 #endif
@@ -29449,9 +32472,9 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
     if (installed) {
         candidates.append({appLibexec,
                            QStringLiteral("installed helper beside the executable")});
-        candidates.append({QStringLiteral("/usr/libexec/boot-repair/boot-repair-helper"),
+        candidates.append({QStringLiteral("/usr/libexec/boot-bitch/boot-bitch-helper"),
                            QStringLiteral("installed /usr/libexec helper")});
-        candidates.append({QStringLiteral("/usr/lib/boot-repair/boot-repair-helper"),
+        candidates.append({QStringLiteral("/usr/lib/boot-bitch/boot-bitch-helper"),
                            QStringLiteral("installed /usr/lib helper")});
         // Only when no installed helper is usable: keep a broken install
         // testable from a source/build tree.
@@ -29460,17 +32483,17 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
             candidates.append({sourceScripts, QStringLiteral("source-tree helper (installed helper missing)")});
         }
     } else {
-        // AppImage/portable layout: usr/bin/boot-repair beside
-        // usr/libexec/boot-repair/boot-repair-helper.
+        // AppImage/portable layout: usr/bin/boot-bitch beside
+        // usr/libexec/boot-bitch/boot-bitch-helper.
         candidates.append({appLibexec, QStringLiteral("portable helper beside the executable")});
         candidates.append({appScripts, QStringLiteral("source-tree helper above the executable")});
         candidates.append({appScriptsLocal, QStringLiteral("source-tree helper beside the executable")});
         if (!sourceScripts.isEmpty()) {
             candidates.append({sourceScripts, QStringLiteral("configured source-tree helper")});
         }
-        candidates.append({QStringLiteral("/usr/libexec/boot-repair/boot-repair-helper"),
+        candidates.append({QStringLiteral("/usr/libexec/boot-bitch/boot-bitch-helper"),
                            QStringLiteral("installed /usr/libexec helper")});
-        candidates.append({QStringLiteral("/usr/lib/boot-repair/boot-repair-helper"),
+        candidates.append({QStringLiteral("/usr/lib/boot-bitch/boot-bitch-helper"),
                            QStringLiteral("installed /usr/lib helper")});
     }
     return candidates;
@@ -29505,11 +32528,11 @@ QString MainWindow::resolveRepairHelperPath(const QString &appDir,
             if (resolution) {
                 *resolution = candidate.reason;
                 if (overrideProvided
-                    && !candidate.reason.startsWith(QStringLiteral("explicit BOOT_REPAIR_HELPER_PATH"))) {
+                    && !candidate.reason.startsWith(QStringLiteral("explicit BOOT_BITCH_HELPER_PATH"))) {
                     // The explicit override existed but was not usable; say so
                     // instead of silently presenting the fallback as the
                     // intended choice.
-                    *resolution += QStringLiteral("; the explicit BOOT_REPAIR_HELPER_PATH override was not usable");
+                    *resolution += QStringLiteral("; the explicit BOOT_BITCH_HELPER_PATH override was not usable");
                 }
             }
             return info.canonicalFilePath().isEmpty() ? info.absoluteFilePath() : info.canonicalFilePath();
@@ -29557,11 +32580,11 @@ bool MainWindow::helperPathTrusted(const QString &candidatePath)
 
 QString MainWindow::repairHelperPath(QString *resolution) const
 {
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     return resolveRepairHelperPath(QCoreApplication::applicationDirPath(),
-                                   qgetenv("BOOT_REPAIR_HELPER_PATH"), resolution);
+                                   qgetenv("BOOT_BITCH_HELPER_PATH"), resolution);
 #else
-    // A7-01: production never honors a BOOT_REPAIR_HELPER_PATH environment
+    // A7-01: production never honors a BOOT_BITCH_HELPER_PATH environment
     // override; only the UI-test binary reads it.
     return resolveRepairHelperPath(QCoreApplication::applicationDirPath(),
                                    QByteArray(), resolution);
@@ -29749,7 +32772,7 @@ MainWindow::StagedHelper MainWindow::stageHelperForPrivilegedSession(
         return result;
     }
 
-    const QString stagingRoot = QDir(base).filePath(QStringLiteral("boot-repair"));
+    const QString stagingRoot = QDir(base).filePath(QStringLiteral("boot-bitch"));
     if (!QDir().mkpath(stagingRoot)) {
         result.error = QStringLiteral("the private helper directory %1 could not be created").arg(stagingRoot);
         result.path.clear();
@@ -29774,7 +32797,7 @@ MainWindow::StagedHelper MainWindow::stageHelperForPrivilegedSession(
     }
 
     // A unique per-copy directory keeps the file name exactly
-    // "boot-repair-helper" so every invocation path still recognizes it as a
+    // "boot-bitch-helper" so every invocation path still recognizes it as a
     // shell helper. The temporary directory removes itself on failure.
     QTemporaryDir copyDir(QDir(stagingRoot).filePath(QStringLiteral("helper-XXXXXX")));
     if (!copyDir.isValid()) {
@@ -29782,7 +32805,7 @@ MainWindow::StagedHelper MainWindow::stageHelperForPrivilegedSession(
         result.path.clear();
         return result;
     }
-    const QString stagedPath = copyDir.filePath(QStringLiteral("boot-repair-helper"));
+    const QString stagedPath = copyDir.filePath(QStringLiteral("boot-bitch-helper"));
 
     QFile source(helperPath);
     if (!source.open(QIODevice::ReadOnly)) {
@@ -29825,15 +32848,15 @@ MainWindow::StagedHelper MainWindow::stageHelperForPrivilegedSession(
     // The EFI label updater ships beside the helper in every payload (the
     // .deb's /usr/libexec, the AppImage squashfs, a source tree).  Stage it
     // into the same private directory so the root helper can verify it
-    // against its build-pinned digest (boot-repair-helper's
+    // against its build-pinned digest (boot-bitch-helper's
     // efi_label_updater_path) and annotate selected-system EFI entries.
     // A missing or untrusted updater is non-fatal here: the helper then skips
     // the annotation with evidence instead of failing the stage.
     const QString updaterSource = QDir::cleanPath(
-        QDir(sourceInfo.absolutePath()).filePath(QStringLiteral("boot-repair-efi-label.py")));
+        QDir(sourceInfo.absolutePath()).filePath(QStringLiteral("boot-bitch-efi-label.py")));
     const QFileInfo updaterInfo(updaterSource);
     if (updaterInfo.exists() && updaterInfo.isFile() && helperPathTrusted(updaterSource)) {
-        const QString stagedUpdater = copyDir.filePath(QStringLiteral("boot-repair-efi-label.py"));
+        const QString stagedUpdater = copyDir.filePath(QStringLiteral("boot-bitch-efi-label.py"));
         QFile updaterFile(updaterSource);
         QFile stagedUpdaterFile(stagedUpdater);
         QCryptographicHash updaterHash(QCryptographicHash::Sha256);
@@ -30480,6 +33503,22 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
                                                                     handleIndividualRepairSuccessTerminal(
                                                                         terminalKeys, transcript, kind);
                                                                 })
+                                                          : nullptr,
+                                                      /*terminalHookOnProvenNoOp=*/false,
+                                                      // Round 194 (ITEM 3): the failure terminal — armed for
+                                                      // the same dialog-backed individual repairs as the
+                                                      // success terminal.  A failed request whose transcript
+                                                      // explicitly reports a changed stage releases the gate
+                                                      // at the FAILURE marker (the DONE record) and applies
+                                                      // the scoped invalidation + the regeneration while the
+                                                      // failure popup stays open; a failure with no changed
+                                                      // stage invalidates nothing.
+                                                      terminalEligible
+                                                          ? std::function<void(const QString &)>(
+                                                                [this, terminalKeys, kind](const QString &transcript) {
+                                                                    handleIndividualRepairFailureTerminal(
+                                                                        terminalKeys, transcript, kind);
+                                                                })
                                                           : nullptr);
     if (kind == LogEntryKind::Repair) {
         clearProgressDetail();
@@ -30712,12 +33751,24 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
                 // regeneration; a failed stage accumulates the complete set so
                 // the plan regenerates once after its last stage.
                 accumulatePlanInvalidation(invalidationKeys, /*failed=*/true);
+            } else if (m_repairSuccessTerminalHandled) {
+                // Round 194 (ITEM 3): the failure terminal (the DONE record,
+                // while the failure popup was still open) already applied the
+                // scoped invalidation + the regeneration — the post-frame
+                // completion must not apply it twice.  (The terminal is only
+                // armed when the transcript explicitly reports a changed
+                // stage; a failure with no changed stage never latches and
+                // falls through to the shared completion below, which then
+                // invalidates NOTHING.)
+                m_repairSuccessTerminalHandled = false;
             } else {
                 // Round 119 (ITEM 2): the shared completion-side helper — a
-                // genuine failure keeps the fail-safe complete set (the
-                // round-16/19 contract: a failed modifying run may have left
-                // any stage half-applied) and schedules the regeneration
-                // exactly like the success terminal does.
+                // genuine failure now invalidates exactly the scoped set for
+                // the stages the transcript EXPLICITLY reports changed, and
+                // NOTHING when no stage reported a change before the failure
+                // (the round-194 refinement of the pre-round-194 fail-safe
+                // complete set), and schedules the regeneration exactly like
+                // the success terminal does.
                 scheduleRepairCompletionRegeneration(
                     invalidationKeys, helperOutput, kind,
                     /*failed=*/true,
@@ -30899,10 +33950,13 @@ void MainWindow::runSelectedRepairTool()
         stages = {QStringLiteral("dkms")};
         operations = {tr("Rebuild out-of-tree kernel modules in the %1 using the detected %2 build system").arg(selectedSystemLabel, detectedModuleBuildSystemLabel())};
     } else if (key == QStringLiteral("display")) {
-        title = tr("Restore detected graphical login manager");
-        stages = {QStringLiteral("display-manager")};
-        operations = {tr("Set graphical.target as the %1's default boot target").arg(selectedSystemLabel),
-                      tr("Enable the detected display manager and repair display-manager.service without starting it inside a chroot or host helper")};
+        // The display repair is an interactive, evidence-guided walk-through
+        // (the graphical-driver-stack / kernel-menu pattern): restore the
+        // vendor-default graphical login manager (derived from vendor package
+        // evidence) or switch to another installed/provable manager behind
+        // the terminal from->to confirmation.
+        runDisplayRepairSession();
+        return;
     } else if (key == QStringLiteral("initramfs")) {
         title = tr("Rebuild initramfs");
         stages = {QStringLiteral("initramfs")};
@@ -31043,6 +34097,11 @@ void MainWindow::runGpuRepairSession()
               << QString::fromLatin1(gpuSection.toUtf8().toBase64());
     arguments << QStringLiteral("--baseline")
               << QString::fromLatin1(kernelSection.toUtf8().toBase64());
+    // Round 211 (the interactive-repair alignment): the fresh-session latch
+    // clear (the round-210 pattern).  Round 213: the GPU session commits its
+    // in-terminal scoped regen like every other session (the named deviation
+    // CLOSED) — the clear keeps the latch honest for the fresh session.
+    m_walkthroughCommittedSections.clear();
     runRepairHelper(tr("GPU driver repair"), arguments, LogEntryKind::Repair, QStringLiteral("gpu"));
 }
 
@@ -31066,6 +34125,9 @@ void MainWindow::runInputDevicesRepairSession()
                              m_previewTargetComponentPath, QStringLiteral("input-devices")};
     arguments << QStringLiteral("--input-baseline")
               << QString::fromLatin1(inputSection.toUtf8().toBase64());
+    // Round 211 (the interactive-repair alignment): the fresh-session latch
+    // clear (the round-210 pattern).
+    m_walkthroughCommittedSections.clear();
     runRepairHelper(tr("Input device repair"), arguments, LogEntryKind::Repair, QStringLiteral("input-devices"));
 }
 
@@ -31086,7 +34148,41 @@ void MainWindow::runNetworkRepairSession()
                              m_previewTargetComponentPath, QStringLiteral("network")};
     arguments << QStringLiteral("--network-baseline")
               << QString::fromLatin1(networkSection.toUtf8().toBase64());
+    // Round 211 (the interactive-repair alignment): the fresh-session latch
+    // clear (the round-210 pattern).
+    m_walkthroughCommittedSections.clear();
     runRepairHelper(tr("Network / connectivity repair"), arguments, LogEntryKind::Repair, QStringLiteral("network"));
+}
+
+// Interactive graphical-login walk-through session (the gpu/kernel pattern,
+// round 193): the cached `display` diagnostic section is serialized as
+// --evidence display so the helper resolves the current manager from the
+// cached baseline, then walks the restore-default / switch menus over the
+// shared PROMPT/ANSWER channel.  Fail closed when the required cached section
+// is missing.
+void MainWindow::runDisplayRepairSession()
+{
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    const QStringList missing = missingRequiredDiagnosticTitles(QStringLiteral("display"));
+    if (!missing.isEmpty()) {
+        appendLog(tr("Graphical login repair refused: run the %1 diagnostic first (no cached display evidence).").arg(missing.join(tr(", "))),
+                  QStringLiteral("ERROR"), LogEntryKind::Repair);
+        runOkDialog(this, tr("Graphical login repair unavailable"), tr("Run the %1 diagnostic before starting the graphical login repair.").arg(missing.join(tr(", "))));
+        return;
+    }
+    const QString displaySection = cache.value(QStringLiteral("display"));
+    QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath,
+                             m_previewTargetComponentPath, QStringLiteral("display-walkthrough")};
+    arguments << QStringLiteral("--evidence") << QStringLiteral("display")
+              << QString::fromLatin1(displaySection.toUtf8().toBase64());
+    // Round 210 (ITEM 2): a fresh walk-through session owns its own in-terminal
+    // regen commits — clear the round-210 latch so a previous session's
+    // committed set can never be reused for this one.
+    m_walkthroughCommittedSections.clear();
+    // The repair entry title carries the stable "graphical login manager"
+    // wording (the registered surface + the Logs display-repair topic
+    // filter); the walk-through is the content behind it.
+    runRepairHelper(tr("Restore detected graphical login manager"), arguments, LogEntryKind::Repair, QStringLiteral("display"));
 }
 
 // Executes the selected Full Repair stages as one plan. The file system
@@ -32076,39 +35172,99 @@ void MainWindow::applyDeviceColumnLayout()
 
 void MainWindow::updateDeviceTreeHeight()
 {
-    if (!m_deviceTree) {
+    if (!m_deviceTree || m_deviceTreeHeightPassInProgress) {
         return;
     }
+    // T3.1 (stale-width): the real row geometry exists only once the tree is
+    // laid out at its real width.  A populate while the Systems page is
+    // hidden (or before the first layout) measures nothing trustworthy — skip
+    // it; the tab-visibility hook and the deferred post-show pass re-run the
+    // measurement on a real layout.
+    if (!m_deviceTree->isVisible() || m_deviceTree->viewport()->width() <= 0) {
+        return;
+    }
+    m_deviceTreeHeightPassInProgress = true;
+    m_deviceTree->doItemsLayout();
 
-    int visibleRows = 0;
-    auto countVisibleChildren = [&](auto &&self, QTreeWidgetItem *item) -> int {
-        if (!item || !item->isExpanded()) {
-            return 0;
+    // Round 210 (ITEM 3): the frame hugs the REAL laid-out content — the
+    // measured row rects, never the per-row estimate + visible-row clamp the
+    // pre-round-210 pass used (the estimated rowHeight over-measured the
+    // single-line rows, leaving the ~2.5-row gap below the last item, and the
+    // clamp stopped the bottom border from tracking more items).
+    // visualItemRect() returns the true laid-out row rect in viewport
+    // coordinates, including the Status delegate's wrapped 1- or 2-line rows.
+    int rowsBottom = 0;
+    int maxRowHeight = 0;
+    const auto collectRows = [&](auto &&self, QTreeWidgetItem *item) -> void {
+        if (!item) {
+            return;
         }
-        int count = item->childCount();
-        for (int i = 0; i < item->childCount(); ++i) {
-            count += self(self, item->child(i));
+        const QRect rect = m_deviceTree->visualItemRect(item);
+        if (rect.isValid()) {
+            rowsBottom = qMax(rowsBottom, rect.bottom() + 1);
+            maxRowHeight = qMax(maxRowHeight, rect.height());
         }
-        return count;
+        if (item->isExpanded()) {
+            for (int i = 0; i < item->childCount(); ++i) {
+                self(self, item->child(i));
+            }
+        }
     };
-
     for (int i = 0; i < m_deviceTree->topLevelItemCount(); ++i) {
-        QTreeWidgetItem *item = m_deviceTree->topLevelItem(i);
-        ++visibleRows;
-        visibleRows += countVisibleChildren(countVisibleChildren, item);
+        collectRows(collectRows, m_deviceTree->topLevelItem(i));
     }
 
-    const int cappedRows = qBound(2, visibleRows, 8);
-    const int rowHeight = qMax(34, m_deviceTree->fontMetrics().lineSpacing() * 2 + 8);
-    const int headerHeight = qMax(m_deviceTree->header()->sizeHint().height(), m_deviceTree->fontMetrics().height() + 10);
-    const int horizontalGutter = m_deviceTree->horizontalScrollBar()
-        ? m_deviceTree->horizontalScrollBar()->sizeHint().height()
-        : 0;
-    const int targetHeight = headerHeight + cappedRows * rowHeight
-        + horizontalGutter + m_deviceTree->frameWidth() * 2 + 6;
+    // The real chrome (the T3.14 measurement discipline): the viewport's top
+    // offset inside the widget (frame top + header, real laid-out geometry),
+    // the h-scrollbar gutter only while the bar is actually visible, and the
+    // bottom frame strip (rect.bottom − contentsRect.bottom measured on the
+    // CURRENT geometry — style-stable across height changes, only the bottom
+    // edge moves).  The pre-round-210 "+6" slack is gone: the frame's bottom
+    // line now sits exactly at the content + the real painted chrome.
+    const int viewportTop = m_deviceTree->viewport()->y();
+    const bool hBarVisible = m_deviceTree->horizontalScrollBar()->isVisible();
+    const int gutter = hBarVisible
+        ? m_deviceTree->horizontalScrollBar()->height() : 0;
+    const int bottomChrome = m_deviceTree->height()
+        - (viewportTop + m_deviceTree->viewport()->height() + gutter);
+    int target = viewportTop + rowsBottom + gutter + qMax(0, bottomChrome);
 
-    m_deviceTree->setFixedHeight(targetHeight);
-    m_deviceTree->setVerticalScrollBarPolicy(visibleRows > 8 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    // Round 214 (plan §1 item 6): the three-row floor.  The round-210 hug is
+    // correct for 3+ entries, but with 1–2 entries the frame collapses to
+    // those rows and the box looks starved.  The frame therefore keeps a
+    // MINIMUM of THREE visible rows of the REAL laid-out row height (the max
+    // of the measured row rect heights — never a re-introduced row-count
+    // clamp, never a per-row estimate): with 1–2 entries the empty rows show
+    // below the last item, and with 3+ entries the measured hug already
+    // exceeds the floor, so the round-210 tight hug stays byte-unchanged.
+    if (rowsBottom > 0 && maxRowHeight > 0) {
+        const int threeRowFloor = viewportTop + 3 * maxRowHeight + gutter
+            + qMax(0, bottomChrome);
+        target = qMax(target, threeRowFloor);
+    }
+
+    bool changed = false;
+    if (target > 0 && m_deviceTree->height() != target) {
+        m_deviceTree->setFixedHeight(target);
+        changed = true;
+    }
+    // The hug shows every visible row (the box grows with the content; the
+    // page's outer scroll area provides any room beyond the window).  A
+    // transiently under-measured frame still scrolls instead of clipping
+    // rows without a reach (the never-hide-content rule).
+    if (m_deviceTree->verticalScrollBarPolicy() != Qt::ScrollBarAsNeeded) {
+        m_deviceTree->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    }
+    m_deviceTreeHeightPassInProgress = false;
+
+    // Convergence chain (the T3.1 trio): a pass that changed the height
+    // re-runs once on the next event-loop turn — the re-measure reads the
+    // settled layout (the scrollbar policy and the new frame geometry),
+    // applies the settled values and stops the chain.  A converged pass
+    // applies nothing and schedules nothing.
+    if (changed) {
+        QTimer::singleShot(0, this, &MainWindow::updateDeviceTreeHeight);
+    }
 }
 
 // Gives every push button a consistent minimum size from its content hint.

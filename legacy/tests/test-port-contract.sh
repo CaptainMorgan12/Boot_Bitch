@@ -15,8 +15,8 @@ set +o pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEGACY_DIR="$ROOT_DIR/legacy"
-HELPER="$LEGACY_DIR/boot-repair-helper.sh"
-MODERN="$ROOT_DIR/scripts/boot-repair-helper.sh"
+HELPER="$LEGACY_DIR/boot-bitch-helper.sh"
+MODERN="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 PORT="$LEGACY_DIR/port.sh"
 COMPAT="$LEGACY_DIR/compat.sh"
 OVERLAY="$LEGACY_DIR/overlay.sh"
@@ -40,26 +40,26 @@ for file in "$MODERN" "$COMPAT" "$OVERLAY" "$PORT" "$HELPER"; do
 done
 pass "bash -n (modern, compat, overlay, port, generated)"
 
-# Optional real bash 3.1 parse check. Point BOOT_REPAIR_LEGACY_BASH31 at an
+# Optional real bash 3.1 parse check. Point BOOT_BITCH_LEGACY_BASH31 at an
 # extracted Etch /bin/bash (for example the cached bash_3.1dfsg-8 deb) to
 # prove the generated helper parses on the target interpreter.
-if [[ -n "${BOOT_REPAIR_LEGACY_BASH31:-}" ]]; then
-    [[ -x "$BOOT_REPAIR_LEGACY_BASH31" ]] \
-        || fail "BOOT_REPAIR_LEGACY_BASH31 is not executable: $BOOT_REPAIR_LEGACY_BASH31"
-    "$BOOT_REPAIR_LEGACY_BASH31" -n "$HELPER" \
+if [[ -n "${BOOT_BITCH_LEGACY_BASH31:-}" ]]; then
+    [[ -x "$BOOT_BITCH_LEGACY_BASH31" ]] \
+        || fail "BOOT_BITCH_LEGACY_BASH31 is not executable: $BOOT_BITCH_LEGACY_BASH31"
+    "$BOOT_BITCH_LEGACY_BASH31" -n "$HELPER" \
         || fail "bash 3.1 could not parse $HELPER"
-    pass "bash 3.1 parse (BOOT_REPAIR_LEGACY_BASH31)"
+    pass "bash 3.1 parse (BOOT_BITCH_LEGACY_BASH31)"
 fi
 
 # The generated file carries the file-wide ShellCheck waiver for the
 # transform-induced dynamic-array/case-conversion warnings; the port sources
-# stay clean.  Set BOOT_REPAIR_LEGACY_SHELLCHECK=1 to run the full check (about
+# stay clean.  Set BOOT_BITCH_LEGACY_SHELLCHECK=1 to run the full check (about
 # 12 s, kept out of the default fast path).
 grep -q '^# shellcheck disable=SC2034,SC2120,SC2154,SC2155$' "$HELPER" \
     || fail "generated helper is missing the file-wide shellcheck directive"
-if [[ -n "${BOOT_REPAIR_LEGACY_SHELLCHECK:-}" ]]; then
+if [[ -n "${BOOT_BITCH_LEGACY_SHELLCHECK:-}" ]]; then
     command -v shellcheck >/dev/null 2>&1 \
-        || fail "BOOT_REPAIR_LEGACY_SHELLCHECK is set but shellcheck is not installed"
+        || fail "BOOT_BITCH_LEGACY_SHELLCHECK is set but shellcheck is not installed"
     shellcheck -S warning -s bash "$COMPAT" "$OVERLAY" "$PORT" "$HELPER" \
         || fail "shellcheck -S warning reported findings"
     pass "shellcheck -S warning (compat, overlay, port, generated)"
@@ -83,6 +83,9 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # Every transformation and every post-rewrite assertion must be listed with
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
+# round 213: the array-expansion count moved 1039 -> 1040 — the new
+# "${awk_runner[@]}" site (the repair_log_filter stdbuf line-buffering
+# runner, the live-streaming fix); no other audited count changed.
 for rule in \
     'assoc declarations \(declare/local -A\) +19' \
     'assoc accesses: bdf_hw +2' \
@@ -109,14 +112,14 @@ for rule in \
     'case conversion ,, +77' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +959' \
-    'mapfile call sites +92' \
-    'sed -i -E +1' \
-    'sed -nE +104' \
-    'sed -E +25' \
+    'array \[@\] expansions \(all forms\) +1040' \
+    'mapfile call sites +93' \
+    'sed -i -E +8' \
+    'sed -nE +110' \
+    'sed -E +29' \
     'sort -V +18' \
     'date --iso-8601 +5' \
-    '=~ regex literal hoists +14' \
+    '=~ regex literal hoists +15' \
     'os-release gates +1' \
     'dpkg db:Status sites +7' \
     'wrapped/replaced modern functions +44' \
@@ -130,9 +133,9 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +92' \
+    'shim calls: legacy_readarray +93' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +130' \
+    'shim calls: legacy_sed_ext +147' \
     'shim calls: legacy_sort_versions +18' \
     'shim calls: legacy_date_iso +5' \
     'shim calls: legacy_lc +77' \
@@ -317,20 +320,20 @@ pass "verify_no_bash4 blacklist flags every construct and passes clean input"
 # Run in a /tmp copy of the port tree; the canonical tree is never mutated.
 drift_fixture="$(mktemp -d "${TMPDIR:-/tmp}/legacy-port-drift.XXXXXX")"
 mkdir -p "$drift_fixture/legacy" "$drift_fixture/scripts"
-cp "$MODERN" "$drift_fixture/scripts/boot-repair-helper.sh"
+cp "$MODERN" "$drift_fixture/scripts/boot-bitch-helper.sh"
 cp "$COMPAT" "$drift_fixture/legacy/compat.sh"
 cp "$OVERLAY" "$drift_fixture/legacy/overlay.sh"
 cp "$PORT" "$drift_fixture/legacy/port.sh"
 # One regex-hoist block drifts: the spacing inside the =~ operand changes, so
 # the block no longer matches and replace_block must fail loudly.
-sed -i 's/=~ (\[A-Z\]+)=\\"/=~ ([A-Z]+) =\\"/' "$drift_fixture/scripts/boot-repair-helper.sh"
+sed -i 's/=~ (\[A-Z\]+)=\\"/=~ ([A-Z]+) =\\"/' "$drift_fixture/scripts/boot-bitch-helper.sh"
 if ( cd "$drift_fixture" && bash legacy/port.sh ) > "$drift_fixture/generate.log" 2>&1; then
     cat "$drift_fixture/generate.log" >&2
     fail "port.sh generate must exit nonzero when a block drifts"
 fi
 grep -q 'replace_block matched 0 occurrences' "$drift_fixture/generate.log" \
     || fail "drift abort message is unclear: $(cat "$drift_fixture/generate.log")"
-[[ ! -e "$drift_fixture/legacy/boot-repair-helper.sh" ]] \
+[[ ! -e "$drift_fixture/legacy/boot-bitch-helper.sh" ]] \
     || fail "a failed generation must not write the output helper"
 rm -rf -- "$drift_fixture"
 pass "port.sh generate aborts loudly when a transform matches nothing"
@@ -360,7 +363,7 @@ for symbol in read_target_os_modern grub_unavailable_reason_modern \
     host_default_unavailable_reason_modern; do
     grep -q "$symbol" "$HELPER" || fail "generated helper is missing $symbol"
 done
-grep -q 'STATE_ROOT=/var/run/boot-repair' "$HELPER" || fail "generated helper has no /var/run state fallback"
+grep -q 'STATE_ROOT=/var/run/boot-bitch' "$HELPER" || fail "generated helper has no /var/run state fallback"
 grep -q 'for feature in file-copy shell host-shell host-maintenance snapshots host-default' "$HELPER" \
     || fail "generated helper has no legacy feature list"
 grep -q 'Legacy feature %s:' "$HELPER" || fail "generated helper has no legacy feature report format"
@@ -515,7 +518,7 @@ grep -q 'MOST SPECIFIC covering mount' "$HELPER" \
 # A12-02: the standard-location tool probe and the sbin PATH normalization.
 grep -q '^legacy_standard_tool_path()' "$HELPER" \
     || fail "generated helper lost the standard-location tool probe"
-grep -q 'BOOT_REPAIR_LEGACY_TOOL_DIRS' "$HELPER" \
+grep -q 'BOOT_BITCH_LEGACY_TOOL_DIRS' "$HELPER" \
     || fail "generated helper lost the probe directory override"
 grep -q 'PATH="/sbin:$PATH"' "$HELPER" \
     || fail "generated helper lost the /sbin PATH normalization"
@@ -728,7 +731,7 @@ pass "B5 config-write transport (path/owner proofs, 1 MiB cap, atomic copy, argv
 # --- compat shim behaviour ---------------------------------------------------
 shim_checks()
 {
-    export BOOT_REPAIR_LEGACY_SHIMS=force
+    export BOOT_BITCH_LEGACY_SHIMS=force
     # shellcheck disable=SC1090
     source "$COMPAT"
 
@@ -813,13 +816,13 @@ shim_checks()
     mountinfo_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-mountinfo.XXXXXX")"
     cat > "$mountinfo_fixture" <<'MOUNTINFO'
 1	/	/dev/mapper/debian1-root	ext3	rw,data=ordered
-2	/var/run/boot-repair/session.OU5116/mount	/dev/mapper/debian-root	ext3	ro,data=ordered
-3	/var/run/boot-repair/session.OU5116/mount/boot	/dev/hdb1	ext3	ro,data=ordered
+2	/var/run/boot-bitch/session.OU5116/mount	/dev/mapper/debian-root	ext3	ro,data=ordered
+3	/var/run/boot-bitch/session.OU5116/mount/boot	/dev/hdb1	ext3	ro,data=ordered
 MOUNTINFO
     legacy_mountinfo_table() { cat "$mountinfo_fixture"; }
 
     legacy_mountpoint -q / || fail "legacy_mountpoint /"
-    legacy_mountpoint -q /var/run/boot-repair/session.OU5116/mount/boot \
+    legacy_mountpoint -q /var/run/boot-bitch/session.OU5116/mount/boot \
         || fail "legacy_mountpoint nested mount"
     legacy_mountpoint -q /no/such/mountpoint && fail "legacy_mountpoint accepted a non-mountpoint"
 
@@ -942,13 +945,13 @@ MOUNTS
     # repair root reported the running host's source and options).  The
     # The pinned mount table above doubles as the fixture: "/" first, then
     # the private session mount, then /boot.
-    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount)"
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-bitch/session.OU5116/mount)"
     [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian-root" ]] \
         || fail "legacy_findmnt --target resolved the host root instead of the session mount: $out"
-    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount/boot)"
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-bitch/session.OU5116/mount/boot)"
     [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/hdb1" ]] \
         || fail "legacy_findmnt --target did not resolve the nested /boot mount: $out"
-    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount/usr)"
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-bitch/session.OU5116/mount/usr)"
     [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian-root" ]] \
         || fail "legacy_findmnt --target did not fall back to the covering session mount: $out"
     # An unmounted path under / resolves to the / entry itself.
@@ -971,7 +974,7 @@ MOUNTS
     chmod +x "$tool_fixture/sbin/cryptsetup"
     # Exported like the other test seams: the reader lives inside the sourced
     # compat shims, which ShellCheck cannot follow from this file.
-    export BOOT_REPAIR_LEGACY_TOOL_DIRS="$tool_fixture/sbin $tool_fixture/usr-sbin"
+    export BOOT_BITCH_LEGACY_TOOL_DIRS="$tool_fixture/sbin $tool_fixture/usr-sbin"
     [[ "$(legacy_standard_tool_path cryptsetup)" == "$tool_fixture/sbin/cryptsetup" ]] \
         || fail "legacy_standard_tool_path did not probe /sbin first"
     rm -f -- "$tool_fixture/sbin/cryptsetup"
@@ -988,7 +991,7 @@ MOUNTS
     # A slash in the name is refused outright (path injection, fail closed).
     [[ -z "$(legacy_standard_tool_path /sbin/cryptsetup)" ]] \
         || fail "legacy_standard_tool_path accepted a path instead of a bare name"
-    BOOT_REPAIR_LEGACY_TOOL_DIRS=""
+    BOOT_BITCH_LEGACY_TOOL_DIRS=""
     rm -rf -- "$tool_fixture"
     # PATH-only fallback still works (the host PATH resolves sh itself).
     [[ -n "$(legacy_standard_tool_path sh)" ]] \
@@ -1047,16 +1050,16 @@ gating_checks()
     PATH="$tmpbin" legacy_feature_reason shell \
         || fail "shell must be available through the guarded plain chroot"
     # BIOS hosts: host-maintenance and host-shell need only chroot; EFI hosts
-    # keep the unshare/timeout gate.  BOOT_REPAIR_LEGACY_HOST_EFI is the
+    # keep the unshare/timeout gate.  BOOT_BITCH_LEGACY_HOST_EFI is the
     # read-only test seam for the firmware probe.
-    BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-maintenance \
+    BOOT_BITCH_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-maintenance \
         || fail "host-maintenance must be available through the plain-chroot fallback on a BIOS-only host"
-    BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-shell \
+    BOOT_BITCH_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-shell \
         || fail "host-shell must be available on a BIOS-only host"
-    reason="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-maintenance 2>&1)"
+    reason="$(BOOT_BITCH_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-maintenance 2>&1)"
     [[ $? -ne 0 ]] || fail "host-maintenance must keep the unshare gate on an EFI host"
     [[ "$reason" == *'unshare is not installed'* ]] || fail "EFI host-maintenance reason: $reason"
-    reason="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-shell 2>&1)"
+    reason="$(BOOT_BITCH_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-shell 2>&1)"
     [[ $? -ne 0 ]] || fail "host-shell must keep the strict gate on an EFI host"
     [[ "$reason" == *'unshare is not installed'* ]] || fail "EFI host-shell reason: $reason"
     rm -rf -- "$tmpbin"
@@ -1073,7 +1076,7 @@ gating_checks()
     # isolate), so pin the EFI seam here - the probe's own read-only test
     # seam - to exercise the fail-closed unavailable|host-shell: refusal on
     # every machine, not just the EFI hosts the suite was written on.
-    out="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH=/nonexistent run_host_shell /dev/null /dev/null true 2>&1)"
+    out="$(BOOT_BITCH_LEGACY_HOST_EFI=yes PATH=/nonexistent run_host_shell /dev/null /dev/null true 2>&1)"
     [[ $? -ne 0 ]] || fail "run_host_shell must refuse on a legacy host"
     [[ "$out" == *'unavailable|host-shell:'* ]] || fail "run_host_shell refusal: $out"
 

@@ -175,7 +175,7 @@ do
 done
 
 # Fail early if the shipped privileged helper is malformed.
-bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
+bash -n "$ROOT_DIR/scripts/boot-bitch-helper.sh"
 
 PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
     "$ROOT_DIR/CMakeLists.txt" | head -1)"
@@ -369,12 +369,12 @@ qt_files_hash()
     local tmp
     tmp="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-qt-hash.XXXXXX")"
     : > "$tmp"
-    if command -v ldd >/dev/null 2>&1 && [[ -f "$BUILD_DIR/boot-repair" ]]; then
+    if command -v ldd >/dev/null 2>&1 && [[ -f "$BUILD_DIR/boot-bitch" ]]; then
         local lib
         while IFS= read -r lib; do
             [[ -n "$lib" && -f "$lib" ]] || continue
             sha256sum -- "$lib" >> "$tmp"
-        done < <(ldd "$BUILD_DIR/boot-repair" 2>/dev/null \
+        done < <(ldd "$BUILD_DIR/boot-bitch" 2>/dev/null \
             | awk '/=> \// { print $3 } /^\// { print $1 }' | sort -u)
     else
         printf 'MISSING  loader-closure\n' >> "$tmp"
@@ -468,7 +468,7 @@ configure_and_build()
 
     echo
     echo "Application build complete:"
-    echo "  $BUILD_DIR/boot-repair"
+    echo "  $BUILD_DIR/boot-bitch"
 }
 
 stage_and_validate()
@@ -494,26 +494,26 @@ stage_and_validate()
         }
     }
 
-    [[ -x "$STAGE_DIR/usr/bin/boot-repair" ]] || {
-        echo "Staged executable missing: $STAGE_DIR/usr/bin/boot-repair" >&2
+    [[ -x "$STAGE_DIR/usr/bin/boot-bitch" ]] || {
+        echo "Staged executable missing: $STAGE_DIR/usr/bin/boot-bitch" >&2
         exit 1
     }
 
     require_staged_file \
-        "$STAGE_DIR/usr/share/applications/org.bootrepair.BootRepair.desktop" \
+        "$STAGE_DIR/usr/share/applications/org.bootbitch.BootBitch.desktop" \
         "desktop entry"
 
     require_staged_file \
-        "$STAGE_DIR/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" \
+        "$STAGE_DIR/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" \
         "AppStream metadata"
 
-    [[ -x "$STAGE_DIR/usr/libexec/boot-repair/boot-repair-helper" ]] || {
-        echo "Staged privileged helper missing: $STAGE_DIR/usr/libexec/boot-repair/boot-repair-helper" >&2
+    [[ -x "$STAGE_DIR/usr/libexec/boot-bitch/boot-bitch-helper" ]] || {
+        echo "Staged privileged helper missing: $STAGE_DIR/usr/libexec/boot-bitch/boot-bitch-helper" >&2
         exit 1
     }
 
     require_staged_file \
-        "$STAGE_DIR/usr/share/doc/boot-repair/copyright" \
+        "$STAGE_DIR/usr/share/doc/boot-bitch/copyright" \
         "MIT copyright/license file"
 
     # 0.2.11+ packages a full KDE/Freedesktop hicolor icon set. Check several
@@ -521,14 +521,14 @@ stage_and_validate()
     for icon_size in 16 48 128 256 512 1024
     do
         require_staged_file \
-            "$STAGE_DIR/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootrepair.BootRepair.png" \
+            "$STAGE_DIR/usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/org.bootbitch.BootBitch.png" \
             "${icon_size}px application icon"
     done
 
     if command -v desktop-file-validate >/dev/null 2>&1
     then
         desktop-file-validate \
-            "$STAGE_DIR/usr/share/applications/org.bootrepair.BootRepair.desktop"
+            "$STAGE_DIR/usr/share/applications/org.bootbitch.BootBitch.desktop"
     fi
 
     if command -v appstreamcli >/dev/null 2>&1
@@ -537,7 +537,7 @@ stage_and_validate()
         # homepage) as a failed validation. Keep packaging usable for this local
         # utility while still surfacing those advisories to the maintainer.
         if ! appstreamcli validate \
-            "$STAGE_DIR/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml"
+            "$STAGE_DIR/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml"
         then
             echo "WARN: AppStream metadata has advisory validation findings; XML is installed as authored."
         fi
@@ -578,9 +578,12 @@ build_deb()
     local deb_key deb_present=0
     deb_key="$(compute_deb_key)"
 
-    # The mirrored legacy user-test package (boot-repair-legacy_*.deb) must not
-    # satisfy the cache gate for CPack's own boot-repair_<version>_<arch>.deb.
-    if compgen -G "$BUILD_DIR/boot-repair_*.deb" >/dev/null 2>&1; then
+    # The mirrored legacy user-test package must not satisfy the cache gate for
+    # CPack's own boot-bitch_<version>_<arch>.deb: the Etch package's
+    # boot-bitch-legacy_*.deb name does not match this glob (the `-legacy`
+    # token breaks the literal boot-bitch_ prefix), but the check stays so the
+    # gate never treats a legacy artifact as the modern deb.
+    if compgen -G "$BUILD_DIR/boot-bitch_*.deb" >/dev/null 2>&1; then
         deb_present=1
     fi
 
@@ -636,7 +639,7 @@ build_appimage()
     fi
 
     APPIMAGE_ARCH="${ARCH:-x86_64}"
-    APPIMAGE_OUTPUT="$BUILD_DIR/boot-repair_${PROJECT_VERSION}_${APPIMAGE_ARCH}.AppImage"
+    APPIMAGE_OUTPUT="$BUILD_DIR/boot-bitch_${PROJECT_VERSION}_${APPIMAGE_ARCH}.AppImage"
 
     local appimage_key
     appimage_key="$(compute_appimage_key)"
@@ -697,20 +700,20 @@ verify_release_outputs()
        && command -v dpkg-deb >/dev/null 2>&1 \
        && ! (( opt_skip_deb )); then
         mapfile -t deb_outputs < <(
-            compgen -G "$BUILD_DIR/boot-repair_${PROJECT_VERSION}_*.deb" || true
+            compgen -G "$BUILD_DIR/boot-bitch_${PROJECT_VERSION}_*.deb" || true
         )
         for deb_output in "${deb_outputs[@]}"; do
             [[ -n "$deb_output" && -s "$deb_output" ]] && found_deb=1
         done
         if (( ! found_deb )); then
             echo "ERROR: the .deb phase was expected to produce" \
-                 "$BUILD_DIR/boot-repair_${PROJECT_VERSION}_<arch>.deb but no" \
+                 "$BUILD_DIR/boot-bitch_${PROJECT_VERSION}_<arch>.deb but no" \
                  "non-empty .deb exists; re-run with 'bash ./scripts/build.sh'." >&2
             missing=1
         fi
     fi
     if (( opt_with_appimage )) && appimagetool_available; then
-        appimage_out="$BUILD_DIR/boot-repair_${PROJECT_VERSION}_${ARCH:-x86_64}.AppImage"
+        appimage_out="$BUILD_DIR/boot-bitch_${PROJECT_VERSION}_${ARCH:-x86_64}.AppImage"
         if [[ ! -s "$appimage_out" ]]; then
             echo "ERROR: the AppImage phase was expected to produce $appimage_out" \
                  "but it is missing or empty; re-run with 'bash ./scripts/build.sh'." >&2

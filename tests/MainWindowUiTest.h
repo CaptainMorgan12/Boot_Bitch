@@ -1,10 +1,10 @@
 // Read-only MainWindow regression suite: single QTest class whose 64 test
 // slots (plus initTestCase) are implemented across several translation units
 // (MainWindowUiTest.cpp plus the MainWindowUiTest_<feature>.cpp files).
-// Keeping one class keeps the single ctest registration boot-repair-ui-read-only
+// Keeping one class keeps the single ctest registration boot-bitch-ui-read-only
 // unchanged; only the runtime slot count shrinks.
-#ifndef BOOT_REPAIR_UI_TEST_H
-#define BOOT_REPAIR_UI_TEST_H
+#ifndef BOOT_BITCH_UI_TEST_H
+#define BOOT_BITCH_UI_TEST_H
 
 #include <QObject>
 
@@ -98,4 +98,4 @@ private slots:
     void capabilityTableSortKeepsInstallWidgetsOnTheirRows();
 };
 
-#endif // BOOT_REPAIR_UI_TEST_H
+#endif // BOOT_BITCH_UI_TEST_H

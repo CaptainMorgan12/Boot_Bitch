@@ -19,8 +19,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-MODERN="$ROOT_DIR/scripts/boot-repair-helper.sh"
-LEGACY="$ROOT_DIR/legacy/boot-repair-helper.sh"
+MODERN="$ROOT_DIR/scripts/boot-bitch-helper.sh"
+LEGACY="$ROOT_DIR/legacy/boot-bitch-helper.sh"
 
 [[ -f "$MODERN" && -f "$LEGACY" ]] || { echo 'FAIL: helper(s) missing' >&2; exit 1; }
 bash -n "$MODERN" && bash -n "$LEGACY"

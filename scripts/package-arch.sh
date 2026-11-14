@@ -4,9 +4,9 @@ set -euo pipefail
 # Build the Arch package (makepkg) from a versioned copy of the working tree.
 # Must run as an unprivileged user on an Arch-family host.
 #
-# makepkg produces boot-repair-<version>-1-<arch>.pkg.tar.zst (pkgrel stays
+# makepkg produces boot-bitch-<version>-1-<arch>.pkg.tar.zst (pkgrel stays
 # inside the package); the release asset drops the pkgrel and is normalized to
-# boot-repair-<version>-<arch>.pkg.tar.zst by sync-release-artifacts.sh.
+# boot-bitch-<version>-<arch>.pkg.tar.zst by sync-release-artifacts.sh.
 
 # The package modes must not depend on the builder's umask; a restrictive agent
 # umask (for example 077) would otherwise package 0700 directories.
@@ -65,15 +65,15 @@ mkdir -p -- "$BUILD_DIR"
 # registered in the test suite, so keep it in the source archive too. The
 # committed Qt UI translation catalogs (translations/*.qm) must be present or
 # cmake --install has nothing to install and the package ships English-only.
-SOURCE_ARCHIVE="$BUILD_DIR/boot-repair-$VERSION.tar.gz"
+SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
-    --transform="s,^,boot-repair-$VERSION/," \
+    --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
     src scripts tests translations data resources docs .github legacy
 
 cat > "$BUILD_DIR/PKGBUILD" <<'PKGBUILD'
-pkgname=boot-repair
+pkgname=boot-bitch
 pkgver=__VERSION__
 pkgrel=1
 pkgdesc='Guarded Linux diagnostics, host maintenance and repair-system recovery utility'
@@ -84,6 +84,10 @@ license=('MIT')
 # option), so sanitize_arch_package strips the .BUILDINFO builddir/startdir
 # fields after the build instead.
 options=(!debug)
+# The package/identity rename (round A, 0.2.31): fully independent identity —
+# no conflicts=/replaces= against the old boot-repair name in either
+# direction; the rename alone is the collision fix and the transition is a
+# manual uninstall of the pre-rename package.
 depends=('qt6-base' 'qt6-svg' 'polkit' 'util-linux' 'cryptsetup' 'rsync' 'e2fsprogs' 'dosfstools' 'btrfs-progs' 'xfsprogs' 'efibootmgr' 'binutils' 'python' 'hicolor-icon-theme')
 optdepends=('exfatprogs: exFAT file system check and repair (fsck.exfat)'
             'ntfs-3g: NTFS mount and read-write support'
@@ -93,12 +97,12 @@ optdepends=('exfatprogs: exFAT file system check and repair (fsck.exfat)'
             'reiserfsprogs: ReiserFS file system check and repair (reiserfsck)'
             'zfsutils-linux: ZFS pool status and scrub (zpool)')
 makedepends=('cmake' 'ninja' 'gcc' 'pkgconf')
-install=boot-repair.install
-source=("boot-repair-${pkgver}.tar.gz")
+install=boot-bitch.install
+source=("boot-bitch-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-    cd "$srcdir/boot-repair-$pkgver"
+    cd "$srcdir/boot-bitch-$pkgver"
     cmake -S . -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr
@@ -106,19 +110,19 @@ build() {
 }
 
 package() {
-    cd "$srcdir/boot-repair-$pkgver"
+    cd "$srcdir/boot-bitch-$pkgver"
     DESTDIR="$pkgdir" cmake --install build --strip
 }
 PKGBUILD
 sed -i "s/__VERSION__/$VERSION/" "$BUILD_DIR/PKGBUILD"
 
 # Refresh the hicolor icon cache and the desktop-entry database after the
-# package transaction so launchers resolve org.bootrepair.BootRepair without
+# package transaction so launchers resolve org.bootbitch.BootBitch without
 # waiting for an unrelated cache refresh. Both tools are optional at runtime
 # (hicolor-icon-theme ships the directory, desktop-file-utils the database
 # tool), so failures are ignored and the hooks stay idempotent. makepkg embeds
 # this as .INSTALL only when the PKGBUILD references it through install=.
-cat > "$BUILD_DIR/boot-repair.install" <<'INSTALL'
+cat > "$BUILD_DIR/boot-bitch.install" <<'INSTALL'
 post_install() {
     gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
     update-desktop-database -q /usr/share/applications || true
@@ -150,7 +154,7 @@ sanitize_arch_package()
     local pkg="$1"
     local work extract builddate needs_repack=0 listing_before listing_after
 
-    work="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-arch-sanitize.XXXXXX")"
+    work="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-arch-sanitize.XXXXXX")"
     extract="$work/pkg"
     mkdir -p -- "$extract"
 

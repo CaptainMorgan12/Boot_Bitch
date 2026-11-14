@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -57,7 +57,7 @@ grep -Fxq 'export LC_ALL=C' <<<"$helper_top" \
 grep -Fxq 'export LANG=C' <<<"$helper_top" \
     || { echo 'FAIL: helper does not export LANG=C before its first external command' >&2; exit 1; }
 
-LEGACY_HELPER="$ROOT_DIR/legacy/boot-repair-helper.sh"
+LEGACY_HELPER="$ROOT_DIR/legacy/boot-bitch-helper.sh"
 [[ -f "$LEGACY_HELPER" ]] || { echo 'FAIL: legacy helper is missing' >&2; exit 1; }
 legacy_top="$(sed -n '1,/^# =/p' "$LEGACY_HELPER")"
 grep -Fxq 'export LC_ALL=C' <<<"$legacy_top" \

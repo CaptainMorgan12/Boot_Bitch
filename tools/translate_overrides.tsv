@@ -1465,6 +1465,7 @@ systemd-boot loader selection:						اختيار مُحمِّل systemd-boot:			
 target	Ziel	cible	destino		대상																	Hedef hedef hedefi	
 unknown	unbekannt	inconnu	desconocido		알 수 없음																	Bilinmeyen	
 • %1: %2 changed from '%3' to '%4'													• %1: %2が'%3'から'%4'に変更されました									• %1: %2 ‘%3’ten ‘%4’e kadar değişti	
+Requesting an explicit running-host reboot.																							请求启动明确的运行主机 。
 
 # --- round 110: the all-catalog translation sweep ---			
 source	de	fr	es	uk	ko	fi	it	ja	nb	pt	ro	ru	tr	zh
@@ -2130,3 +2131,118 @@ update-extlinux is not installed in the target.						update-extlinux غير مث
 update-initramfs/mkinitramfs are not installed in the target.						update-initramfs/mkinitramfs غير مثبتين في الهدف.																	
 Kernel build compiler: %1.	Kernel-Build-Compiler: %1.	Compilateur de construction du noyau : %1.	Compilador de construcción del kernel: %1.	Компілятор збірки ядра: %1.																			内核构建编译器：%1.
 Kernel build compiler: %1.	Kernel-Build-Compiler: %1.	Compilateur de construction du noyau : %1.	Compilador de construcción del kernel: %1.	Компілятор збірки ядра: %1.		مُجمِّع بناء النواة: %1.							カーネルビルドコンパイラ: %1.									Çekirdek derleme derleyicisi: %1.	内核构建编译器：%1.
+# --- Round 172 (the round-171 target-rollback strings (the round-171 target-rollback strings + the round-152.3/155
+# argos gaps in ar/el/es/uk — hand-curated from each catalog's own
+# finished sibling terminology).
+source	de	fr	es	ar	el	uk
+snapshot %1 rollback staged the promoted root for the repair target's next boot; cached target diagnostics were invalidated. The snapshot catalogue is kept (the snapshots are preserved with the promoted root).				أُدرج تراجع الطلقة %1 مرحليًا: الجذر المروّج يبدأ عند التشغيل التالي لهدف الإصلاح؛ وأُبطلت تشخيصات الهدف المخزنة مؤقتًا. ويُحتفظ بفهرس الطلقات (تُحفظ الطلقات بالجذر المروّج).		
+Snapshot rollback staged			Regreso de instantánea preparada			
+Staged state: re-preserving the running %1 root as %2 and moving the earlier staged root aside (it stays on disk, no longer the recorded undo point).				حالة مرحلية: إعادة حفظ الجذر النشط %1 كـ %2 ونقل الجذر المرحلي السابق جانبًا (يبقى على القرص، ولم يعد نقطة التراجع المسجلة).		
+The input module %1 is not shipped by any kernel of this system and cannot be included in an initramfs image; every includable module was verified in the rebuilt image.				وحدة الإدخال %1 غير مضمّنة في أي نواة لهذا النظام ولا يمكن إدراجها في صورة initramfs؛ وتم التحقق من كل وحدة قابلة للإدراج في الصورة المعاد بناؤها.		
+running-host snapshot %1 rollback staged the promoted root for the next reboot; cached host diagnostics were invalidated. The snapshot catalogue is kept (the snapshots are preserved with the promoted root) and another snapshot can replace this staged rollback. The running host keeps the current root until reboot.					Το στιγμιότυπο %1 ετοίμασε την προωθημένη ρίζα για την επόμενη επανεκκίνηση· τα αποθηκευμένα διαγνωστικά του ξενιστή ακυρώθηκαν. Ο κατάλογος των στιγμιότυπων διατηρείται (τα στιγμιότυπα διατηρήθηκαν με την προωθημένη ρίζα) και ένα άλλο στιγμιότυπο μπορεί να αντικαταστήσει αυτή την ετοιμασμένη επαναφορά. Ο ενεργός ξενιστής διατηρεί την τρέχουσα ρίζα μέχρι την επανεκκίνηση.	Відкат знімка %1 підготував просунуту кореневу систему для наступного перезавантаження; кешовані діагностичні дані хоста було скасовано. Каталог знімків зберігається (знімки збережено разом із просунутою кореневою системою), і інший знімок може замінити цей підготовлений відкат. Активний хост зберігає поточну кореневу систему до перезавантаження.
+# --- Round 174 (ITEM 1: the target staged banner + the aligned popup):
+# the round-174 banner left unfinished by the ar/ro argos models (the ar
+# transliteration class / the ro model gap) — hand-curated from each
+# catalog's own finished sibling terminology (the round-172 precedent).
+source	de	fr	es	ar	ro
+Snapshot rollback staged — the repair target will start snapshot %1 when it next boots. The previous root is preserved as a timestamped rollback undo point; reboot the target normally when ready (the recovery host never reboots it).				أُدرج تراجع اللقطة مرحليًا — سيبدأ هدف الإصلاح باللقطة %1 عند الإقلاع التالي. يُحفظ الجذر السابق كنقطة تراجع مؤرخة؛ أعد تشغيل الهدف بالطريقة المعتادة عندما تكون جاهزًا (مضيف الاسترداد لا يعيد تشغيله أبدًا).	Snapshot rollback înscenat — ținta de reparații va porni instantaneul %1 la următoarea pornire. Rădăcina anterioară este păstrată ca punct de desfacere cu timbru temporal; repornește ținta în mod normal când este gata (gazda de recuperare nu o repornește niciodată).
+# Round 193 (the display-manager walk-through): the 14 new strings' zh
+# hand-writes (Branch B — the zh catalog is never machine-filled; the
+# phrasing follows the established catalog terminology).
+source	de	fr	es	zh
+Autologin for %1 was migrated into the %2 configuration.				%1 的自动登录已迁移到 %2 配置。
+Autologin migration for %1 is not supported; re-configure it manually if needed.				%1 的自动登录迁移不受支持；如需请手动重新配置。
+Graphical login repair refused: run the %1 diagnostic first (no cached display evidence).				图形登录修复拒绝：请先运行%1诊断（没有缓存的显示证据）。
+Graphical login repair unavailable				图形登录修复不可用
+Installing the missing %1 display manager before the switch.				切换前先安装缺失的 %1 显示管理器。
+No vendor default display manager could be derived from installed package evidence; restoring the configured manager %1.				无法从已安装的软件包证据推导出厂商默认显示管理器；恢复已配置的管理器 %1。
+Run the %1 diagnostic before starting the graphical login repair.				开始图形登录修复前，请先运行 %1 诊断。
+Switching the graphical login manager from %1 to %2.				正在将图形登录管理器从 %1 切换到 %2。
+The graphical login walk-through was cancelled; no changes were made.				图形登录引导流程已取消；未做任何更改。
+Vendor default display manager: %1 (derived from %2).				厂商默认显示管理器：%1（由 %2 推导）。
+Walk an evidence-driven interactive session to repair the graphical login: restore the default graphical login manager (derived from the installed desktop packages' own dependency evidence, never a hardcoded map) or switch to another installed or installable manager behind a confirmation that names the switch, each step re-verified in this window. When the boot expects a disk-unlock prompt the console routing is repaired too (console=tty0 appended last, the serial console stays) so the prompt remains on the visible screen; the helper never starts a graphical session itself.				运行一个证据驱动的交互式会话来修复图形登录：恢复默认的图形登录管理器（依据已安装桌面软件包自身的依赖证据推导，绝非硬编码的映射），或在确认切换的提示后切换到另一个已安装或可安装的管理器，每一步都在此窗口中重新验证。当引导需要磁盘解锁提示时，控制台路由也会一并修复（console=tty0 追加在最后，串行控制台保持不变），使提示留在可见屏幕上；助手本身绝不启动图形会话。
+With OpenRC the walk-through restores the manager's default runlevel symlink without starting it.				使用 OpenRC 时，该引导流程恢复管理器的默认运行级别符号链接而不启动它。
+Display manager switched: %1 → %2.				显示管理器已切换：%1 → %2。	
+Display manager restored: %1.				显示管理器已恢复：%1。	
+Pre-seeded the target's debconf default display manager: %1.				已为目标的 debconf 预置默认显示管理器：%1。
+Template display-manager switch: enabling the %2 instance of %1 (display TTY %3).				模板显示管理器切换：正在启用 %1 的 %2 实例（显示终端 %3）。
+%1 ships only the template unit %2; the switch uses the template-instantiation flow.				%1 仅附带模板单元 %2；切换将使用模板实例化流程。
+%1 is already the configured display manager; nothing to change.				%1 已经是当前配置的显示管理器；无需更改。
+Already the configured display manager; nothing to change.				已经是当前配置的显示管理器；无需更改。
+Removed the stale display-manager.service alias symlink so the enable can re-create it for the target manager.				已移除过期的 display-manager.service 别名符号链接，以便为目标管理器重新创建启用链接。
+Refreshing the affected diagnostic sections (display, packages, backend, usage) from the changed state…				正在根据更改后的状态刷新受影响的诊断部分（显示、软件包、后端、磁盘占用）…
+Affected diagnostic sections refreshed; the walk-through stays open.				受影响的诊断部分已刷新；引导流程保持打开。
+Display walk-through: the affected diagnostic sections were regenerated in place (%1).				显示引导流程：受影响的诊断部分已就地重新生成（%1）。
+source	de	fr	es	ar
+Display manager switched: %1 → %2.				تم تبديل مدير العرض: %1 → %2.
+Display manager restored: %1.				تمت استعادة مدير العرض: %1.
+source	de	fr	es	zh
+Refreshing the affected diagnostic sections from the changed state…				正在从已更改状态刷新受影响的诊断部分…
+Affected diagnostic sections refreshed; the menu stays open.				受影响的诊断部分已刷新;菜单保持打开。
+Interactive repair session: the affected diagnostic sections were regenerated in place (%1).				交互式修复会话:受影响的诊断部分已就地重新生成(%1)。
+# Round 221 (plan §1 items 13a/13d): the shortened capability notes
+# (the Anmerkungen column at most 2 rows at the default width) + the
+# shorter Scope header, plus the round-220 snapshot-delete strings (the
+# de curation for the corrupted machine translations, the zh Branch B
+# hand-writes and the ar/es/ro/tr/uk leftover classes).
+source	de	fr	es	uk	ko	ar	cs	da	el	fi	hu	it	ja	nb	nl	no	pl	pt	ro	ru	sv	tr	zh
+Scope	Bereich																						
+Read-only preflight: mounts, filesystems, boot files	Schreibgeschützte Vorabprüfung: Mounts, Dateisysteme, Boot-Dateien																						只读预检：挂载、文件系统、启动文件
+Checks root and /boot read-only; repairs only devices with errors	Prüft Root und /boot schreibgeschützt; repariert nur bei Fehlern					فحص قراءة فقط لـ root و /boot؛ إصلاح الأجهزة التي تبلغ عن أخطاء فقط																	只读检查 root 和 /boot；仅修复报错的设备
+Completes interrupted dpkg package configuration	Schließt unterbrochene dpkg-Paketkonfiguration ab																						完成中断的 dpkg 软件包配置
+Repairs broken package dependencies (simulation-first)	Repariert defekte Paketabhängigkeiten (Simulation zuerst)																						修复损坏的软件包依赖（先模拟）
+Refreshes APT metadata without upgrades	Aktualisiert APT-Metadaten ohne Upgrades																						刷新 APT 元数据，不升级软件包
+Simulation-first safe package upgrade	Sicheres Paket-Upgrade mit Simulation zuerst		Actualización segura de paquetes con simulación previa																				先模拟后执行的安全软件包升级
+Kernel removal, cleanup and install via the interactive menu	Kernel: Entfernen, Bereinigen, Installieren über das interaktive Menü																						通过交互式菜单删除、清理和安装内核
+Rebuilds out-of-tree kernel modules	Erstellt Out-of-Tree-Kernelmodule neu					يعيد بناء وحدات النواة خارج الشجرة																	重新构建树外内核模块
+Restores the display manager and startup link without starting the GUI	Stellt Display-Manager und Startlink ohne GUI-Start wieder her																						恢复显示管理器及其启动链接，不启动图形界面
+Evidence-driven GPU driver repair via the interactive menu	Evidenzbasierte GPU-Treiberreparatur über das interaktive Menü																						通过交互式菜单进行证据驱动的 GPU 驱动修复
+Repairs keyboard, mouse and touchpad through the interactive menu	Tastatur, Maus und Touchpad über das interaktive Menü reparieren																						通过交互式菜单修复键盘、鼠标和触摸板
+Network repair via the interactive menu; the default route stays untouched	Netzwerkreparatur über das interaktive Menü; Standardroute bleibt unberührt																						通过交互式菜单修复网络；默认路由保持不变
+Regenerates the GRUB configuration (backed up, all entries kept)	GRUB-Konfiguration neu erstellen (gesichert, alle Einträge bleiben)																						重新生成 GRUB 配置（已备份，保留所有条目）
+Alternative bootloader; not the standard	Alternativer Bootloader; nicht Standard																						备用引导加载程序；非标准引导
+One guarded pass: mapper/crypttab, initramfs and bootloader	Ein abgesicherter Durchlauf: Mapper-/crypttab, Initramfs, Bootloader																						一次受保护的流程：mapper/crypttab、initramfs 和引导加载程序
+The graphical login walk-through was cancelled; no changes were made.						تم إلغاء جولة إصلاح تسجيل الدخول الرسومي؛ لم يتم إجراء أي تغييرات.																	
+snapper reported success but the snapshot is still in the store.	snapper meldete Erfolg, aber der Snapshot ist weiterhin im Store vorhanden.					أبلغ snapper عن النجاح لكن اللقطة ما زالت موجودة في المخزن.																	snapper 报告成功，但快照仍存在于存储中。
+The running host's active display manager is %1; the display-manager.service alias still points to %2, so the evidence follows the active manager.	Der aktive Display-Manager des laufenden Hosts ist %1; der Alias „display-manager.service“ zeigt weiterhin auf %2 — die Evidenz folgt dem aktiven Manager.					مدير العرض النشط للمضيف هو %1؛ لا يزال الاسم المستعار display-manager.service يشير إلى %2، لذا تتبع الأدلة المدير النشط.																	运行主机的活动显示管理器是 %1；display-manager.service 别名仍指向 %2，因此证据以活动管理器为准。
+Pre-seeded the target's debconf default display manager: %1.			Se preconfiguró el gestor de pantalla predeterminado debconf del objetivo: %1.			تمت التهيئة المسبقة لمدير العرض الافتراضي debconf للهدف: %1.																	
+Vendor default display manager: %1 (derived from %2).	Standard-Display-Manager des Anbieters: %1 (abgeleitet von %2).					مدير العرض الافتراضي للبائع: %1 (مشتق من %2).																	
+Snapshot %1 deleted.						تم حذف اللقطة %1.																	快照 %1 已删除。
+Snapshot %1: snapper reported success but the snapshot is still in the store; the outcome is recorded as a failure.	Snapshot %1: snapper meldete Erfolg, aber der Snapshot ist weiterhin im Store vorhanden; das Ergebnis wird als Fehler aufgezeichnet.					اللقطة %1: أبلغ snapper عن النجاح لكن اللقطة ما زالت في المخزن؛ تم تسجيل النتيجة كفشل.																	快照 %1：snapper 报告成功，但快照仍存在于存储中；结果记录为失败。
+Deleting %1 running-host Btrfs snapshot(s): %2.	Löschen von %1 Running-Host-Btrfs-Snapshot(s): %2.					حذف %1 لقطة (لقطات) Btrfs للمضيف: %2.													Se șterg %1 instantanee Btrfs ale gazdei: %2.				正在删除 %1 个运行主机 Btrfs 快照：%2。
+The snapshot deletion was declined at the confirmation prompt; nothing was changed.						تم رفض حذف اللقطات في رسالة التأكيد؛ لم يتغير شيء.																	快照删除在确认提示处被拒绝；未做任何更改。
+The snapshot deletion partially completed: %1. Review the per-id outcomes in the Snapshots details pane and Logs.	Die Snapshot-Löschung ist teilweise abgeschlossen: %1. Prüfen Sie die Ergebnisse je ID im Detailbereich „Snapshots“ und in den Protokollen.					اكتمل حذف اللقطات جزئيًا: %1. راجع نتائج كل معرف في جزء تفاصيل اللقطات والسجلات.																	快照删除部分完成：%1。请在快照详情面板和日志中查看每个 ID 的结果。
+With OpenRC the walk-through restores the manager's default runlevel symlink without starting it.						مع OpenRC، يستعيد المرشد رابط runlevel الافتراضي للمدير دون تشغيله.																	
+snapper refused the deletion (exit code %1).																							snapper 拒绝删除（退出代码 %1）。
+Only numeric Snapper snapshot ids can be deleted; %1 is not one (rollback undo points are recovery artifacts and are never deleted).	Nur numerische Snapper-Snapshot-IDs können gelöscht werden; %1 ist keine (Rollback-Rücksetzpunkte sind Wiederherstellungsartefakte und werden nie gelöscht).			Видаляти можна лише числові ідентифікатори знімків Snapper; %1 таким не є (точки відкату є артефактами відновлення і ніколи не видаляються).																			只能删除数字型 Snapper 快照 ID；%1 不是（回滚撤销点是恢复工件，永不删除）。
+SNAPSHOT DELETE SKIPPED: the confirmation prompt was declined or expired; no changes were made.																							SNAPSHOT DELETE SKIPPED：确认提示被拒绝或已过期；未做任何更改。
+Snapshot %1 was already gone; nothing was deleted.																							快照 %1 已经不存在；未删除任何内容。
+Snapshot %1 could not be deleted: snapper refused it (exit code %2).																							无法删除快照 %1：snapper 拒绝（退出代码 %2）。
+Snapshot deletion complete: %1 deleted, %2 already gone, %3 failed.	Snapshot-Löschung vollständig: %1 gelöscht, %2 bereits entfernt, %3 fehlgeschlagen.																						快照删除完成：删除 %1 个，%2 个已不存在，%3 个失败。
+Snapshot deletion partially completed: %1 deleted, %2 already gone, %3 failed.	Snapshot-Löschung teilweise abgeschlossen: %1 gelöscht, %2 bereits entfernt, %3 fehlgeschlagen.																						快照删除部分完成：删除 %1 个，%2 个已不存在，%3 个失败。
+Delete the selected Snapper snapshots after the confirmation prompt.	Löscht die ausgewählten Snapper-Snapshots nach der Bestätigungsaufforderung.																						在确认提示后删除选定的 Snapper 快照。
+Rollback undo points are recovery artifacts and cannot be deleted.	Rollback-Rücksetzpunkte sind Wiederherstellungsartefakte und können nicht gelöscht werden.																						回滚撤销点是恢复工件，无法删除。
+Select one or more snapshots first.																							请先选择一个或多个快照。
+Delete %1 snapshot(s)…																						%1 anlık görüntü sil…	删除 %1 个快照…
+Snapshot deletion unavailable	Snapshot-Löschung nicht verfügbar																						快照删除不可用
+Select one or more snapshots first; rollback undo points cannot be deleted.	Wählen Sie zuerst einen oder mehrere Snapshots aus; Rollback-Rücksetzpunkte können nicht gelöscht werden.																						请先选择一个或多个快照；回滚撤销点无法删除。
+Deleting running-host snapshots	Running-Host-Snapshots werden gelöscht																						正在删除运行主机快照
+Deleting snapshots	Snapshots werden gelöscht																						正在删除快照
+Deleting %1 Btrfs snapshot(s) for the repair target: %2.	Löschen von %1 Btrfs-Snapshot(s) für das Reparaturziel: %2.																						正在为修复目标删除 %1 个 Btrfs 快照：%2。
+Delete running-host Btrfs snapshots	Running-Host-Btrfs-Snapshots löschen																						删除运行主机 Btrfs 快照
+Delete Btrfs snapshots	Btrfs-Snapshots löschen																						删除 Btrfs 快照
+Deleted: %1 · Already gone: %2 · Failed: %3																							已删除：%1 · 已不存在：%2 · 失败：%3
+The snapshot deletion completed (%1); the snapshot inventory is reloaded in the background.	Die Snapshot-Löschung ist abgeschlossen (%1); das Snapshot-Inventar wird im Hintergrund neu geladen.																						快照删除已完成（%1）；快照清单正在后台重新加载。
+Failed: %1																							失败：%1
+Snapshot deletion partially completed: %1	Snapshot-Löschung teilweise abgeschlossen: %1																						快照删除部分完成：%1
+The snapshot deletion failed.	Die Snapshot-Löschung ist fehlgeschlagen.																						快照删除失败。
+Snapshot deletion failed																							快照删除失败
+The snapshot deletion did not complete. Review the Snapshots details pane and Logs.	Die Snapshot-Löschung wurde nicht abgeschlossen. Prüfen Sie den Detailbereich „Snapshots“ und die Protokolle.																						快照删除未完成。请查看快照详情面板和日志。
+Template display-manager switch: enabling the %2 instance of %1 (display TTY %3).				Шаблонне перемикання дисплейного менеджера: увімкнення екземпляра %2 з %1 (дисплей TTY %3).																			模板显示管理器切换：正在启用 %1 的 %2 实例（显示 TTY %3）。
+Graphical login repair refused: run the %1 diagnostic first (no cached display evidence).				Ремонт графічного входу відхилено: спочатку запустіть діагностику %1 (немає кешованих даних дисплея).																			图形登录修复拒绝：请先运行 %1 诊断（没有缓存的显示证据）。
+# Round 221 (plan §1 item 13d): the shared scope LABEL follows the
+# shortened header term (Bereich) so the wording stays aligned.
+source	de	fr	es
+No scope selected	Kein Bereich ausgewählt		
+source	de	fr	es	cs	tr	uk	zh
+Corrected the stale X11 display-manager registry (it named %2) to the configured %1 binary.				Opraven zastaralý registr správce displeje X11 (obsahoval %2) na binárku nakonfigurovaného %1.	Eski X11 görüntü yöneticisi kaydı düzeltildi (adı %2 idi) ve yapılandırılan %1 ikili dosyasına güncellendi.	Виправлено застарілий реєстр менеджера дисплея X11 (у ньому було %2) на бінарний файл налаштованого %1.	已修正过时的 X11 显示管理器注册表(原为 %2),改为已配置的 %1 二进制文件。

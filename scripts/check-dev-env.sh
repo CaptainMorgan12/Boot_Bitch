@@ -136,7 +136,7 @@ else
 fi
 
 printf '\nShell helper syntax: '
-if bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"; then
+if bash -n "$ROOT_DIR/scripts/boot-bitch-helper.sh"; then
     printf 'PASS\n'
 else
     printf 'FAIL\n'

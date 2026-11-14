@@ -3,7 +3,7 @@
 
 Qt3 has no SVG support and the legacy package ships PNG icons only. The
 modern master is the packaged Boot Bitch icon,
-data/icons/hicolor/1024x1024/apps/org.bootrepair.BootRepair.png; this script
+data/icons/hicolor/1024x1024/apps/org.bootbitch.BootBitch.png; this script
 resizes it (LANCZOS) into the shipped legacy sizes 16/22/32/48. Run it after
 changing the artwork:
 
@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 MASTER = os.path.join(
     ROOT, "data", "icons", "hicolor", "1024x1024", "apps",
-    "org.bootrepair.BootRepair.png")
+    "org.bootbitch.BootBitch.png")
 SIZES = (16, 22, 32, 48)
 
 
@@ -36,7 +36,7 @@ def main():
         for size in SIZES:
             icon = master.resize((size, size), Image.LANCZOS)
             path = os.path.join(
-                HERE, "boot-repair-legacy-%dx%d.png" % (size, size))
+                HERE, "boot-bitch-legacy-%dx%d.png" % (size, size))
             icon.save(path)
             print("wrote", os.path.relpath(path, HERE))
 

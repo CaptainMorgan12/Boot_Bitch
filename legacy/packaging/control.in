@@ -1,4 +1,4 @@
-Package: boot-repair-legacy
+Package: boot-bitch-legacy
 Version: @VERSION@
 Section: admin
 Priority: optional
@@ -10,12 +10,12 @@ Installed-Size: @INSTALLED_SIZE@
 Maintainer: CaptainMorgan12 <CaptainMorgan12@users.noreply.github.com>
 Description: legacy Boot Bitch recovery GUI and helper (Debian Etch era)
  Legacy Boot Bitch frontend for Debian 4.0 (Etch) and KDE 3.5-era systems:
- the Qt3 GUI (boot-repair-legacy-gui) is the package's entry point and runs
- the ported boot-repair-legacy-helper. The helper keeps the modern Boot
+ the Qt3 GUI (boot-bitch-legacy-gui) is the package's entry point and runs
+ the ported boot-bitch-legacy-helper. The helper keeps the modern Boot
  Bitch command surface and the Repair tool / Repair change status evidence
  contract, but runs on bash 3.1 and pre-systemd userlands. Read-only
  diagnostics are the default; every repair stage stays behind the helper's
  own runtime preflights.
  .
  This package is a separate experimental artifact (version line @VERSION@);
- it is not the modern Qt6 boot-repair package.
+ it is not the modern Qt6 boot-bitch package.

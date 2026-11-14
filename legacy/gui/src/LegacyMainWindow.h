@@ -664,7 +664,7 @@ private:
     void discardUnlockKeyfile();
     // Interactive repair menu-answer channel (Qt 3.3.7 QProcess cannot deliver
     // stdin): a mode-600 file the helper polls via
-    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.  ensureMenuAnswerFile reserves the
+    // BOOT_BITCH_LEGACY_MENU_ANSWER_FILE.  ensureMenuAnswerFile reserves the
     // empty path before the interactive helper starts; writeMenuAnswerRecord
     // writes the RAW answer plus a single newline (an empty answer = a lone
     // newline = cancel/fail-closed) on Send; discardMenuAnswerFile unlinks it
@@ -803,7 +803,7 @@ private:
     // the baseline serialization both use this list).
     QStringList requiredDiagnosticSectionsForTool(const QString &toolKey) const;
     // Round 30: loads the shared map once at startup (the staged package copy
-    // under /usr/share/boot-repair-legacy/, falling back to a copy beside the
+    // under /usr/share/boot-bitch-legacy/, falling back to a copy beside the
     // executable). A missing/malformed file logs a warning and every lookup
     // fails safe to the complete set.
     void loadRepairDiagnosticMap();
@@ -1090,9 +1090,9 @@ private:
     QPushButton *m_promptSend;
     QLabel *m_promptHint;
     bool m_promptActive;
-    // The BOOT_REPAIR_SESSION_REQUEST id of the running interactive repair,
+    // The BOOT_BITCH_LEGACY_SESSION_REQUEST id of the running interactive repair,
     // and the GUI's mode-600 menu-answer file the helper polls via
-    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.
+    // BOOT_BITCH_LEGACY_MENU_ANSWER_FILE.
     QString m_promptRequestId;
     QString m_promptAnswerFile;
     // Monotonic counter for per-request interactive session ids (never reused
@@ -1179,7 +1179,7 @@ private:
     QString m_logPath;
     QString m_lastHelperDescription;
     // A10-05: the GUI-owned cancel-token file for the running helper command
-    // (~/.boot-repair-legacy/cancel-request); passed as --cancel-file and
+    // (~/.boot-bitch-legacy/cancel-request); passed as --cancel-file and
     // touched by HelperRunner::cancel() before the direct kill.
     QString m_cancelFilePath;
     QString m_unlockDevice;

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -199,7 +199,7 @@ grep -q 'apt_intent_translate' <<<"$host_shell_body" \
 # (never prompt-text pattern matching), the wire carries base64 only, the
 # answer arrives as ANSWER on the protocol pipe, and every failure closes the
 # input and fails closed.  The channel only exists through the privileged
-# session broker (BOOT_REPAIR_SESSION_PROTOCOL=1).
+# session broker (BOOT_BITCH_SESSION_PROTOCOL=1).
 grep -q 'SHELL_PROMPT_QUIET_TICKS=2' "$HELPER"
 grep -q 'SHELL_PROMPT_TRAILING_BYTES=768' "$HELPER"
 grep -q 'SHELL_ANSWER_WINDOW_SECONDS=600' "$HELPER"
@@ -207,11 +207,11 @@ grep -q '^shell_interactive_enabled()' "$HELPER"
 grep -q '^shell_interactive_ready()' "$HELPER"
 grep -q '^shell_command_string()' "$HELPER"
 grep -q '^shell_run_interactive()' "$HELPER"
-grep -q 'BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST=' "$HELPER" \
+grep -q 'BOOT_BITCH_SESSION_PROTOCOL=1 BOOT_BITCH_SESSION_REQUEST=' "$HELPER" \
     || { echo 'FAIL: the broker does not arm the interactive channel env' >&2; exit 1; }
 grep -q '^host_command_guard_body()' "$HELPER" \
     || { echo 'FAIL: the firmware guard body is not shared with the interactive host shell' >&2; exit 1; }
-grep -Fq "printf 'PROMPT\\t%s\\t%s\\t%s\\n' \"\${BOOT_REPAIR_SESSION_REQUEST:-0}\" \"\$pump_token\" \"\$encoded\"" "$HELPER" \
+grep -Fq "printf 'PROMPT\\t%s\\t%s\\t%s\\n' \"\${BOOT_BITCH_SESSION_REQUEST:-0}\" \"\$pump_token\" \"\$encoded\"" "$HELPER" \
     || { echo 'FAIL: the interactive runner lost the token-carrying PROMPT wire record' >&2; exit 1; }
 grep -Fq "printf 'PUMP\\t%s\\t%s\\n'" "$HELPER" \
     || { echo 'FAIL: the interactive runner lost the PUMP registration record' >&2; exit 1; }
@@ -803,10 +803,14 @@ if grep -Fq 'full-upgrade' "$apt_retry_root/args-1"; then
     echo 'FAIL: the first chroot shell attempt was already rewritten' >&2
     exit 1
 fi
-grep -Fq '/bin/sh -c apt-get -y dist-upgrade' "$apt_retry_root/args-2" \
+grep -Fq '/bin/sh -c apt-get -o Dpkg::Options::=--force-confdef' "$apt_retry_root/args-2" \
+    || { echo 'FAIL: the chroot shell retry kept the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- '-y dist-upgrade' "$apt_retry_root/args-2" \
     || { echo 'FAIL: the chroot shell retry did not map apt-get upgrade to dist-upgrade with the original options' >&2; exit 1; }
-grep -Fq "msg:apt-upgrade-disabled|param:apt-get -y dist-upgrade" "$apt_retry_root/output" \
+grep -Fq "msg:apt-upgrade-disabled|param:apt-get -o Dpkg::Options::=--force-confdef" "$apt_retry_root/output" \
     || { echo 'FAIL: the chroot shell retry mapping is not reported to the caller with the actual retry command' >&2; exit 1; }
+grep -Fq -- 'dist-upgrade' "$apt_retry_root/output" \
+    || { echo 'FAIL: the chroot shell retry mapping does not name dist-upgrade' >&2; exit 1; }
 grep -Fq 'disabled on TUXEDO OS' "$apt_retry_root/output" \
     || { echo 'FAIL: the chroot shell transcript lost the original policy failure' >&2; exit 1; }
 
@@ -910,7 +914,9 @@ run_apt_intent_case()
 
 printf 'full-upgrade\n' > "$apt_intent_root/reject"
 run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
-grep -Fq '/bin/sh -c apt-get dist-upgrade' "$apt_intent_root/calls" \
+grep -Fq '/bin/sh -c apt-get -o Dpkg::Options::=--force-confdef' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a rejecting apt did not translate full-upgrade to apt-get dist-upgrade with the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- ' dist-upgrade' "$apt_intent_root/calls" \
     || { echo 'FAIL: a rejecting apt did not translate full-upgrade to apt-get dist-upgrade' >&2; exit 1; }
 grep -Fq 'msg:apt-intent-translated|param:apt-get dist-upgrade' "$apt_intent_root/output" \
     || { echo 'FAIL: the apt-intent mapping line is missing from the request output' >&2; exit 1; }
@@ -919,21 +925,25 @@ grep -Fq 'msg:apt-intent-translated|param:apt-get dist-upgrade' "$apt_intent_roo
 
 printf 'update\n' > "$apt_intent_root/reject"
 run_apt_intent_case "$apt_intent_root" 'apt update'
-grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
+grep -Fq '/bin/sh -c apt-get -o Dpkg::Options::=--force-confdef' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a rejecting apt did not translate apt update to apt-get update with the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- ' update' "$apt_intent_root/calls" \
     || { echo 'FAIL: a rejecting apt did not translate apt update to apt-get update' >&2; exit 1; }
 grep -Fq 'msg:apt-intent-translated|param:apt-get update' "$apt_intent_root/output" \
     || { echo 'FAIL: the apt update mapping line is missing' >&2; exit 1; }
 
-# An apt that supports the action runs the reviewed command verbatim.
+# An apt that supports the action runs the reviewed command with its action
+# verbatim; the round-196 never-prompt translation still injects the conffile
+# pair + the Origin/Label acceptance (logged through the same translated key).
 : > "$apt_intent_root/reject"
 : > "$apt_intent_root/calls"
 run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
-grep -Fq '/bin/sh -c apt full-upgrade' "$apt_intent_root/calls" \
-    || { echo 'FAIL: a supporting apt command was rewritten' >&2; exit 1; }
-if grep -Fq 'msg:apt-intent-translated' "$apt_intent_root/output"; then
-    echo 'FAIL: a supporting apt command emitted a translation line' >&2
-    exit 1
-fi
+grep -Fq '/bin/sh -c apt -o Dpkg::Options::=--force-confdef' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a supporting apt command did not carry the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- ' full-upgrade' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a supporting apt command action was rewritten' >&2; exit 1; }
+grep -Fq 'msg:apt-intent-translated|param:apt -o Dpkg::Options::=--force-confdef' "$apt_intent_root/output" \
+    || { echo 'FAIL: the never-prompt translation line is missing' >&2; exit 1; }
 
 # A known non-Debian backend never receives the apt rewrite even when the
 # local apt would reject the action.
@@ -949,7 +959,9 @@ grep -Fq '/bin/sh -c apt update' "$apt_intent_root/calls" \
 : > "$apt_intent_root/reject"
 : > "$apt_intent_root/calls"
 APT_INTENT_NO_TARGET_APT=1 run_apt_intent_case "$apt_intent_root" 'apt update'
-grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
+grep -Fq '/bin/sh -c apt-get -o Dpkg::Options::=--force-confdef' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a target without /usr/bin/apt did not translate apt update to apt-get update with the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- ' update' "$apt_intent_root/calls" \
     || { echo 'FAIL: a target without /usr/bin/apt did not translate apt update to apt-get update' >&2; exit 1; }
 
 # Behavioural apt-upgrade retry for the running-host shell: the same policy
@@ -992,9 +1004,11 @@ if grep -Fq 'full-upgrade' "$host_retry_root/args-1"; then
     echo 'FAIL: the first host shell attempt was already rewritten' >&2
     exit 1
 fi
-grep -Fq '/bin/bash -lc apt full-upgrade' "$host_retry_root/args-2" \
+grep -Fq '/bin/bash -lc apt -o Dpkg::Options::=--force-confdef' "$host_retry_root/args-2" \
+    || { echo 'FAIL: the host shell retry kept the round-196 never-prompt options' >&2; exit 1; }
+grep -Fq -- ' full-upgrade' "$host_retry_root/args-2" \
     || { echo 'FAIL: the host shell retry did not map upgrade to full-upgrade' >&2; exit 1; }
-grep -Fq "msg:apt-upgrade-disabled|param:apt full-upgrade" "$host_retry_root/output" \
+grep -Fq "msg:apt-upgrade-disabled|param:apt -o Dpkg::Options::=--force-confdef" "$host_retry_root/output" \
     || { echo 'FAIL: the host shell retry mapping is not reported to the caller' >&2; exit 1; }
 grep -Fq 'mock host full-upgrade completed' "$host_retry_root/output" \
     || { echo 'FAIL: the host shell retry result is missing from the output' >&2; exit 1; }
@@ -1477,9 +1491,9 @@ printf 'positive session evidence\n' > "$cleanup_append_root/positive/session.lo
     target_path_is_mounted_rw() { return 0; }
     (cleanup) > "$cleanup_append_root/positive/output" 2>&1 || true
 )
-grep -Fq '===== Boot Bitch session ' "$cleanup_append_root/positive/target/var/log/boot-repair-session.log" \
+grep -Fq '===== Boot Bitch session ' "$cleanup_append_root/positive/target/var/log/boot-bitch-session.log" \
     || { echo 'FAIL: the positive session-log append never happened' >&2; cat "$cleanup_append_root/positive/output" >&2; exit 1; }
-grep -Fq 'positive session evidence' "$cleanup_append_root/positive/target/var/log/boot-repair-session.log" \
+grep -Fq 'positive session evidence' "$cleanup_append_root/positive/target/var/log/boot-bitch-session.log" \
     || { echo 'FAIL: the appended session log does not carry the session content' >&2; exit 1; }
 if grep -Fq 'was NOT appended' "$cleanup_append_root/positive/output"; then
     echo 'FAIL: the positive session-log append was refused' >&2
@@ -1503,14 +1517,14 @@ printf 'symlog session evidence\n' > "$cleanup_append_root/symlog/session.log"
 )
 grep -Fq 'msg:session-log-not-appended' "$cleanup_append_root/symlog/output" \
     || { echo 'FAIL: the symlinked /var/log refusal evidence line is missing' >&2; cat "$cleanup_append_root/symlog/output" >&2; exit 1; }
-[[ ! -e "$cleanup_append_root/symlog/host-var-log/boot-repair-session.log" ]] \
+[[ ! -e "$cleanup_append_root/symlog/host-var-log/boot-bitch-session.log" ]] \
     || { echo 'FAIL: the session log was written through the symlinked target /var/log' >&2; exit 1; }
 
 # Refusal: the log file itself exists as a symlink to a host-side file.
 mkdir -p "$cleanup_append_root/symfile/target/var/log" "$cleanup_append_root/symfile/host-logdir"
-printf 'host original content\n' > "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log"
-ln -s "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log" \
-    "$cleanup_append_root/symfile/target/var/log/boot-repair-session.log"
+printf 'host original content\n' > "$cleanup_append_root/symfile/host-logdir/boot-bitch-session.log"
+ln -s "$cleanup_append_root/symfile/host-logdir/boot-bitch-session.log" \
+    "$cleanup_append_root/symfile/target/var/log/boot-bitch-session.log"
 printf 'symfile session evidence\n' > "$cleanup_append_root/symfile/session.log"
 (
     reset_helper_state
@@ -1525,7 +1539,7 @@ printf 'symfile session evidence\n' > "$cleanup_append_root/symfile/session.log"
 )
 grep -Fq 'msg:session-log-not-appended' "$cleanup_append_root/symfile/output" \
     || { echo 'FAIL: the symlinked log file refusal evidence line is missing' >&2; cat "$cleanup_append_root/symfile/output" >&2; exit 1; }
-[[ "$(cat "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log")" == 'host original content' ]] \
+[[ "$(cat "$cleanup_append_root/symfile/host-logdir/boot-bitch-session.log")" == 'host original content' ]] \
     || { echo 'FAIL: the session log append followed the target symlink to a host file' >&2; exit 1; }
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,98 @@
+.TH BOOT-BITCH 1 "September 2026" "Boot Bitch 0.2.25" "User Commands"
+.SH NAME
+boot-bitch \- graphical Linux recovery and guarded boot recovery utility
+.SH SYNOPSIS
+.B boot-bitch
+.SH DESCRIPTION
+.B Boot Bitch
+is a graphical Qt 6 Linux utility for inspecting the running host or repairing
+another Linux installation from a separate recovery environment. It provides protected
+storage discovery, read-only diagnostics, encrypted-volume handling, Btrfs
+snapshot recovery, and a guarded privileged repair backend.
+.PP
+Ordinary repair-target work requires a different booted Linux environment, such
+as a live Linux USB or another Linux installation on a different physical drive.
+The running host is protected from ordinary target selection. Explicit Host
+Maintenance enables supported native maintenance of the active Debian/Ubuntu-family
+system after independent host identity and boot-mount checks.
+.SH WORKFLOW
+Select and commit a physical repair drive in Systems, unlock its LUKS volume
+when necessary, then run Diagnostics for the Repair Target. Run All creates a
+complete authoritative read-only report. Review the report before selecting an
+individual repair or a Full Repair plan. After any target write, configuration
+edit, snapshot rollback, Host-to-Repair copy, or shell command that may have
+changed files, rerun the affected diagnostic. Full Repair requires fresh
+matching evidence for every selected stage on the same target; Run All is the
+simplest way to populate the complete set, while a one-stage plan can use that
+stage's fresh diagnostic.
+.PP
+For native host work, select Host Maintenance on the Running Host card, choose
+Running Host in Diagnostics, and run the required fresh diagnostics before
+starting a supported repair stage. Snapshot rollback, the Chroot Shell and
+repair-side File Copy browsing continue to operate on the separate repair target.
+.PP
+A disabled repair button means that no target is committed, the target is
+locked or unsupported, the required diagnostic is stale or missing, a required
+capability is unavailable, or the operation is deliberately opt-in (for
+example EFI repair). The Repair page states the condition and the diagnostic to
+run. Read-only inspection and a failed command that reports no target change do
+not invalidate diagnostic evidence.
+.SH REPAIR SUPPORT
+Version 0.2.25 supports Debian, Ubuntu, and compatible systems for guarded
+package repair, DKMS, adaptive package upgrades, initramfs, GRUB, distribution-
+aware EFI/UKI recovery, boot-stack reconciliation, and transactional Btrfs
+root rollback on supported layouts. Arch-family targets use guarded pacman
+transactions, mkinitcpio, conventional EFI and GRUB paths when their
+transaction preflights pass. Alpine targets use simulation-first apk
+transactions, mkinitfs initramfs rebuilds, config-only extlinux regeneration
+and OpenRC display-manager runlevel restore. Graphical-login recovery examines the
+target default target, display-manager.service, installed packages and units,
+and recent boot evidence. It restores an unambiguous configured or last-boot
+manager such as SDDM, GDM3, LightDM, greetd, ly, or a custom systemd unit. A
+headless preflight verifies the unit and executable; no graphical session is
+started inside the repair chroot.
+.PP
+Boot evidence describes the detected chain. TUXEDO Debian-base systems with
+the vendor UKI builder use the TUXEDO UKI before initramfs and the root LUKS
+unlock; TUXEDO Ubuntu layouts without that builder use the GRUB menu first.
+EFI records are classified as UKI, fallback, WebFAI/iPXE, vendor loader, or
+device-path fallback, and maintained BootOrder groups each drive's routes
+without retaining duplicate destinations.
+.PP
+Diagnostics are read-only and cached per system scope and diagnostic. Re-running a
+diagnostic replaces its cache; Run All replaces the complete set. Target
+writes invalidate related evidence and are marked stale in Logs. Every
+modifying operation requires explicit confirmation. The first privileged action
+opens one whitelisted administrator helper session through Polkit; later
+privileged actions reuse it until the user locks the session or exits. LUKS
+passphrases are sent over standard input and are never logged.
+.SH SAFETY
+For ordinary repair requests, the helper repeats the host-protection check and
+refuses a target that resolves to a disk backing /, /boot, or /boot/efi on the
+running system. Host Maintenance separately validates the active host identity,
+writable boot mounts and package locks and guards firmware variables from
+indirect package or vendor hooks. Temporary target
+mounts are removed after each operation. Existing LUKS mappings are reused;
+mappings opened by Boot Bitch are closed when its administrator session ends.
+.SH FILES
+.TP
+.I ~/.config/BootBitch/
+Per-user Qt settings.
+.TP
+.I /usr/libexec/boot-bitch/boot-bitch-helper
+Whitelisted privileged repair backend installed by the Debian package.
+.TP
+.I /var/log/boot-bitch-session.log
+Most recent target-side privileged repair session log, when writable.
+.SH SEE ALSO
+.BR lsblk (8),
+.BR blkid (8),
+.BR cryptsetup (8),
+.BR rsync (1),
+.BR chroot (8),
+.BR update-initramfs (8),
+.BR systemctl (1),
+.BR efibootmgr (8),
+.BR grub-install (8),
+.BR update-grub (8),
+.BR pkexec (1)

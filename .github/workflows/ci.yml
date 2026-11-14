@@ -61,8 +61,8 @@ jobs:
       - name: Validate desktop entry and AppStream metadata
         if: steps.classify.outputs.lane != 'full' && steps.classify.outputs.data_changed == 'true'
         run: |
-          desktop-file-validate data/org.bootrepair.BootRepair.desktop
-          appstreamcli validate --no-net data/org.bootrepair.BootRepair.metainfo.xml
+          desktop-file-validate data/org.bootbitch.BootBitch.desktop
+          appstreamcli validate --no-net data/org.bootbitch.BootBitch.metainfo.xml
 
       - name: Get current month
         if: steps.classify.outputs.lane == 'shell'
@@ -103,7 +103,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           ctest --test-dir build --output-on-failure -L fast \
-            -E 'boot-repair-(chroot-shell|filesystem-repair|host-default)-contract'
+            -E 'boot-bitch-(chroot-shell|filesystem-repair|host-default)-contract'
 
       - name: Changed slow-contract tests
         if: steps.classify.outputs.lane == 'shell' && steps.classify.outputs.slow_contracts != ''
@@ -217,5 +217,5 @@ jobs:
 
       - name: Validate desktop entry and AppStream metadata
         run: |
-          desktop-file-validate data/org.bootrepair.BootRepair.desktop
-          appstreamcli validate --no-net data/org.bootrepair.BootRepair.metainfo.xml
+          desktop-file-validate data/org.bootbitch.BootBitch.desktop
+          appstreamcli validate --no-net data/org.bootbitch.BootBitch.metainfo.xml

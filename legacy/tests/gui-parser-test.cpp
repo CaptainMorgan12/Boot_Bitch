@@ -831,7 +831,7 @@ void testRepairDiagnosticMap(const std::string &mapPath)
         std::printf("  map load error: %s\n", error.c_str());
         return;
     }
-    check(map.rowCount() == 74, "the canonical map carries all 74 rows");
+    check(map.rowCount() == 77, "the canonical map carries all 77 rows");
 
     // The requires column (the repair-run gate).
     {
@@ -878,6 +878,14 @@ void testRepairDiagnosticMap(const std::string &mapPath)
         check(sameSections(legacy::mapAffectedSectionsForTool(map, "validate"),
                            envSet, 1),
               "validate keeps its read-only requires-derived set");
+        // Round 195: the walk-through switch's explicit scoped set (usage
+        // included — a DM install/switch changes the installed packages).  The
+        // loader returns the requires+affected union (requires first), the
+        // same shape the modern GUI's diagnosticSectionsForRepair union uses.
+        const char *const switchSet[] = {"display", "package", "backend", "usage", "capabilities"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "display-switch"),
+                           switchSet, 5),
+              "display-switch maps to display/package/backend/usage/capabilities");
         check(legacy::mapAffectedSectionsForTool(map, "fs-inspect").empty(),
               "the read-only fs-inspect pre-stage invalidates nothing");
         check(legacy::mapSectionsAreComplete(

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="$ROOT_DIR/scripts/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/scripts/boot-bitch-helper.sh"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -233,7 +233,7 @@ eval "\${HARNESS_CODE:?missing HARNESS_CODE}"
 HARNESS
 
 run_harness() {
-    PATH="$sandbox/mockbin:$PATH" HARNESS_CODE="$1" BOOT_REPAIR_STATE_ROOT="$sandbox/state" \
+    PATH="$sandbox/mockbin:$PATH" HARNESS_CODE="$1" BOOT_BITCH_STATE_ROOT="$sandbox/state" \
         bash --noprofile --norc "$sandbox/harness.sh"
 }
 
@@ -316,8 +316,18 @@ expect_refusal 'separate /boot capture infeasible' \
 expect_refusal 'separate /boot not mounted' \
     'FAKE_BOOT_RC=0; FAKE_BOOT_MOUNTED_RC=1; run_host_snapshots plan 1' \
     'not currently mounted'
-expect_refusal 'Timeshift inventory' 'FAKE_TIMESHIFT_RC=0; run_host_snapshots plan 1' \
-    'Timeshift'
+# Round 193 DECISION (b) (the coexist-safe ruling, plan-0.2.31-cycle §8 item
+# 2): a real timeshift-btrfs store is a top-level SIBLING the rollback never
+# touches, so the plan PROCEEDS and names the untouched store — the refusal
+# became the plan note (the positive-evidence detection is unchanged).
+build_nested_fixture
+timeshift_plan="$(run_harness 'FAKE_TIMESHIFT_RC=0; run_host_snapshots plan 1' 2>&1 || true)"
+grep -Fq 'PLAN_OK=1' <<<"$timeshift_plan" \
+    || { echo 'FAIL: a timeshift-managed host plan must proceed (coexist-safe)' >&2; printf '%s\n' "$timeshift_plan" >&2; exit 1; }
+grep -Fq 'Timeshift btrfs snapshot store: present' <<<"$timeshift_plan" \
+    || { echo 'FAIL: the coexisting timeshift store is not named in the plan' >&2; printf '%s\n' "$timeshift_plan" >&2; exit 1; }
+grep -Fq 'this rollback never touches' <<<"$timeshift_plan" \
+    || { echo 'FAIL: the timeshift plan note does not state the store is untouched' >&2; printf '%s\n' "$timeshift_plan" >&2; exit 1; }
 expect_refusal 'other nested child' 'FAKE_NESTED_CHILD="@/data"; run_host_snapshots plan 1' \
     'nested subvolume'
 expect_refusal 'read-only root' 'FAKE_RW_RC=1; run_host_snapshots plan 1' \
@@ -943,7 +953,7 @@ ZFSHARNESS
 chmod +x "$sandbox/zfs-harness.sh"
 
 run_zfs_harness() {
-    HELPER="$HELPER" BOOT_REPAIR_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
+    HELPER="$HELPER" BOOT_BITCH_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
         bash --noprofile --norc "$sandbox/zfs-harness.sh"
 }
 
@@ -1170,7 +1180,7 @@ SAFESET
 chmod +x "$sandbox/safe-set-harness.sh"
 
 run_safe_set_harness() {
-    HELPER="$HELPER" BOOT_REPAIR_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
+    HELPER="$HELPER" BOOT_BITCH_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
         bash --noprofile --norc "$sandbox/safe-set-harness.sh"
 }
 
@@ -1771,7 +1781,7 @@ run_selected_chroot() {
     # Capture the builder env and copy the generated guard for later checks.
     { printf 'ARGS\n'; printf '<%s>\n' "$@"; } > "$CAPTURE_ARGS"
     local w
-    for w in "$TARGET_ROOT"/usr/local/libexec/boot-repair-efi-guard.*/findmnt; do
+    for w in "$TARGET_ROOT"/usr/local/libexec/boot-bitch-efi-guard.*/findmnt; do
         [[ -f "$w" ]] && cp -- "$w" "$CAPTURE_WRAPPER"
     done
     return 0

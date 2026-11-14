@@ -16,7 +16,7 @@ set -euo pipefail
 #   slow_contracts  newline list of ctest names for changed slow contracts
 #
 # Classification, evaluated per path (any doubt fails closed to full):
-#   full   CMakeLists.txt, src/, resources/, scripts/boot-repair-helper.sh,
+#   full   CMakeLists.txt, src/, resources/, scripts/boot-bitch-helper.sh,
 #          .github/, tests/ (except tests/fixtures/)
 #   shell  scripts/, legacy/, data/, tests/fixtures/
 #   docs   docs/, a top-level *.md, LICENSE, .gitignore
@@ -28,7 +28,7 @@ is_full_path()
 {
     local path="$1"
     case "$path" in
-        CMakeLists.txt|src/*|resources/*|scripts/boot-repair-helper.sh|.github/*)
+        CMakeLists.txt|src/*|resources/*|scripts/boot-bitch-helper.sh|.github/*)
             return 0 ;;
         tests/fixtures/*)
             return 1 ;;
@@ -163,7 +163,7 @@ main()
             data_changed=true
         fi
         if [[ "$path" =~ ^scripts/test-(chroot-shell|filesystem-repair|host-default|backend-profile|packaging-profile)-contract\.sh$ ]]; then
-            slow_contracts+=("boot-repair-${BASH_REMATCH[1]}-contract")
+            slow_contracts+=("boot-bitch-${BASH_REMATCH[1]}-contract")
         fi
     done
 

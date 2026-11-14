@@ -45,8 +45,8 @@ fi
 
 # A maintainer can override the selection while testing a package artifact
 # from another family; normal users should leave this unset.
-if [[ -n "${BOOT_REPAIR_PACKAGE_FAMILY:-}" ]]; then
-    host_family="$BOOT_REPAIR_PACKAGE_FAMILY"
+if [[ -n "${BOOT_BITCH_PACKAGE_FAMILY:-}" ]]; then
+    host_family="$BOOT_BITCH_PACKAGE_FAMILY"
 fi
 
 filesystem_check_tool_available()
@@ -107,13 +107,10 @@ find_apk()
         | sort -V | tail -1
 }
 
-DEB="$(find_one 'boot-repair_*.deb' || true)"
-RPM="$(find_one 'boot-repair-*.rpm' || true)"
-[[ -n "$RPM" ]] || RPM="$(find_one 'boot-bitch-*.rpm' || true)"
-ARCH_PACKAGE="$(find_one 'boot-repair-*.pkg.tar.*' || true)"
-[[ -n "$ARCH_PACKAGE" ]] || ARCH_PACKAGE="$(find_one 'boot-bitch-*.pkg.tar.*' || true)"
-APK_PACKAGE="$(find_apk 'boot-repair-*.apk' || true)"
-[[ -n "$APK_PACKAGE" ]] || APK_PACKAGE="$(find_apk 'boot-bitch-*.apk' || true)"
+DEB="$(find_one 'boot-bitch_*.deb' || true)"
+RPM="$(find_one 'boot-bitch-*.rpm' || true)"
+ARCH_PACKAGE="$(find_one 'boot-bitch-*.pkg.tar.*' || true)"
+APK_PACKAGE="$(find_apk 'boot-bitch-*.apk' || true)"
 
 PACKAGE_KIND=""
 PACKAGE_PATH=""
@@ -294,11 +291,11 @@ SOURCE_PREFIX="${PREFIX:-/usr/local}"
     exit 1
 }
 SOURCE_BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
-if [[ ! -x "$SOURCE_BUILD_DIR/boot-repair" ]]; then
+if [[ ! -x "$SOURCE_BUILD_DIR/boot-bitch" ]]; then
     BUILD_DIR="$SOURCE_BUILD_DIR" "$ROOT_DIR/scripts/build.sh"
 fi
-[[ -x "$SOURCE_BUILD_DIR/boot-repair" ]] || {
-    echo "Source build did not produce $SOURCE_BUILD_DIR/boot-repair." >&2
+[[ -x "$SOURCE_BUILD_DIR/boot-bitch" ]] || {
+    echo "Source build did not produce $SOURCE_BUILD_DIR/boot-bitch." >&2
     exit 1
 }
 
@@ -340,7 +337,7 @@ echo "Source installation completed under $SOURCE_PREFIX."
 # copy so the cross-distro uninstall helper can remove exactly this source
 # install.
 if [[ -f "$SOURCE_BUILD_DIR/install_manifest.txt" ]]; then
-    source_manifest="$SOURCE_BUILD_DIR/boot-repair-source-install-manifest.txt"
+    source_manifest="$SOURCE_BUILD_DIR/boot-bitch-source-install-manifest.txt"
     cp -- "$SOURCE_BUILD_DIR/install_manifest.txt" "$source_manifest"
     echo "Source install manifest recorded: $source_manifest"
 fi

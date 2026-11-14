@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-HELPER="$ROOT_DIR/legacy/boot-repair-helper.sh"
+HELPER="$ROOT_DIR/legacy/boot-bitch-helper.sh"
 
 fail()
 {
@@ -32,12 +32,12 @@ echo "== legacy helper smoke =="
 bash -n "$HELPER" || fail "bash -n failed: $HELPER"
 pass "bash -n"
 
-FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-smoke.XXXXXX")"
+FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-legacy-smoke.XXXXXX")"
 smoke_cleanup()
 {
-    # BOOT_REPAIR_LEGACY_SMOKE_KEEP=1 preserves the fixture for evidence
+    # BOOT_BITCH_LEGACY_SMOKE_KEEP=1 preserves the fixture for evidence
     # capture (the guest-side Etch run collects the 17 capability lines).
-    if [[ -n "${BOOT_REPAIR_LEGACY_SMOKE_KEEP:-}" ]]; then
+    if [[ -n "${BOOT_BITCH_LEGACY_SMOKE_KEEP:-}" ]]; then
         printf 'fixture kept: %s\n' "$FIXTURE"
         return 0
     fi
@@ -74,13 +74,13 @@ for tool in usr/sbin/update-grub usr/sbin/update-initramfs usr/sbin/mkinitramfs 
     chmod +x "$FIXTURE/$tool"
 done
 
-export BOOT_REPAIR_STATE_ROOT="$FIXTURE/state"
+export BOOT_BITCH_STATE_ROOT="$FIXTURE/state"
 export TMPDIR="$FIXTURE/tmp"
-export BOOT_REPAIR_LEGACY_SHIMS=force
+export BOOT_BITCH_LEGACY_SHIMS=force
 
 # bash 3.1 cannot source a process substitution; stage the helper without the
 # final `main "$@"` call in a real file instead.
-HELPER_SRC="$FIXTURE/boot-repair-helper-sourced.sh"
+HELPER_SRC="$FIXTURE/boot-bitch-helper-sourced.sh"
 sed '/^main "\$@"$/d' "$HELPER" > "$HELPER_SRC"
 # shellcheck disable=SC1090
 source "$HELPER_SRC"
@@ -694,15 +694,15 @@ printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
 pass "legacy SysV display-manager probe, host repair and rollback"
 
 # --- guarded plain-chroot fallback (B7-5 shell/host-shell) -------------------
-# On a BIOS-only recovery environment (BOOT_REPAIR_LEGACY_HOST_EFI=no, the
+# On a BIOS-only recovery environment (BOOT_BITCH_LEGACY_HOST_EFI=no, the
 # read-only test seam for the firmware probe) the fallback covers
 # host-maintenance and host-shell; the offline shell runs through the guarded
 # plain chroot with chroot alone.
 mkdir -p "$FIXTURE/chroot-only"
 ln -s "$(command -v chroot)" "$FIXTURE/chroot-only/chroot"
-BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-maintenance \
+BOOT_BITCH_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-maintenance \
     || fail "host-maintenance must be available through the plain-chroot fallback"
-BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-shell \
+BOOT_BITCH_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-shell \
     || fail "host-shell must be available on a BIOS-only host"
 PATH="$FIXTURE/chroot-only" legacy_feature_reason shell \
     || fail "shell must be available through the guarded plain chroot"
@@ -1309,14 +1309,14 @@ pass "mount-option retry: non-noload mounts never retry and propagate the failur
 # modern offline-only skip lines instead of running an offline fsck over a
 # live filesystem on Etch's IDE/PIO disk.
 cat > "$FIXTURE/fs-check-mounts.txt" <<'EOF'
-/dev/mapper/debian-root /tmp/boot-repair-session/session.xxxx/mount
+/dev/mapper/debian-root /tmp/boot-bitch-session/session.xxxx/mount
 EOF
 (
     findmnt() { cat "$FIXTURE/fs-check-mounts.txt"; }
     canonical_block() { printf '%s\n' "$1"; }
     umount() { printf 'UMOUNT CALLED\n' >> "$FIXTURE/fs-check.txt"; }
     RUNNING_HOST_MODE=0
-    TARGET_ROOT="/tmp/boot-repair-session/session.xxxx/mount"
+    TARGET_ROOT="/tmp/boot-bitch-session/session.xxxx/mount"
     filesystem_scope_resolve() {
         FS_SCOPE_DEVICES=(/dev/mapper/debian-root)
         FS_SCOPE_MOUNTS=("")
@@ -1481,8 +1481,8 @@ pass "legacy resolver A9-09/A12-07 (identical-content copy proceeds, marker-prov
 # fail() exited 0.  Run the real chain in a fresh bash: source the staged
 # helper (no main), trigger fail() and expect the trap to preserve rc 1. ---
 (
-    export BOOT_REPAIR_STATE_ROOT="$FIXTURE/rc-preserve-state"
-    mkdir -p "$BOOT_REPAIR_STATE_ROOT"
+    export BOOT_BITCH_STATE_ROOT="$FIXTURE/rc-preserve-state"
+    mkdir -p "$BOOT_BITCH_STATE_ROOT"
     bash -c '
         # shellcheck disable=SC1090
         source "$1"
@@ -1607,7 +1607,7 @@ pass "legacy cryptsetup 1.0 status parsing (device: field, /dev/.static strip)"
 # Both fixes are pinned: the standard-location probe (/sbin, then /usr/sbin,
 # then PATH) and the startup PATH normalization prepending the sbin dirs.
 mkdir -p "$FIXTURE/probe-sbin" "$FIXTURE/probe-usr-sbin"
-BOOT_REPAIR_LEGACY_TOOL_DIRS="$FIXTURE/probe-sbin $FIXTURE/probe-usr-sbin"
+BOOT_BITCH_LEGACY_TOOL_DIRS="$FIXTURE/probe-sbin $FIXTURE/probe-usr-sbin"
 # A tool present nowhere (not even PATH) fails closed with an empty path.
 [[ -z "$(legacy_standard_tool_path definitely-no-such-tool-xyz)" ]] \
     || fail "the probe returned a path for a tool that exists nowhere"
@@ -1620,7 +1620,7 @@ rm -f -- "$FIXTURE/probe-sbin/cryptsetup"
 chmod +x "$FIXTURE/probe-usr-sbin/cryptsetup"
 [[ "$(legacy_standard_tool_path cryptsetup)" == "$FIXTURE/probe-usr-sbin/cryptsetup" ]] \
     || fail "the probe did not resolve /usr/sbin/cryptsetup second"
-BOOT_REPAIR_LEGACY_TOOL_DIRS=""
+BOOT_BITCH_LEGACY_TOOL_DIRS=""
 rm -rf -- "$FIXTURE/probe-sbin" "$FIXTURE/probe-usr-sbin"
 # The startup normalization guarantees /sbin and /usr/sbin are in PATH (the
 # overlay top-level code ran while the helper was sourced).

@@ -737,7 +737,7 @@ bool legacySmokeSettingsIsolation()
 // constructed. The constructor appends its first readiness lines before
 // main() can call setLogDirectory(), and a root run whose HOME is preserved
 // (sudo env) would otherwise drop those lines into the invoking user's
-// ~/.boot-repair-legacy/logs tree as root-owned files the user cannot
+// ~/.boot-bitch-legacy/logs tree as root-owned files the user cannot
 // delete. main() publishes the parsed --log-dir here first, mirroring the
 // pre-construction smoke settings isolation.
 static QString g_initialLogDirectory = QString::null;
@@ -1650,7 +1650,7 @@ QString legacyTargetInstallablePackage(const QString &key, const std::string &st
 // ===== The shared capability -> package table (round 106) ==================
 // Loads data/capability-packages.tsv (the same canonical data file the modern
 // GUI embeds); staged into the Etch package at
-// /usr/share/boot-repair-legacy/capability-packages.tsv by
+// /usr/share/boot-bitch-legacy/capability-packages.tsv by
 // scripts/package-legacy.sh.  Rows: <key> TAB <family> TAB <packages>; the
 // legacy GUI resolves the Debian-family row (Etch is a Debian system) with
 // the "*" row as the fallback.  Package names are raw (never translated).
@@ -1663,7 +1663,7 @@ static QMap<QString, QString> *capabilityPackagesTable()
         const QString appDir = qApp->applicationDirPath();
         QStringList candidates;
         candidates << appDir
-            + QString::fromLatin1("/../share/boot-repair-legacy/capability-packages.tsv");
+            + QString::fromLatin1("/../share/boot-bitch-legacy/capability-packages.tsv");
         candidates << appDir + QString::fromLatin1("/capability-packages.tsv");
         for (QStringList::ConstIterator it = candidates.begin();
              it != candidates.end(); ++it) {
@@ -1815,46 +1815,46 @@ struct CapabilitySpec {
 const CapabilitySpec capabilitySpecs[] = {
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Validate environment"), "mount",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "util-linux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight: mounts, filesystems, boot files") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "File system repair"), "fsck",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "e2fsprogs",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Checks root and /boot read-only; repairs only devices with errors") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Complete package configuration"), "dpkg",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dpkg",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration in the selected repair system") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair broken dependencies"), "apt-get",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies after the simulation-first safety preflight") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies (simulation-first)") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Refresh package metadata"), "apt-get",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrading installed packages") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrades") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Upgrade installed packages"), "apt-get",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulates the APT transaction, then applies a safe upgrade") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulation-first safe package upgrade") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS rebuild"), "dkms",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dkms",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the system uses a module build system") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Graphical login / display manager"), "update-rc.d",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "sysv-rc",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the configured display manager and its startup link without starting the GUI") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the display manager and startup link without starting the GUI") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair"), "lspci",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "pciutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair through the helper's interactive menu") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair via the interactive menu") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "update-initramfs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "initramfs-tools",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds the initramfs images for the installed kernels") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration"), "update-grub",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "grub",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, every entry preserved)") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, all entries kept)") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "extlinux configuration"), "extlinux",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "syslinux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; on this system extlinux is not part of the default boot path") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; not the standard") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot stack reconciliation"), "chroot",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "coreutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab, initramfs and bootloader") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair"), "modprobe",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "module-init-tools",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install via the interactive menu") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "LVM inspection"), "lvs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "lvm2",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Optional LVM storage-stack support") },
@@ -1885,39 +1885,39 @@ struct CapabilityNoteSpec {
 };
 const CapabilityNoteSpec capabilityNoteSpecs[] = {
     { "validate",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight: mounts, filesystems, boot files") },
     { "filesystem",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Checks root and /boot read-only; repairs only devices with errors") },
     { "dpkg",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration in the selected repair system") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration") },
     { "fixbroken",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies after the simulation-first safety preflight") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies (simulation-first)") },
     { "aptupdate",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrading installed packages") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrades") },
     { "upgrade",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulates the APT transaction, then applies a safe upgrade") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulation-first safe package upgrade") },
     { "kernels",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel removal, cleanup and install via the interactive menu") },
     { "dkms",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the system uses a module build system") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules") },
     { "initramfs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds the initramfs images for the installed kernels") },
     { "display",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the configured display manager and its startup link without starting the GUI") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores the display manager and startup link without starting the GUI") },
     { "gpu",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair through the helper's interactive menu") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven GPU driver repair via the interactive menu") },
     { "input-devices",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven keyboard, mouse and touchpad repair through the helper's interactive menu") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs keyboard, mouse and touchpad through the interactive menu") },
     { "network",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Evidence-driven network repair through the helper's interactive menu; live connectivity changes never touch the interface holding the default route") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Network repair via the interactive menu; the default route stays untouched") },
     { "efi",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs the EFI / UKI boot path for UEFI systems") },
     { "grub",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, every entry preserved)") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the GRUB configuration (backed up, all entries kept)") },
     { "extlinux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; on this system extlinux is not part of the default boot path") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; not the standard") },
     { "bootstack",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration") }
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass: mapper/crypttab, initramfs and bootloader") }
 };
 const int capabilityNoteSpecCount = sizeof(capabilityNoteSpecs) / sizeof(capabilityNoteSpecs[0]);
 
@@ -2221,13 +2221,13 @@ bool ensureDirectory(const QString &path, mode_t mode)
 }
 
 // True when `path` is the GUI's own default log tree
-// (~/.boot-repair-legacy/logs or below it). Only that private tree is ever
+// (~/.boot-bitch-legacy/logs or below it). Only that private tree is ever
 // chmod'ed by the GUI: a user-supplied --log-dir may be a shared path and
 // keeps the permissions its owner chose.
 bool isDefaultLogTree(const QString &path)
 {
     const QString homeLogs = QDir::homeDirPath()
-        + QString::fromLatin1("/.boot-repair-legacy/logs");
+        + QString::fromLatin1("/.boot-bitch-legacy/logs");
     return path == homeLogs
         || path.startsWith(homeLogs + QString::fromLatin1("/"));
 }
@@ -2343,6 +2343,42 @@ int embeddedSectionStartLine(const QStringList &lines, int diagnosticLine)
         return diagnosticLine - 1;
     }
     return diagnosticLine;
+}
+
+// Round 204 (modern parity): an individual diagnostic's captured transcript
+// OPENS with the session framing (the protected-host check, the
+// target-disk/root-component and mount lines the helper emits before the
+// section frame).  Those lines belong to the session, not the section — keep
+// only the section's own frame, from its opening divider above the
+// "Diagnostic: <key>" header to the end.  A capture WITHOUT that header (a
+// failure body, an older helper shape, the preamble-less fs-inspect body) is
+// returned unchanged — only the frame-anchored trim is safe.
+QString trimDiagnosticSessionFraming(const QString &captured, const QString &key)
+{
+    const QStringList lines = QStringList::split(QChar('\n'), captured, true);
+    const QString headerPrefix = QString::fromLatin1("Diagnostic: ");
+    const int lineCount = static_cast<int>(lines.count());
+    int header = -1;
+    for (int index = 0; index < lineCount; ++index) {
+        if (lines[index].startsWith(headerPrefix)
+            && lines[index].mid(headerPrefix.length()).stripWhiteSpace().lower()
+               == key.lower()) {
+            header = index;
+            break;
+        }
+    }
+    if (header < 0) {
+        return captured;
+    }
+    const int start = embeddedSectionStartLine(lines, header);
+    if (start <= 0) {
+        return captured;
+    }
+    QStringList trimmed;
+    for (int index = start; index < lineCount; ++index) {
+        trimmed.append(lines[index]);
+    }
+    return trimmed.join(QString::fromLatin1("\n")).stripWhiteSpace();
 }
 
 // Extracts every embedded diagnostic section from a combined report, keyed by
@@ -3130,21 +3166,21 @@ QPixmap legacyHeaderPixmap()
 {
     QStringList candidates;
     candidates.append(QString::fromLatin1(
-        "/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png"));
+        "/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy.png"));
     candidates.append(QString::fromLatin1(
-        "/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png"));
+        "/usr/share/icons/hicolor/48x48/apps/boot-bitch-legacy.png"));
     candidates.append(QString::fromLatin1(
-        "/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png"));
+        "/usr/share/icons/hicolor/22x22/apps/boot-bitch-legacy.png"));
     candidates.append(QString::fromLatin1(
-        "/usr/share/pixmaps/boot-repair-legacy.png"));
+        "/usr/share/pixmaps/boot-bitch-legacy.png"));
     if (qApp) {
         const QString appDir = qApp->applicationDirPath();
         candidates.append(appDir
-            + QString::fromLatin1("/../share/icons/hicolor/32x32/apps/boot-repair-legacy.png"));
+            + QString::fromLatin1("/../share/icons/hicolor/32x32/apps/boot-bitch-legacy.png"));
         candidates.append(appDir
-            + QString::fromLatin1("/../share/icons/hicolor/48x48/apps/boot-repair-legacy.png"));
+            + QString::fromLatin1("/../share/icons/hicolor/48x48/apps/boot-bitch-legacy.png"));
         candidates.append(appDir
-            + QString::fromLatin1("/data/boot-repair-legacy-32x32.png"));
+            + QString::fromLatin1("/data/boot-bitch-legacy-32x32.png"));
     }
     for (QStringList::ConstIterator it = candidates.begin(); it != candidates.end(); ++it) {
         if (!QFile::exists(*it)) {
@@ -3177,13 +3213,13 @@ QPixmap legacyShieldPixmap()
 {
     QStringList candidates;
     candidates.append(QString::fromLatin1(
-        "/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png"));
+        "/usr/share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png"));
     if (qApp) {
         const QString appDir = qApp->applicationDirPath();
         candidates.append(appDir
-            + QString::fromLatin1("/../share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png"));
+            + QString::fromLatin1("/../share/icons/hicolor/32x32/apps/boot-bitch-legacy-shield.png"));
         candidates.append(appDir
-            + QString::fromLatin1("/data/boot-repair-legacy-shield-32x32.png"));
+            + QString::fromLatin1("/data/boot-bitch-legacy-shield-32x32.png"));
     }
     for (QStringList::ConstIterator it = candidates.begin(); it != candidates.end(); ++it) {
         if (!QFile::exists(*it)) {
@@ -3217,13 +3253,13 @@ QPixmap legacyInfoPixmap()
 {
     QStringList candidates;
     candidates.append(QString::fromLatin1(
-        "/usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"));
+        "/usr/share/icons/hicolor/18x18/apps/boot-bitch-legacy-info.png"));
     if (qApp) {
         const QString appDir = qApp->applicationDirPath();
         candidates.append(appDir
-            + QString::fromLatin1("/../share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"));
+            + QString::fromLatin1("/../share/icons/hicolor/18x18/apps/boot-bitch-legacy-info.png"));
         candidates.append(appDir
-            + QString::fromLatin1("/data/boot-repair-legacy-info-18x18.png"));
+            + QString::fromLatin1("/data/boot-bitch-legacy-info-18x18.png"));
     }
     for (QStringList::ConstIterator it = candidates.begin(); it != candidates.end(); ++it) {
         if (!QFile::exists(*it)) {
@@ -3504,7 +3540,7 @@ void LegacyMainWindow::loadRepairDiagnosticMap()
     // The staged package copy (the same canonical data file the modern GUI
     // embeds), then a copy beside the executable for source-tree/dev runs.
     candidates << appDir
-        + QString::fromLatin1("/../share/boot-repair-legacy/repair-diagnostic-map.tsv");
+        + QString::fromLatin1("/../share/boot-bitch-legacy/repair-diagnostic-map.tsv");
     candidates << appDir + QString::fromLatin1("/repair-diagnostic-map.tsv");
     for (QStringList::ConstIterator it = candidates.begin();
          it != candidates.end(); ++it) {
@@ -3754,7 +3790,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     setCaption(tr("Boot Bitch Legacy (Etch / KDE 3.5 era)"));
     // Round 30: load the shared repair->diagnostic invalidation map (the same
     // data/repair-diagnostic-map.tsv the modern GUI embeds; the package stages
-    // a copy at /usr/share/boot-repair-legacy/). A missing/malformed file
+    // a copy at /usr/share/boot-bitch-legacy/). A missing/malformed file
     // logs a warning and every lookup fails safe to the complete set.
     loadRepairDiagnosticMap();
     // B3/B5: a SIGTERM/SIGINT/SIGHUP must never leave a secret file behind
@@ -3910,7 +3946,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     // Cycle 16: honor the pre-construction --log-dir so the constructor's own
     // readiness lines (written below) never land in the default $HOME tree.
     if (legacyInitialLogDirectory().isEmpty()) {
-        m_logDirectory = QDir::homeDirPath() + QString::fromLatin1("/.boot-repair-legacy/logs");
+        m_logDirectory = QDir::homeDirPath() + QString::fromLatin1("/.boot-bitch-legacy/logs");
     } else {
         m_logDirectory = legacyInitialLogDirectory();
     }
@@ -8764,7 +8800,7 @@ void LegacyMainWindow::discardConfigContentFile()
 }
 
 // Reserve the mode-600 menu-answer file for the running interactive repair and
-// return its path.  The helper polls this file (BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE)
+// return its path.  The helper polls this file (BOOT_BITCH_LEGACY_MENU_ANSWER_FILE)
 // for each PROMPT record and truncates it after every read, so the two-level
 // kernel menu can reuse the one path; the GUI writes the raw answer (plus a
 // newline) on Send.  Created empty in the GUI's private 0700 `.keys` directory
@@ -12548,7 +12584,7 @@ void LegacyMainWindow::runChrootShell()
     // The shell verbs drive the helper's generic interactive PTY pump over the
     // same PROMPT/ANSWER channel as the kernel/GPU menus.  Set interactive=true
     // so startCommand reserves the menu-answer file and HelperRunner hands the
-    // helper BOOT_REPAIR_SESSION_PROTOCOL=1 and the menu-answer path explicitly
+    // helper BOOT_BITCH_LEGACY_SESSION_PROTOCOL=1 and the menu-answer path explicitly
     // (also through an elevated run), and the Shell tab's own inline input line
     // can answer a question the command asks instead of the helper running it
     // on stdin /dev/null.  The transcript streams live into m_shellOutput
@@ -12937,11 +12973,11 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
             + QString::fromLatin1("-")
             + QString::number(++m_interactiveRequestCounter);
         QStringList interactiveEnv;
-        interactiveEnv << QString::fromLatin1("BOOT_REPAIR_SESSION_PROTOCOL=1");
-        interactiveEnv << (QString::fromLatin1("BOOT_REPAIR_SESSION_REQUEST=")
+        interactiveEnv << QString::fromLatin1("BOOT_BITCH_LEGACY_SESSION_PROTOCOL=1");
+        interactiveEnv << (QString::fromLatin1("BOOT_BITCH_LEGACY_SESSION_REQUEST=")
                            + m_promptRequestId);
         interactiveEnv << (QString::fromLatin1(
-                               "BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE=")
+                               "BOOT_BITCH_LEGACY_MENU_ANSWER_FILE=")
                            + answerFile);
         m_runner->setExtraEnvironment(interactiveEnv);
     } else {
@@ -12954,10 +12990,10 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     // immediately - and after it finishes.  HelperRunner passes it as
     // --cancel-file and cancel() touches it before the direct kill.
     ensureDirectory(QDir::homeDirPath()
-                        + QString::fromLatin1("/.boot-repair-legacy"),
+                        + QString::fromLatin1("/.boot-bitch-legacy"),
                     0700);
     m_cancelFilePath = QDir::homeDirPath()
-        + QString::fromLatin1("/.boot-repair-legacy/cancel-request");
+        + QString::fromLatin1("/.boot-bitch-legacy/cancel-request");
     ::unlink(m_cancelFilePath.local8Bit().data());
     m_runner->setCancelFile(m_cancelFilePath);
 
@@ -13491,6 +13527,9 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
             QString sectionBody = m_transcript;
             QString ignoredPreamble;
             splitDiagnosticCapabilityPreamble(m_transcript, &sectionBody, &ignoredPreamble);
+            // Round 204 (modern parity): drop the session framing so the
+            // section holds only the diagnostic's own output.
+            sectionBody = trimDiagnosticSessionFraming(sectionBody, m_pendingDiagnosticKey);
             m_rawView->setText(sectionBody);
             const QString key = m_pendingDiagnosticKey;
             if (!key.isEmpty()) {
@@ -20923,7 +20962,7 @@ void LegacyMainWindow::flushBufferedDiagnosticEntries()
 }
 
 // Ensures the session-log directory. The GUI's own default tree
-// (~/.boot-repair-legacy/logs) is private: components are created 0700 and
+// (~/.boot-bitch-legacy/logs) is private: components are created 0700 and
 // the leaf is re-tightened to 0700 (a pre-existing directory from an earlier
 // run with looser permissions, or one weakened by umask, is fixed here). A
 // user-supplied --log-dir is never chmod'ed: it may be a shared path and
@@ -20932,7 +20971,7 @@ void LegacyMainWindow::ensureLogDirectory()
 {
     if (m_logDirectory.isEmpty()) {
         m_logDirectory = QDir::homeDirPath()
-            + QString::fromLatin1("/.boot-repair-legacy/logs");
+            + QString::fromLatin1("/.boot-bitch-legacy/logs");
     }
     if (isDefaultLogTree(m_logDirectory)) {
         ensureDirectory(m_logDirectory, 0700);

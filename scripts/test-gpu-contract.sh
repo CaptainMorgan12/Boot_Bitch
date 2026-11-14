@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo 'FAIL: helper is not executable' >&2; exit 1; }
 bash -n "$HELPER"
@@ -596,8 +596,8 @@ else
 fi
 # The mesa menu offers maintenance actions but never the kernel replace/remove
 # actions that only a failed/absent DKMS build would surface.
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 MESA_PROMPT_FILE="$sandbox/mesa-prompt.txt"
 MESA_PROMPT_COUNT_FILE="$sandbox/mesa-prompt-count.txt"
 : > "$MESA_PROMPT_FILE"
@@ -619,7 +619,7 @@ grep -q 'Re-install the correct driver' "$MESA_PROMPT_FILE" \
 if grep -q 'Replace the newest kernel\|Remove the older kernel' "$MESA_PROMPT_FILE"; then
     fail 'a module-less (mesa) stack must never offer kernel replace/remove'
 fi
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 GPU_EXPECTED="nvidia"
 
 # ---- interactive menu: healthy stack offers maintenance actions --------------
@@ -631,8 +631,8 @@ GPU_EXPECTED="nvidia"
 GPU_EXPECTED="nvidia"
 GPU_MISMATCH=""
 GPU_DKMS_BUILD_STATUS="6.8.0-x=built, 6.5.0-old=built"
-BOOT_REPAIR_SESSION_PROTOCOL=1
-BOOT_REPAIR_SESSION_REQUEST=7
+BOOT_BITCH_SESSION_PROTOCOL=1
+BOOT_BITCH_SESSION_REQUEST=7
 GPU_PROMPT_FILE="$sandbox/gpu-prompt.txt"
 GPU_PROMPT_COUNT_FILE="$sandbox/gpu-prompt-count.txt"
 : > "$GPU_PROMPT_FILE"
@@ -681,8 +681,10 @@ grep -q '^Repair change status gpu: unchanged|reason:gpu-verified$' <<<"$status_
 
 # ---- interactive menu: iterative loop re-collects and adapts ----------------
 # A mismatched stack offers the driver swap; running it (simulated) leaves a
-# consistent stack, so the next iteration reports gpu-verified without prompting
-# a second time.
+# consistent stack.  Round 212 (the re-prompt fix, the walk-through loop
+# contract): a COMPLETED action returns to the menu — the now-healthy
+# identified stack re-displays the maintenance actions (re-install / rebuild)
+# instead of terminating, and the user ends with 0.
 GPU_EXPECTED="nvidia"
 GPU_MISMATCH="nvidia vs nouveau"
 GPU_DKMS_BUILD_STATUS="6.8.0-x=built, 6.5.0-old=absent"
@@ -699,14 +701,20 @@ helper_menu_prompt() {
     n=$((n + 1))
     printf '%s' "$n" > "$GPU_PROMPT_COUNT_FILE"
     printf '%s\n' "$1" >> "$GPU_PROMPT_FILE"
-    HELPER_MENU_ANSWER="$GPU_MENU_ANSWER"
+    if (( n >= 2 )); then
+        HELPER_MENU_ANSWER="0"   # abort on the post-swap re-display
+    else
+        HELPER_MENU_ANSWER="$GPU_MENU_ANSWER"
+    fi
     return 0
 }
 status_line="$(gpu_interactive_menu 2>/dev/null || true)"
-[[ "$(cat "$GPU_PROMPT_COUNT_FILE")" -eq 1 ]] \
-    || fail 'the mismatched GPU stack must prompt once for the driver swap'
+[[ "$(cat "$GPU_PROMPT_COUNT_FILE")" -eq 2 ]] \
+    || fail 'a completed swap must re-display the menu once before the abort'
 grep -q 'Purge wrong driver, install correct, rebuild all' "$GPU_PROMPT_FILE" \
     || fail 'the mismatched GPU menu must offer the driver swap'
+grep -q 'Re-install the correct driver' "$GPU_PROMPT_FILE" \
+    || fail 'the post-swap re-display must offer the maintenance actions'
 grep -q '^Found:$' "$GPU_PROMPT_FILE" \
     || fail 'the GPU menu must begin with a Found: evidence summary'
 grep -q 'driver mismatch: nvidia vs nouveau' "$GPU_PROMPT_FILE" \
@@ -718,8 +726,8 @@ grep -q '0) Abort' "$GPU_PROMPT_FILE" \
 if grep -q 'Choice:' "$GPU_PROMPT_FILE"; then
     fail 'the GPU menu must not append a Choice: prompt suffix'
 fi
-grep -q '^Repair change status gpu: unchanged|reason:gpu-verified$' <<<"$status_line" \
-    || fail 'the GPU swap must terminate by reporting gpu-verified'
+grep -q '^Repair change status gpu: unchanged|reason:gpu-aborted$' <<<"$status_line" \
+    || fail 'the GPU swap session must terminate by reporting the honest abort'
 
 # ---- interactive menu: 0 aborts and reports the cancelled status -------------
 GPU_EXPECTED="nvidia"
@@ -769,7 +777,7 @@ status_line="$(gpu_interactive_menu 2>/dev/null || true)"
     || fail 'nomodeset is non-terminal: the GPU menu must re-present afterwards'
 grep -q 'Purge wrong driver, install correct, rebuild all' "$GPU_PROMPT_FILE" \
     || fail 'the re-presented menu must still offer the driver swap after nomodeset'
-BOOT_REPAIR_SESSION_PROTOCOL=0
+BOOT_BITCH_SESSION_PROTOCOL=0
 
 # ---- backend-aware correct-driver package selection -------------------------
 # The correct driver set is selected from the detected package backend
@@ -984,8 +992,8 @@ GPU_INSTALLED_PKGS="nvidia-driver@560.28.03, xserver-xorg-video-nouveau@1.0.17"
 REPAIR_STATUS_OUT="$(repair_gpu_purge_wrong_driver)"
 grep -q '^Repair change status gpu:purge-wrong-driver: changed$' <<<"$REPAIR_STATUS_OUT" \
     || fail "apt/dpkg GPU purge must report changed: $REPAIR_STATUS_OUT"
-grep -q 'apply:apt-get -y remove --purge xserver-xorg-video-nouveau' "$apt_apply_log" \
-    || fail "apt/dpkg GPU purge must apply apt-get remove --purge: $(tr '\n' ',' < "$apt_apply_log")"
+grep -q 'apply:apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Acquire::AllowReleaseInfoChange::Origin=true -o Acquire::AllowReleaseInfoChange::Label=true remove --purge xserver-xorg-video-nouveau' "$apt_apply_log" \
+    || fail "apt/dpkg GPU purge must apply apt-get remove --purge with the round-196 never-prompt option set: $(tr '\n' ',' < "$apt_apply_log")"
 
 # ---- GPU purge: pacman path (backend-aware) --------------------------------
 # On a pacman target the purge must route through the guarded pacman removal

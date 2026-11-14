@@ -497,7 +497,7 @@ cmd_quick_exclude()
     local test name
     for test in "${M_ORDER[@]}"; do
         if [[ "${M_TIER[$test]}" == "fast" && "${M_QUICK[$test]}" == "n" ]]; then
-            name="${test#boot-repair-}"
+            name="${test#boot-bitch-}"
             parts+=("$name")
         fi
     done
@@ -506,7 +506,7 @@ cmd_quick_exclude()
     fi
     local joined
     joined="$(IFS='|'; printf '%s' "${parts[*]}")"
-    printf 'boot-repair-(%s)\n' "$joined"
+    printf 'boot-bitch-(%s)\n' "$joined"
     return 0
 }
 
@@ -517,7 +517,7 @@ cmd_quick_excluded()
     local test name
     for test in "${M_ORDER[@]}"; do
         if [[ "${M_TIER[$test]}" == "fast" && "${M_QUICK[$test]}" == "n" ]]; then
-            name="${test#boot-repair-}"
+            name="${test#boot-bitch-}"
             name="${name%-contract}"
             parts+=("$name")
         fi

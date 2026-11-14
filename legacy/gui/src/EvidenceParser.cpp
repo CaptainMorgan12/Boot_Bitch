@@ -262,11 +262,23 @@ std::string repairToolKeyForStage(const std::string &stage)
     if (stage == "boot-stack") return "bootstack";
     // Round 102 (slice 2): the interactive kernel sub-actions roll up to the
     // single `kernels` capability key (the modern repairToolKeyForStage
-    // normalization); the other interactive sub-actions (gpu:<step>,
-    // input-devices:<step>, network:<step>) keep their full keys and resolve
-    // through the shared map's `:*` prefix rows.
+    // normalization); the other interactive sub-actions (input-devices:<step>,
+    // network:<step>) keep their full keys and resolve through the shared
+    // map's `:*` prefix rows.
     if (stage.size() > 8 && stage.compare(0, 8, "kernels:") == 0) {
         return "kernels";
+    }
+    // Round 213 (the interactive-repair alignment — mirrored from the modern
+    // normalization): the GPU session's sub-actions (gpu:<step>) and its
+    // one-boot nomodeset member fold onto the `gpu` key, so the session's
+    // completion/cancel resolve the session's own scoped map row.  The
+    // `gpu:*`/`nomodeset` rows keep the round-17 complete-set fail-safe as
+    // the MAP data (a direct map lookup still returns the complete set —
+    // the gui-parser-test asserts stay true); the fold happens at the stage
+    // normalization layer, exactly like the kernel family.
+    if (stage == "nomodeset"
+        || (stage.size() > 4 && stage.compare(0, 4, "gpu:") == 0)) {
+        return "gpu";
     }
     return stage;
 }
@@ -274,7 +286,7 @@ std::string repairToolKeyForStage(const std::string &stage)
 // ===== The shared repair -> diagnostic invalidation map (round 30) ==========
 // Loads data/repair-diagnostic-map.tsv (the round-19/20 table serialized).
 // The same file backs the modern Qt6 GUI (embedded at build time); the legacy
-// GUI loads the staged copy from /usr/share/boot-repair-legacy/. See
+// GUI loads the staged copy from /usr/share/boot-bitch-legacy/. See
 // EvidenceParser.h and the data-file header for the full contract.
 namespace {
 

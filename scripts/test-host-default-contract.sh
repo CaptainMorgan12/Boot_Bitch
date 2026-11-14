@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"

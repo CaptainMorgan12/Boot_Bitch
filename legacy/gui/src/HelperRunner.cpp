@@ -147,12 +147,12 @@ QString trustedToolPath(const QString &name)
     // verification (A10-04) is never bypassed; the GUI never sets this
     // variable.
     if (name == QString::fromLatin1("sudo")) {
-#ifdef BOOT_REPAIR_LEGACY_TEST_SEAMS
+#ifdef BOOT_BITCH_LEGACY_TEST_SEAMS
         // ENV-1: the fake-sudo seam is compiled out of production builds and,
         // even in seam builds, root never honours it (a root-run GUI must
         // resolve the real trusted sudo, never an environment-chosen binary).
         if (::geteuid() != 0) {
-            const char *fake = ::getenv("BOOT_REPAIR_LEGACY_FAKE_SUDO");
+            const char *fake = ::getenv("BOOT_BITCH_LEGACY_FAKE_SUDO");
             if (fake && *fake && ::access(fake, X_OK) == 0) {
                 return QString::fromLocal8Bit(fake);
             }
@@ -512,7 +512,7 @@ bool HelperRunner::resolveElevation(QString *description)
             }
             return true;
         }
-        // A10-03: BOOT_REPAIR_LEGACY_ELEVATE stays the explicit escape
+        // A10-03: BOOT_BITCH_LEGACY_ELEVATE stays the explicit escape
         // hatch, but its tool is verified exactly like an auto-detected one:
         // a bare name must resolve to a verified fixed system location, and
         // an explicit path override is lstat-verified as-is.
@@ -964,14 +964,14 @@ bool HelperRunner::run(const QStringList &helperArgs)
         const int eq = (*it).find(QChar('='));
         const QString name = eq > 0 ? (*it).left(eq) : QString::null;
         const QString value = eq > 0 ? (*it).mid(eq + 1) : QString::null;
-        if (name == QString::fromLatin1("BOOT_REPAIR_SESSION_PROTOCOL")
+        if (name == QString::fromLatin1("BOOT_BITCH_LEGACY_SESSION_PROTOCOL")
             && value == QString::fromLatin1("1") && !sessionProtocol) {
             sessionProtocol = true;
-        } else if (name == QString::fromLatin1("BOOT_REPAIR_SESSION_REQUEST")
+        } else if (name == QString::fromLatin1("BOOT_BITCH_LEGACY_SESSION_REQUEST")
                    && !sessionRequestSet) {
             sessionRequestSet = true;
             sessionRequest = value;
-        } else if (name == QString::fromLatin1("BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE")
+        } else if (name == QString::fromLatin1("BOOT_BITCH_LEGACY_MENU_ANSWER_FILE")
                    && !sessionAnswerSet) {
             sessionAnswerSet = true;
             sessionAnswer = value;

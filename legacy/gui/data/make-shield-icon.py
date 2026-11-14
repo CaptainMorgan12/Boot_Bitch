@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 SOURCE = os.path.join(ROOT, "resources", "icons", "atlas", "security.svg")
 SIZE = 32
-OUT = os.path.join(HERE, "boot-repair-legacy-shield-%dx%d.png" % (SIZE, SIZE))
+OUT = os.path.join(HERE, "boot-bitch-legacy-shield-%dx%d.png" % (SIZE, SIZE))
 
 
 def main():

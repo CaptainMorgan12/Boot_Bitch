@@ -49,7 +49,7 @@ QMAKE="${QMAKE:-$(command -v qmake6 2>/dev/null || command -v qmake 2>/dev/null 
 ZSYNCMAKE="${ZSYNCMAKE:-}"
 # The published release assets keep this version-agnostic name pattern; the
 # embedded string is what Gear Lever/AppImageUpdate resolve against GitHub.
-UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-repair_*_x86_64.AppImage.zsync}"
+UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-bitch_*_x86_64.AppImage.zsync}"
 
 # Self-update security note: the zsync channel is transport-authenticated
 # (HTTPS) but not content-signed. The .zsync carries zsync's SHA-1 block
@@ -255,7 +255,7 @@ collect_linuxdeploy_candidates()
     local appdir="$1" qt_libs qt_plugins
     find "$appdir" -type f 2>/dev/null
     if command -v ldd >/dev/null 2>&1; then
-        ldd_paths "$appdir/usr/bin/boot-repair" "$appdir/usr/libexec/boot-repair/boot-repair-helper"
+        ldd_paths "$appdir/usr/bin/boot-bitch" "$appdir/usr/libexec/boot-bitch/boot-bitch-helper"
         if [[ -n "${QMAKE:-}" ]] && command -v "$QMAKE" >/dev/null 2>&1; then
             qt_libs="$("$QMAKE" -query QT_INSTALL_LIBS 2>/dev/null || true)"
             if [[ -n "$qt_libs" && -d "$qt_libs" ]]; then
@@ -375,7 +375,7 @@ EOF
     if [[ -z "${NO_STRIP:-}" ]]; then
         local probe_target="$relr_file" probe_file
         if [[ -z "$probe_target" ]]; then
-            probe_target="$appdir/usr/bin/boot-repair"
+            probe_target="$appdir/usr/bin/boot-bitch"
         fi
         strip_path="$(resolve_linuxdeploy_strip 2>/dev/null || true)"
         if [[ -f "$probe_target" ]]; then
@@ -487,7 +487,7 @@ EOF
     exit 1
 fi
 
-bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
+bash -n "$ROOT_DIR/scripts/boot-bitch-helper.sh"
 
 # Whitelist the build directory before rm -rf: only a path that resolves
 # under $ROOT_DIR/build-* or $ROOT_DIR/Development/*build* (which covers
@@ -550,9 +550,9 @@ assert_appdir_executables()
 {
     local executable
     for executable in \
-        "usr/bin/boot-repair" \
-        "usr/libexec/boot-repair/boot-repair-helper" \
-        "usr/libexec/boot-repair/boot-repair-efi-label.py"; do
+        "usr/bin/boot-bitch" \
+        "usr/libexec/boot-bitch/boot-bitch-helper" \
+        "usr/libexec/boot-bitch/boot-bitch-efi-label.py"; do
         [[ -f "$APPDIR/$executable" ]] || {
             echo "AppDir executable missing: $APPDIR/$executable" >&2
             exit 1
@@ -569,14 +569,14 @@ assert_appdir_executables
 
 # Bundle the compiled UI translations so the AppImage localizes under Gear
 # Lever and other launchers. The cmake --install above already stages them at
-# usr/share/boot-repair/translations (the layout src/main.cpp resolves through
-# applicationDirPath()/../share/boot-repair/translations), but the copy here is
+# usr/share/boot-bitch/translations (the layout src/main.cpp resolves through
+# applicationDirPath()/../share/boot-bitch/translations), but the copy here is
 # explicit and fails closed: an AppImage must never ship without its catalogs,
 # so a missing translations/*.qm is a hard error instead of a silent English
 # fallback.
 bundle_appdir_translations()
 {
-    local appdir_translations="$APPDIR/usr/share/boot-repair/translations"
+    local appdir_translations="$APPDIR/usr/share/boot-bitch/translations"
     if ! compgen -G "$ROOT_DIR/translations/*.qm" >/dev/null; then
         echo "ERROR: no translations/*.qm catalogs found; build them with lrelease before packaging the AppImage." >&2
         exit 1
@@ -625,18 +625,18 @@ cat > "$APPDIR/AppRun" <<'APP_RUN'
 #!/bin/sh
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$HERE/usr/bin/boot-repair" "$@"
+exec "$HERE/usr/bin/boot-bitch" "$@"
 APP_RUN
 chmod 755 "$APPDIR/AppRun"
 
-cp "$APPDIR/usr/share/applications/org.bootrepair.BootRepair.desktop" "$APPDIR/"
-cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/org.bootrepair.BootRepair.png" \
-   "$APPDIR/org.bootrepair.BootRepair.png"
+cp "$APPDIR/usr/share/applications/org.bootbitch.BootBitch.desktop" "$APPDIR/"
+cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/org.bootbitch.BootBitch.png" \
+   "$APPDIR/org.bootbitch.BootBitch.png"
 
 ARCH="${ARCH:-x86_64}"
 PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' "$ROOT_DIR/CMakeLists.txt" | head -1)"
 [[ -n "$PROJECT_VERSION" ]] || { echo "Unable to determine project version from CMakeLists.txt" >&2; exit 1; }
-OUTPUT="${OUTPUT:-$ROOT_DIR/build-release/boot-repair_${BUILD_VERSION:-$PROJECT_VERSION}_${ARCH}.AppImage}"
+OUTPUT="${OUTPUT:-$ROOT_DIR/build-release/boot-bitch_${BUILD_VERSION:-$PROJECT_VERSION}_${ARCH}.AppImage}"
 mkdir -p -- "$(dirname -- "$OUTPUT")"
 
 runtime_args=()
@@ -686,8 +686,8 @@ PLUGIN_WRAPPER
         fi
         PATH="$plugin_dir:$PATH" ARCH="$ARCH" QMAKE="$QMAKE" run_tool "$LINUXDEPLOY" \
             --appdir "$APPDIR" \
-            --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
-            --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
+            --desktop-file "$APPDIR/org.bootbitch.BootBitch.desktop" \
+            --icon-file "$APPDIR/org.bootbitch.BootBitch.png" \
             --plugin qt
     )
     # linuxdeploy may rewrite AppDir entries; never package a helper without

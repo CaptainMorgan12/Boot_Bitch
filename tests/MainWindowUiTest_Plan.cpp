@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: repair plans, change status, result summaries and authorization.
+// Part of the boot-bitch-ui-tests read-only regression suite: repair plans, change status, result summaries and authorization.
 // The class declaration lives in MainWindowUiTest.h and the shared
 // fixtures/helpers in UiTestHelpers.h; this file holds the repair plans, change status, result summaries and authorization test
 // implementations so the suite compiles as parallel translation units.
@@ -161,7 +161,7 @@ void MainWindowUiTest::fullRepairPlanFrameShrinksToContentAndGrowsOutputPane()
     // much taller than the repair/details pane).  The new layout reads a bumped
     // key, so this legacy height must be ignored.
     {
-        QSettings legacy(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+        QSettings legacy(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
         QSplitter staleSplitter(Qt::Vertical);
         QWidget stalePlan;
         QWidget staleOutput;
@@ -223,7 +223,7 @@ void MainWindowUiTest::fullRepairPlanFrameShrinksToContentAndGrowsOutputPane()
                             .arg(window.m_repairSplitter->height()).arg(planHeight)));
 
     // Leave no stale legacy key behind for later tests.
-    QSettings cleanup(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    QSettings cleanup(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
     cleanup.remove(QStringLiteral("repair/verticalSplitterStateV2"));
     cleanup.sync();
 }
@@ -943,7 +943,7 @@ void MainWindowUiTest::fullRepairPlanGrowsWithSplitterWithoutReflowingRows()
     // test always measures from the content-hugged default, the same cleanup
     // the frame-shrink test applies to the stale V2 key.
     {
-        QSettings cleanup(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+        QSettings cleanup(QStringLiteral("BootBitch"), QStringLiteral("BootBitch"));
         cleanup.remove(QStringLiteral("repair/verticalSplitterStateV3"));
         cleanup.sync();
     }

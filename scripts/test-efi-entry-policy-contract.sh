@@ -29,7 +29,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -229,7 +229,7 @@ foreign_role_count()
 # seam is asserted live and the root-side gates are asserted statically.
 # ---------------------------------------------------------------------------
 updater_fn_body="$(sed -n '/^efi_label_updater_path()/,/^}/p' "$HELPER")"
-grep -Fq 'local updater="/usr/libexec/boot-repair/boot-repair-efi-label.py"' <<<"$updater_fn_body" \
+grep -Fq 'local updater="/usr/libexec/boot-bitch/boot-bitch-efi-label.py"' <<<"$updater_fn_body" \
     || fail_test 'efi_label_updater_path lost its installed default'
 grep -Fq '(( EUID != 0 )) && [[ -n "${EFI_LABEL_UPDATER:-}" ]]; then' <<<"$updater_fn_body" \
     || fail_test 'the EFI_LABEL_UPDATER override is not gated on EUID != 0'
@@ -248,9 +248,9 @@ if command -v sha256sum >/dev/null 2>&1; then
     pinned_digest="$(sed -nE 's/^EFI_LABEL_UPDATER_SHA256="([0-9a-f]{64})".*/\1/p' "$HELPER" | head -n1)"
     [[ "$pinned_digest" =~ ^[0-9a-f]{64}$ ]] \
         || fail_test 'EFI_LABEL_UPDATER_SHA256 is missing or not a 64-hex digest in the helper'
-    shipped_digest="$(sha256sum -- "$ROOT_DIR/scripts/boot-repair-efi-label.py" | awk '{print $1}')"
+    shipped_digest="$(sha256sum -- "$ROOT_DIR/scripts/boot-bitch-efi-label.py" | awk '{print $1}')"
     [[ "$pinned_digest" == "$shipped_digest" ]] \
-        || fail_test "the pinned EFI label updater digest $pinned_digest does not match scripts/boot-repair-efi-label.py ($shipped_digest); refresh the pin"
+        || fail_test "the pinned EFI label updater digest $pinned_digest does not match scripts/boot-bitch-efi-label.py ($shipped_digest); refresh the pin"
 fi
 if (( EUID != 0 )); then
     # The non-root test seam stays green: the override is honoured.

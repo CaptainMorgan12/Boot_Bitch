@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: Boot capabilities
+// Part of the boot-bitch-ui-tests read-only regression suite: Boot capabilities
 // table (cache-sourced population, the module-build backend mapping, the scope
 // selector and the install affordance) and the repair detail pane's
 // missing-tool guidance.
@@ -446,8 +446,8 @@ void MainWindowUiTest::capabilityTablePopulatesFromCacheWithoutProbe()
     QVERIFY(fake.open(QIODevice::WriteOnly | QIODevice::Text));
     fake.write(QStringLiteral("ID=arch\nPRETTY_NAME=\"Poisoned arch\"\n").toUtf8());
     fake.close();
-    const QByteArray previous = qgetenv("BOOT_REPAIR_OS_RELEASE");
-    qputenv("BOOT_REPAIR_OS_RELEASE", fake.fileName().toUtf8());
+    const QByteArray previous = qgetenv("BOOT_BITCH_OS_RELEASE");
+    qputenv("BOOT_BITCH_OS_RELEASE", fake.fileName().toUtf8());
 
     MainWindow window;
     window.show();
@@ -486,9 +486,9 @@ void MainWindowUiTest::capabilityTablePopulatesFromCacheWithoutProbe()
     QCOMPARE(cellText(window, hostDkmsRow, 2), QCoreApplication::translate("CapabilityChecker", "Host"));
 
     if (previous.isNull()) {
-        qunsetenv("BOOT_REPAIR_OS_RELEASE");
+        qunsetenv("BOOT_BITCH_OS_RELEASE");
     } else {
-        qputenv("BOOT_REPAIR_OS_RELEASE", previous);
+        qputenv("BOOT_BITCH_OS_RELEASE", previous);
     }
 }
 
@@ -703,7 +703,7 @@ void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
     // the machine-readable reason folded in.
     QCOMPARE(cellText(window, extlinuxRow, 5),
              QCoreApplication::translate("CapabilityChecker",
-                 "Alternative bootloader; on this system extlinux is not part of the default boot path")
+                 "Alternative bootloader; not the standard")
                  + QStringLiteral(" (reason:missing-update-extlinux)"));
 
     window.m_capabilityScopeSelector->setCurrentIndex(1); // Host
@@ -714,7 +714,7 @@ void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
     QCOMPARE(cellText(window, hostExtlinuxRow, 3), QStringLiteral("Unavailable"));
     QCOMPARE(cellText(window, hostExtlinuxRow, 5),
              QCoreApplication::translate("CapabilityChecker",
-                 "Alternative bootloader; on this system extlinux is not part of the default boot path")
+                 "Alternative bootloader; not the standard")
                  + QStringLiteral(" (reason:missing-update-extlinux)"));
     QCOMPARE(cellText(window, hostExtlinuxRow, 2), QCoreApplication::translate("CapabilityChecker", "Host"));
 }

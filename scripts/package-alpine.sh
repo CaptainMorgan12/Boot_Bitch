@@ -5,8 +5,8 @@ set -euo pipefail
 # Must run as an unprivileged user inside an Alpine environment (an Alpine
 # host, chroot or container); abuild refuses to run as root.
 #
-# abuild produces boot-repair-<version>-r0.apk (r0 stays inside the package);
-# the release asset is normalized to boot-repair-<version>.apk. The artifact
+# abuild produces boot-bitch-<version>-r0.apk (r0 stays inside the package);
+# the release asset is normalized to boot-bitch-<version>.apk. The artifact
 # links the build environment's Qt/musl versions, so build it per Alpine
 # release (and per architecture) instead of reusing it across releases.
 #
@@ -77,9 +77,9 @@ mkdir -p -- "$BUILD_DIR"
 # registered in the test suite, so it must be present for the check phase. The
 # committed Qt UI translation catalogs (translations/*.qm) must be present or
 # cmake --install has nothing to install and the package ships English-only.
-SOURCE_ARCHIVE="$BUILD_DIR/boot-repair-$VERSION.tar.gz"
+SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
-    --transform="s,^,boot-repair-$VERSION/," \
+    --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
     src scripts tests translations data resources docs .github legacy
@@ -96,7 +96,7 @@ SOURCE_SHA512="$(sha512sum "$SOURCE_ARCHIVE" | awk '{print $1}')"
 # `date --iso-8601` and `timeout --foreground`.
 cat > "$BUILD_DIR/APKBUILD" <<'APKBUILD'
 # Maintainer: CaptainMorgan12 <captainmorgan12@users.noreply.github.com>
-pkgname=boot-repair
+pkgname=boot-bitch
 pkgver=__VERSION__
 pkgrel=0
 pkgdesc='Guarded Linux diagnostics, host maintenance and repair-system recovery utility'
@@ -110,6 +110,10 @@ license='MIT'
 # kernel enforcing 0555 directories), and the package installs no ownership
 # that fakeroot would be needed for.
 options="!fakeroot"
+# The package/identity rename (round A, 0.2.31): fully independent identity —
+# no replaces=/conflict relationship to the old boot-repair name in either
+# direction; the rename alone is the collision fix and the transition is a
+# manual uninstall of the pre-rename package.
 depends='qt6-qtbase qt6-qtsvg polkit-elogind coreutils findutils util-linux cryptsetup rsync e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils python3 hicolor-icon-theme'
 optdepends='xfce-polkit: session Polkit authentication agent required for pkexec authorization prompts (alternative: polkit-gnome)
 exfatprogs: exFAT file system check and repair (fsck.exfat)
@@ -157,28 +161,28 @@ check() {
     # directories — fake-root bypasses both and fails environment-dependent
     # tests on the BIOS rigs).
     QT_QPA_PLATFORM=offscreen ctest -j1 --test-dir "$builddir/build" --output-on-failure \
-        -E boot-repair-packaging-profile-contract
+        -E boot-bitch-packaging-profile-contract
 }
 
 package() {
     DESTDIR="$pkgdir" cmake --install "$builddir/build" --strip
 }
 APKBUILD
-sed -i "s/__VERSION__/$VERSION/; s/__SHA512__/$SOURCE_SHA512/; s/__SOURCE__/boot-repair-$VERSION.tar.gz/" "$BUILD_DIR/APKBUILD"
+sed -i "s/__VERSION__/$VERSION/; s/__SHA512__/$SOURCE_SHA512/; s/__SOURCE__/boot-bitch-$VERSION.tar.gz/" "$BUILD_DIR/APKBUILD"
 
 # Refresh the hicolor icon cache and the desktop-entry database after the
-# package transaction so launchers resolve org.bootrepair.BootRepair without
+# package transaction so launchers resolve org.bootbitch.BootBitch without
 # waiting for an unrelated cache refresh. Both tools are optional at runtime
 # (hicolor-icon-theme ships the icon directories, desktop-file-utils the
 # database tool), so failures are ignored and the hook stays idempotent.
 # abuild packages this as .post-install only when the APKBUILD references it
 # through install=.
-cat > "$BUILD_DIR/boot-repair.post-install" <<'INSTALL'
+cat > "$BUILD_DIR/boot-bitch.post-install" <<'INSTALL'
 #!/bin/sh
 gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 update-desktop-database -q /usr/share/applications 2>/dev/null || true
 INSTALL
-chmod 755 "$BUILD_DIR/boot-repair.post-install"
+chmod 755 "$BUILD_DIR/boot-bitch.post-install"
 
 # abuild signs the package with the user's RSA key. Generate one on first use;
 # abuild-keygen -i also installs the public key into /etc/apk/keys through
@@ -242,6 +246,9 @@ echo
 echo "Alpine has no repository for this package. The package is signed by the"
 echo "local abuild key; to install it without --allow-untrusted, install the"
 echo "matching public key first:"
-echo "  sudo cp $HOME/.abuild/*.rsa.pub /etc/apk/keys/"
+# Round 182: name the EXACT signing key (the one abuild.conf references), never
+# the *.rsa.pub glob — copying every key in .abuild would trust a stray
+# agent-created key (the round-181 deploy-provisioning finding).
+echo "  sudo cp ${abuild_keys[0]%.rsa}.rsa.pub /etc/apk/keys/"
 
 "$ROOT_DIR/scripts/test-apk.sh" "${packages[0]}"

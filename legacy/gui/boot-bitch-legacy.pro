@@ -10,13 +10,13 @@
 # frontend uses.
 
 TEMPLATE = app
-TARGET   = boot-repair-legacy-gui
+TARGET   = boot-bitch-legacy-gui
 CONFIG  += qt warn_on release
 CONFIG  -= kde
 
 # Overridden by scripts/package-legacy.sh with the project version parsed from
-# CMakeLists.txt (export BOOT_REPAIR_LEGACY_VERSION=<version> before qmake).
-VERSION = $$(BOOT_REPAIR_LEGACY_VERSION)
+# CMakeLists.txt (export BOOT_BITCH_LEGACY_VERSION=<version> before qmake).
+VERSION = $$(BOOT_BITCH_LEGACY_VERSION)
 isEmpty(VERSION) {
     VERSION = 0.0.0
 }
@@ -56,21 +56,21 @@ QMAKE_LFLAGS   += -pie -Wl,-z,relro,-z,now
 # because Qt3 and Qt6 .qm formats are incompatible. Deferred: zh ja ko ar (CJK
 # fonts / bidi not font-safe on Etch).
 TRANSLATIONS = \
-    translations/boot-repair-legacy_de.ts \
-    translations/boot-repair-legacy_fr.ts \
-    translations/boot-repair-legacy_es.ts \
-    translations/boot-repair-legacy_it.ts \
-    translations/boot-repair-legacy_pt.ts \
-    translations/boot-repair-legacy_nl.ts \
-    translations/boot-repair-legacy_sv.ts \
-    translations/boot-repair-legacy_da.ts \
-    translations/boot-repair-legacy_fi.ts \
-    translations/boot-repair-legacy_no.ts \
-    translations/boot-repair-legacy_pl.ts \
-    translations/boot-repair-legacy_cs.ts \
-    translations/boot-repair-legacy_hu.ts \
-    translations/boot-repair-legacy_ro.ts \
-    translations/boot-repair-legacy_tr.ts \
-    translations/boot-repair-legacy_el.ts \
-    translations/boot-repair-legacy_ru.ts \
-    translations/boot-repair-legacy_uk.ts
+    translations/boot-bitch-legacy_de.ts \
+    translations/boot-bitch-legacy_fr.ts \
+    translations/boot-bitch-legacy_es.ts \
+    translations/boot-bitch-legacy_it.ts \
+    translations/boot-bitch-legacy_pt.ts \
+    translations/boot-bitch-legacy_nl.ts \
+    translations/boot-bitch-legacy_sv.ts \
+    translations/boot-bitch-legacy_da.ts \
+    translations/boot-bitch-legacy_fi.ts \
+    translations/boot-bitch-legacy_no.ts \
+    translations/boot-bitch-legacy_pl.ts \
+    translations/boot-bitch-legacy_cs.ts \
+    translations/boot-bitch-legacy_hu.ts \
+    translations/boot-bitch-legacy_ro.ts \
+    translations/boot-bitch-legacy_tr.ts \
+    translations/boot-bitch-legacy_el.ts \
+    translations/boot-bitch-legacy_ru.ts \
+    translations/boot-bitch-legacy_uk.ts

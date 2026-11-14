@@ -1,4 +1,4 @@
-// Part of the boot-repair-ui-tests read-only regression suite: dynamic tab
+// Part of the boot-bitch-ui-tests read-only regression suite: dynamic tab
 // visibility for the Snapshots and EFI boot entries tabs. The two dynamic tabs
 // are fully REMOVED from the tab bar when unavailable (never merely greyed out
 // with setTabEnabled), and logical visibility is exposed through

@@ -25,11 +25,12 @@ run_privileged()
     fi
 }
 
-remove_legacy_source_install()
+remove_pre_rename_source_install()
 {
     # Older source installs under /usr/local take precedence over packaged
-    # /usr/bin/boot-repair and make desktop launches appear stale. Remove only
+    # /usr/bin/boot-bitch and make desktop launches appear stale. Remove only
     # the files owned by this application; leave unrelated directories intact.
+    # These are the OLD pre-rename install paths (best-effort cleanup).
     run_privileged rm -f -- \
         /usr/local/bin/boot-repair \
         /usr/local/libexec/boot-repair/boot-repair-helper \
@@ -46,10 +47,30 @@ remove_legacy_source_install()
 }
 
 if command -v dpkg-query >/dev/null 2>&1 \
-   && dpkg-query -W -f='${Status}\n' boot-repair 2>/dev/null \
+   && dpkg-query -W -f='${Status}\n' boot-bitch 2>/dev/null \
       | grep -q '^install ok installed$'
 then
     echo "Boot Bitch is installed as a Debian package."
+    echo "Recommended removal command: apt-get remove boot-bitch"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    if command -v apt-get >/dev/null 2>&1; then
+        run_privileged apt-get remove boot-bitch
+    else
+        run_privileged dpkg --remove boot-bitch
+    fi
+    remove_pre_rename_source_install
+    exit $?
+fi
+
+# Pre-rename package identity: still removed (best-effort) so a user who
+# installed the OLD boot-repair Debian package can uninstall it.
+if command -v dpkg-query >/dev/null 2>&1 \
+   && dpkg-query -W -f='${Status}\n' boot-repair 2>/dev/null \
+      | grep -q '^install ok installed$'
+then
+    echo "Boot Bitch is installed as a Debian package under the old boot-repair name."
     echo "Recommended removal command: apt-get remove boot-repair"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
@@ -59,91 +80,70 @@ then
     else
         run_privileged dpkg --remove boot-repair
     fi
-    remove_legacy_source_install
+    remove_pre_rename_source_install
     exit $?
 fi
 
-if command -v pacman >/dev/null 2>&1 \
-   && pacman -Q boot-repair >/dev/null 2>&1
-then
-    echo "Boot Bitch is installed as an Arch package."
-    echo "Recommended removal command: pacman -R boot-repair"
-    echo
-    read -r -p "Type UNINSTALL to remove the package: " confirm
-    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
-    run_privileged pacman -R boot-repair
-    remove_legacy_source_install
-    exit $?
-fi
-
-# Legacy package name (boot-bitch, used by already published releases); still
-# removed so a user who installed an older published Arch artifact can uninstall it.
 if command -v pacman >/dev/null 2>&1 \
    && pacman -Q boot-bitch >/dev/null 2>&1
 then
-    echo "Boot Bitch is installed as an Arch package (legacy boot-bitch name)."
+    echo "Boot Bitch is installed as an Arch package."
     echo "Recommended removal command: pacman -R boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
     run_privileged pacman -R boot-bitch
-    remove_legacy_source_install
+    remove_pre_rename_source_install
     exit $?
 fi
 
-if command -v apk >/dev/null 2>&1 \
-   && apk info --exists boot-repair >/dev/null 2>&1
+# Pre-rename package identity (best-effort old cleanup): a user who installed
+# the OLD boot-repair Arch package can still uninstall it.
+if command -v pacman >/dev/null 2>&1 \
+   && pacman -Q boot-repair >/dev/null 2>&1
 then
-    echo "Boot Bitch is installed as an Alpine package."
-    echo "Recommended removal command: apk del boot-repair"
+    echo "Boot Bitch is installed as an Arch package under the old boot-repair name."
+    echo "Recommended removal command: pacman -R boot-repair"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
-    run_privileged apk del boot-repair
-    remove_legacy_source_install
+    run_privileged pacman -R boot-repair
+    remove_pre_rename_source_install
     exit $?
 fi
 
-# Legacy package name (boot-bitch, used by already published releases); still
-# removed so a user who installed an older published Alpine artifact can uninstall it.
 if command -v apk >/dev/null 2>&1 \
    && apk info --exists boot-bitch >/dev/null 2>&1
 then
-    echo "Boot Bitch is installed as an Alpine package (legacy boot-bitch name)."
+    echo "Boot Bitch is installed as an Alpine package."
     echo "Recommended removal command: apk del boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
     run_privileged apk del boot-bitch
-    remove_legacy_source_install
+    remove_pre_rename_source_install
     exit $?
 fi
 
-if command -v rpm >/dev/null 2>&1 \
-   && rpm -q boot-repair >/dev/null 2>&1
+# Pre-rename package identity (best-effort old cleanup): a user who installed
+# the OLD boot-repair Alpine package can still uninstall it.
+if command -v apk >/dev/null 2>&1 \
+   && apk info --exists boot-repair >/dev/null 2>&1
 then
-    echo "Boot Bitch is installed as an RPM package."
-    echo "Recommended removal command: dnf remove boot-repair or zypper remove boot-repair"
+    echo "Boot Bitch is installed as an Alpine package under the old boot-repair name."
+    echo "Recommended removal command: apk del boot-repair"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
-    if command -v dnf >/dev/null 2>&1; then
-        run_privileged dnf remove boot-repair
-    elif command -v zypper >/dev/null 2>&1; then
-        run_privileged zypper --non-interactive remove boot-repair
-    else
-        run_privileged rpm -e boot-repair
-    fi
-    remove_legacy_source_install
+    run_privileged apk del boot-repair
+    remove_pre_rename_source_install
     exit $?
 fi
 
-# Legacy package name (boot-bitch, used by already published releases); still
-# removed so a user who installed an older published RPM artifact can uninstall it.
 if command -v rpm >/dev/null 2>&1 \
    && rpm -q boot-bitch >/dev/null 2>&1
 then
-    echo "Boot Bitch is installed as an RPM package (legacy boot-bitch name)."
+    echo "Boot Bitch is installed as an RPM package."
     echo "Recommended removal command: dnf remove boot-bitch or zypper remove boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
@@ -155,13 +155,37 @@ then
     else
         run_privileged rpm -e boot-bitch
     fi
-    remove_legacy_source_install
+    remove_pre_rename_source_install
+    exit $?
+fi
+
+# Pre-rename package identity (best-effort old cleanup): a user who installed
+# the OLD boot-repair RPM package can still uninstall it.
+if command -v rpm >/dev/null 2>&1 \
+   && rpm -q boot-repair >/dev/null 2>&1
+then
+    echo "Boot Bitch is installed as an RPM package under the old boot-repair name."
+    echo "Recommended removal command: dnf remove boot-repair or zypper remove boot-repair"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    if command -v dnf >/dev/null 2>&1; then
+        run_privileged dnf remove boot-repair
+    elif command -v zypper >/dev/null 2>&1; then
+        run_privileged zypper --non-interactive remove boot-repair
+    else
+        run_privileged rpm -e boot-repair
+    fi
+    remove_pre_rename_source_install
     exit $?
 fi
 
 MANIFEST="${INSTALL_MANIFEST:-}"
 if [[ -z "$MANIFEST" ]]; then
     for candidate in \
+        "$ROOT_DIR/build-release/boot-bitch-source-install-manifest.txt" \
+        "$ROOT_DIR/build/boot-bitch-source-install-manifest.txt" \
+        "$ROOT_DIR/Development/build-release/boot-bitch-source-install-manifest.txt" \
         "$ROOT_DIR/build-release/boot-repair-source-install-manifest.txt" \
         "$ROOT_DIR/build/boot-repair-source-install-manifest.txt" \
         "$ROOT_DIR/Development/build-release/boot-repair-source-install-manifest.txt"
@@ -189,6 +213,22 @@ validate_manifest_entry()
         [[ ! -L "$canonical" ]] || return 1
     fi
     case "$canonical" in
+        /usr/bin/boot-bitch|/usr/libexec/boot-bitch/boot-bitch-helper|/usr/libexec/boot-bitch/boot-bitch-efi-label.py|\
+        /usr/share/applications/org.bootbitch.BootBitch.desktop|\
+        /usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml|\
+        /usr/share/icons/hicolor/*/apps/org.bootbitch.BootBitch.png|\
+        /usr/share/doc/boot-bitch/*|/usr/share/man/man1/boot-bitch.1.gz|\
+        /usr/local/bin/boot-bitch|/usr/local/libexec/boot-bitch/boot-bitch-helper|/usr/local/libexec/boot-bitch/boot-bitch-efi-label.py|\
+        /usr/local/share/applications/org.bootbitch.BootBitch.desktop|\
+        /usr/local/share/metainfo/org.bootbitch.BootBitch.metainfo.xml|\
+        /usr/local/share/icons/hicolor/*/apps/org.bootbitch.BootBitch.png|\
+        /usr/local/share/doc/boot-bitch/*|/usr/local/share/man/man1/boot-bitch.1.gz|\
+        /opt/boot-bitch/bin/boot-bitch|/opt/boot-bitch/libexec/boot-bitch/boot-bitch-helper|\
+        /opt/boot-bitch/libexec/boot-bitch/boot-bitch-efi-label.py|\
+        /opt/boot-bitch/share/applications/org.bootbitch.BootBitch.desktop|\
+        /opt/boot-bitch/share/metainfo/org.bootbitch.BootBitch.metainfo.xml|\
+        /opt/boot-bitch/share/icons/hicolor/*/apps/org.bootbitch.BootBitch.png|\
+        /opt/boot-bitch/share/doc/boot-bitch/*|/opt/boot-bitch/share/man/man1/boot-bitch.1.gz|\
         /usr/bin/boot-repair|/usr/libexec/boot-repair/boot-repair-helper|/usr/libexec/boot-repair/boot-repair-efi-label.py|\
         /usr/share/applications/org.bootrepair.BootRepair.desktop|\
         /usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml|\
@@ -217,7 +257,7 @@ echo
 read -r -p "Type UNINSTALL to remove exactly these files: " confirm
 [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
 
-REMOVE_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/boot-repair-uninstall.XXXXXX")"
+REMOVE_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-uninstall.XXXXXX")"
 trap 'rm -f "$REMOVE_SCRIPT"' EXIT
 
 {

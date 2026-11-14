@@ -57,7 +57,7 @@ done
 command -v g++ >/dev/null 2>&1 \
     || fail "g++ is required for the host-side GUI parser contract"
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-gui-contract.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-legacy-gui-contract.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 g++ -std=c++98 -Wall -Wextra -Werror -I"$GUI_DIR/src" \
@@ -944,7 +944,7 @@ pass "headless --help/--version/--print-config before QApplication"
 
 # --- GUI is the packaged entry point (no TUI launcher fallback) --------------
 grep -q -- '--tui' "$WINDOW" \
-    && fail "GUI still advertises the removed boot-repair-legacy --tui fallback"
+    && fail "GUI still advertises the removed boot-bitch-legacy --tui fallback"
 grep -q 'TUI fallback' "$WINDOW" && fail "GUI still documents a TUI fallback"
 grep -q 'TUI fallback' "$MAIN" && fail "GUI usage still documents a TUI fallback"
 grep -q "package's entry point" "$WINDOW" \
@@ -954,17 +954,17 @@ pass "GUI is the packaged entry point (no launcher fallback advertised)"
 # --- legacy icons generated from the modern master ---------------------------
 ICON_SCRIPT="$GUI_DIR/data/make-icons.py"
 [[ -f "$ICON_SCRIPT" ]] || fail "missing legacy icon script"
-grep -q 'org.bootrepair.BootRepair.png' "$ICON_SCRIPT" \
+grep -q 'org.bootbitch.BootBitch.png' "$ICON_SCRIPT" \
     || fail "icon script no longer loads the modern master artwork"
 grep -q 'LANCZOS' "$ICON_SCRIPT" \
     || fail "icon script no longer resizes with LANCZOS"
 grep -q 'sys.exit' "$ICON_SCRIPT" \
     || fail "icon script does not fail when the master is missing"
 for size in 16 22 32 48; do
-    icon="$GUI_DIR/data/boot-repair-legacy-${size}x${size}.png"
+    icon="$GUI_DIR/data/boot-bitch-legacy-${size}x${size}.png"
     [[ -f "$icon" ]] || fail "missing generated legacy icon: $icon"
 done
-MASTER="$ROOT_DIR/data/icons/hicolor/1024x1024/apps/org.bootrepair.BootRepair.png"
+MASTER="$ROOT_DIR/data/icons/hicolor/1024x1024/apps/org.bootbitch.BootBitch.png"
 [[ -f "$MASTER" ]] || fail "modern master icon missing"
 grep -q 'setIcon(headerPixmap)' "$WINDOW" \
     || fail "GUI window does not use the packaged icon artwork"
@@ -983,11 +983,11 @@ grep -q 'PySide6' "$SHIELD_SCRIPT" \
     || fail "shield-icon script no longer renders through the Qt SVG engine"
 grep -q 'sys.exit' "$SHIELD_SCRIPT" \
     || fail "shield-icon script does not fail when the atlas asset is missing"
-SHIELD_PNG="$GUI_DIR/data/boot-repair-legacy-shield-32x32.png"
+SHIELD_PNG="$GUI_DIR/data/boot-bitch-legacy-shield-32x32.png"
 [[ -f "$SHIELD_PNG" ]] || fail "missing generated legacy shield badge: $SHIELD_PNG"
 grep -q 'legacyShieldPixmap' "$WINDOW" \
     || fail "GUI does not load the shield badge through legacyShieldPixmap"
-grep -qF 'boot-repair-legacy-shield.png' "$WINDOW" \
+grep -qF 'boot-bitch-legacy-shield.png' "$WINDOW" \
     || fail "GUI does not resolve the packaged shield badge path"
 grep -qF 'setText(tr("[OK]"))' "$WINDOW" \
     || fail "the green [OK] text fallback is gone from the host card"
@@ -1007,11 +1007,11 @@ grep -q 'PySide6' "$INFO_SCRIPT" \
     || fail "info-icon script no longer renders through the Qt SVG engine"
 grep -q 'sys.exit' "$INFO_SCRIPT" \
     || fail "info-icon script does not fail when the atlas asset is missing"
-INFO_PNG="$GUI_DIR/data/boot-repair-legacy-info-18x18.png"
+INFO_PNG="$GUI_DIR/data/boot-bitch-legacy-info-18x18.png"
 [[ -f "$INFO_PNG" ]] || fail "missing generated legacy info badge: $INFO_PNG"
 grep -q 'legacyInfoPixmap' "$WINDOW" \
     || fail "GUI does not load the info badge through legacyInfoPixmap"
-grep -qF 'boot-repair-legacy-info.png' "$WINDOW" \
+grep -qF 'boot-bitch-legacy-info.png' "$WINDOW" \
     || fail "GUI does not resolve the packaged info badge path"
 grep -qF 'button->setText(QString::fromLatin1("i"))' "$WINDOW" \
     || fail "the plain i text fallback is gone from the info button"
@@ -1182,8 +1182,8 @@ grep -q 'verifyHelperForElevation' "$GUI_DIR/src/main.cpp" \
     || fail "--print-config does not verify the helper"
 grep -q 'helper elevation trust' "$GUI_DIR/src/main.cpp" \
     || fail "--print-config lost the helper trust line"
-grep -q 'BOOT_REPAIR_LEGACY_ELEVATE' "$GUI_DIR/src/main.cpp" \
-    || fail "main() lost the BOOT_REPAIR_LEGACY_ELEVATE escape hatch"
+grep -q 'BOOT_BITCH_LEGACY_ELEVATE' "$GUI_DIR/src/main.cpp" \
+    || fail "main() lost the BOOT_BITCH_LEGACY_ELEVATE escape hatch"
 # B4 cancel wiring: the GUI-owned cancel file travels with every command and
 # cancel() touches it before the direct kill.
 grep -q -- '--cancel-file' "$GUI_DIR/src/LegacyMainWindow.cpp" \
@@ -1282,9 +1282,9 @@ grep -q 'sessionIsCurrent' "$TESTS_DIR/auth-pipe-test.cpp" \
     || fail "auth-pipe harness does not exercise the session-validity probe"
 # B4: with fixed-path elevation trust the harness drives the fake sudo through
 # the documented test seam, never through PATH.
-grep -q 'BOOT_REPAIR_LEGACY_FAKE_SUDO' "$TESTS_DIR/auth-pipe-test.cpp" \
+grep -q 'BOOT_BITCH_LEGACY_FAKE_SUDO' "$TESTS_DIR/auth-pipe-test.cpp" \
     || fail "auth-pipe harness no longer uses the fixed-path fake-sudo test seam"
-grep -q 'BOOT_REPAIR_LEGACY_FAKE_SUDO' "$RUNNER_CPP" \
+grep -q 'BOOT_BITCH_LEGACY_FAKE_SUDO' "$RUNNER_CPP" \
     || fail "HelperRunner lost the fake-sudo test seam"
 # B3 (A10-06): the harness must also cover the slow-fake-sudo bounded-wait
 # case (the 10-second WNOHANG deadlines and the 32 KiB stderr cap).

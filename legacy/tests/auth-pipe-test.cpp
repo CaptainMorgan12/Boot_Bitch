@@ -21,7 +21,7 @@
 //     the captured sudo stderr must stay capped at 32 KiB.
 //
 // The harness points HelperRunner at a fake `sudo` through the documented
-// test seam BOOT_REPAIR_LEGACY_FAKE_SUDO (the runner resolves elevation tools
+// test seam BOOT_BITCH_LEGACY_FAKE_SUDO (the runner resolves elevation tools
 // from the fixed trusted system locations only, so a PATH fake would never be
 // seen; the seam is test/development only and cannot elevate anything - the
 // fake sudo runs as the invoking user and the helper still requires root):
@@ -89,7 +89,7 @@ int main(int argc, char **argv)
     // test seam instead of PATH.
     const QString fakeSudo = QString::fromLocal8Bit(argv[1])
         + QString::fromLatin1("/sudo");
-    ::setenv("BOOT_REPAIR_LEGACY_FAKE_SUDO", fakeSudo.local8Bit(), 1);
+    ::setenv("BOOT_BITCH_LEGACY_FAKE_SUDO", fakeSudo.local8Bit(), 1);
     // The fake sudo consults this directory for the `expired` marker.
     ::setenv("FAKE_SUDO_STATE", argv[2], 1);
 

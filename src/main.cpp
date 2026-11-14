@@ -24,18 +24,18 @@ QTranslator &applicationTranslator()
 // LC_ALL=C backend contract; this only translates the Qt GUI chrome.
 bool installUiTranslator(QApplication *application)
 {
-#ifdef BOOT_REPAIR_UI_TEST
+#ifdef BOOT_BITCH_UI_TEST
     // The offscreen UI regression suite asserts English strings, so it must
     // never pick up a translation from the developer's desktop locale.
     Q_UNUSED(application);
     return false;
 #else
     // Installed packages ship translations under
-    // <prefix>/share/boot-repair/translations; source-tree/build runs resolve
+    // <prefix>/share/boot-bitch/translations; source-tree/build runs resolve
     // them from a translations/ directory beside the executable instead.
     const QStringList translationDirs = {
         QDir(QCoreApplication::applicationDirPath())
-            .absoluteFilePath(QStringLiteral("../share/boot-repair/translations")),
+            .absoluteFilePath(QStringLiteral("../share/boot-bitch/translations")),
         QDir(QCoreApplication::applicationDirPath())
             .absoluteFilePath(QStringLiteral("translations"))
     };
@@ -43,7 +43,7 @@ bool installUiTranslator(QApplication *application)
     QTranslator &translator = applicationTranslator();
     for (const QString &language : QLocale::system().uiLanguages()) {
         const QString fileName =
-            QStringLiteral("boot-repair_%1.qm").arg(QLocale(language).name());
+            QStringLiteral("boot-bitch_%1.qm").arg(QLocale(language).name());
         for (const QString &dir : translationDirs) {
             if (translator.load(fileName, dir)) {
                 application->installTranslator(&translator);
@@ -68,15 +68,15 @@ int main(int argc, char *argv[])
     QIcon::setThemeSearchPaths({QDir(appShare).absoluteFilePath(QStringLiteral("icons")),
                                 QStringLiteral("/usr/share/icons")});
 
-    QCoreApplication::setOrganizationName(QStringLiteral("BootRepair"));
-    QCoreApplication::setOrganizationDomain(QStringLiteral("bootrepair.org"));
-    QCoreApplication::setApplicationName(QStringLiteral("BootRepair"));
-    QCoreApplication::setApplicationVersion(QString::fromLatin1(BOOT_REPAIR_VERSION));
-    QApplication::setDesktopFileName(QStringLiteral("org.bootrepair.BootRepair"));
+    QCoreApplication::setOrganizationName(QStringLiteral("BootBitch"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("bootbitch.org"));
+    QCoreApplication::setApplicationName(QStringLiteral("BootBitch"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(BOOT_BITCH_VERSION));
+    QApplication::setDesktopFileName(QStringLiteral("org.bootbitch.BootBitch"));
 
-    QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("org.bootrepair.BootRepair"));
+    QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("org.bootbitch.BootBitch"));
     if (applicationIcon.isNull()) {
-        applicationIcon = QIcon(QStringLiteral(":/icons/org.bootrepair.BootRepair.png"));
+        applicationIcon = QIcon(QStringLiteral(":/icons/org.bootbitch.BootBitch.png"));
     }
     QApplication::setWindowIcon(applicationIcon);
 

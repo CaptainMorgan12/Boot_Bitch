@@ -14,7 +14,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-bitch-helper.sh}"
 
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
@@ -30,12 +30,21 @@ fail_test() { echo "FAIL: $*" >&2; exit 1; }
 # transcripts — the full snapper create-config and the store-only btrfs
 # create per scope, plus the round-143 first-snapshot creates per scope;
 # round 146: the manual snapshot-creation verbs' snapper create transcripts
-# per scope).
+# per scope; round 182: run_chroot_try's post-hoc session-log feed is now an
+# if/else pair — the live-streamed branch suppresses the duplicate stdout
+# (tee >/dev/null), the fallback keeps the historical single print — both
+# feeds still run through the filter, so the count moved 14 -> 15; round 194:
+# the display-manager switch's debconf pre-seed (display_manager_preseed_
+# default) feeds the target's debconf-set-selections through the filter, so
+# the count moved 15 -> 16; round 220: the snapshot-deletion batch's two
+# snapper delete pipelines (the chroot branch and the native host branch of
+# snapshot_delete_batch) run through the filter, so the count moved
+# 16 -> 18).
 # ---------------------------------------------------------------------------
 grep -q '^repair_log_filter()' "$HELPER" || fail_test 'missing repair_log_filter helper'
 filtered_pipelines="$(grep -c 'repair_log_filter | tee -a "\$SESSION_LOG"' "$HELPER" || true)"
-[[ "$filtered_pipelines" -eq 14 ]] \
-    || fail_test "expected 14 filtered transcript pipelines, found $filtered_pipelines"
+[[ "$filtered_pipelines" -eq 18 ]] \
+    || fail_test "expected 18 filtered transcript pipelines, found $filtered_pipelines"
 
 # ---------------------------------------------------------------------------
 # Fixture: the exact verbose block shape observed in the TUXEDO repair log,
@@ -208,7 +217,7 @@ locale_out="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 bash -c '
     run_chroot_try "parsed transcript" /bin/true >/dev/null 2>&1
     printf "parsed=%s\n" "$(cat "$capture_file")"
     rm -f -- "$capture_file"
-    printf "caller=%s\n" "${BOOT_REPAIR_CALLER_LC_ALL}"
+    printf "caller=%s\n" "${BOOT_BITCH_CALLER_LC_ALL}"
 ' _ "$HELPER")"
 
 grep -Fqx 'display=de_DE.UTF-8' <<<"$locale_out" \
