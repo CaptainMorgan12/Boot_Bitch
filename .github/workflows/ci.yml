@@ -218,7 +218,14 @@ jobs:
           sh -n scripts/postinst scripts/rpm-postinst.sh
 
       - name: ShellCheck
-        run: shellcheck -S warning scripts/*.sh
+        run: |
+          # scripts/boot-bitch-helper.sh is excluded: shellcheck's analysis
+          # of the ~51k-line helper needs far more than the runner's 7 GB
+          # (measured ~16.7 GB max RSS on the maintainer host), so the step
+          # OOM-cancels.  The helper stays covered by the maintainer-side
+          # full-set run (Development/scripts/dev-check.sh --shellcheck).
+          mapfile -t sc_targets < <(find scripts -maxdepth 1 -name '*.sh' ! -name 'boot-bitch-helper.sh' | sort)
+          shellcheck -S warning "${sc_targets[@]}"
 
       - name: Validate desktop entry and AppStream metadata
         run: |
