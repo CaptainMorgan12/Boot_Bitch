@@ -102,8 +102,13 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
+          # The shell lane never builds: exclude the fast-tier tests whose
+          # command needs a compiled binary (boot-bitch-boot-menu-parsers
+          # runs slots of the boot-bitch-ui-tests executable — the
+          # round-232 freeze-push CI failure was exactly this exclusion
+          # missing) alongside the slow contracts.
           ctest --test-dir build --output-on-failure -L fast \
-            -E 'boot-bitch-(chroot-shell|filesystem-repair|host-default)-contract'
+            -E 'boot-bitch-(chroot-shell|filesystem-repair|host-default)-contract|boot-bitch-boot-menu-parsers'
 
       - name: Changed slow-contract tests
         if: steps.classify.outputs.lane == 'shell' && steps.classify.outputs.slow_contracts != ''
