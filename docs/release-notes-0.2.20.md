@@ -1,15 +1,8 @@
 # Boot Bitch 0.2.20
 
-Completes the bundled Qt/KDE icon atlas and restores the semantic defaults for
-tabs, diagnostics, repair stages and actions, with the same fallback behavior
-in Debian packages and portable AppImages when a host icon theme is
-incomplete.
+Completes the bundled Qt/KDE icon atlas and restores the semantic defaults for tabs, diagnostics, repair stages and actions, with the same fallback behavior in Debian packages and portable AppImages when a host icon theme is incomplete.
 
-- Bundle the semantic Qt/KDE icon atlas for tabs, diagnostics, repair stages
-  and actions, preferring a usable host theme or freedesktop aliases before
-  the bundled artwork and native high-contrast fallbacks; add filesystem-aware
-  device icons and reject solid theme placeholders so controls remain readable
-  on incomplete host themes.
+- Bundle the semantic Qt/KDE icon atlas for tabs, diagnostics, repair stages and actions, preferring a usable host theme or freedesktop aliases before the bundled artwork and native high-contrast fallbacks; add filesystem-aware device icons and reject solid theme placeholders so controls remain readable on incomplete host themes.
 
 Validation completed for the release workspace:
 
