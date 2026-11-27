@@ -320,9 +320,9 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="0.2.32" date="2026-11-14">
+    <release version="0.2.32" date="2026-11-26">
       <description>
-        <p>Planned scope for this development cycle: closing the carried hygiene backlog — the helper shellcheck warning class, the zh translation lag, the display-manager ExecStart edge forms, the drill killer-pattern hygiene and the capture stray-file cleanup — plus the queued documentation updates (the runbook rename literals, the release-notes style pin, the display-switch design doc).</p>
+        <p>The graphical-login repair becomes a walk-through (conflict diagnosis, vendor-default restore, display-manager switching with a working greetd landing), kernel removal completes forcefully across the whole lineage while the surviving kernel stays intact, the boot-entries view gains a persisted reorder, the early-boot Num Lock repair is complete across every family, and all 23 translation catalogs are refreshed.</p>
       </description>
     </release>
     <release version="0.2.31" date="2026-11-06">
