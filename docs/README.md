@@ -1,6 +1,7 @@
 # Boot Bitch documentation
 
 Public documentation for Boot Bitch:
+- [Release notes 0.2.32](release-notes-0.2.32.md)
 - [Release notes 0.2.31](release-notes-0.2.31.md)
 - [Release notes 0.2.30](release-notes-0.2.30.md)
 - [Release notes 0.2.29](release-notes-0.2.29.md)

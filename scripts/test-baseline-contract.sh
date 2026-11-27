@@ -686,6 +686,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
         'graphical.target' \
         'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
         'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: gdm.service:installed lightdm.service:installable')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_BACKEND" == systemd ]] || fail "parsed display backend: $DISPLAY_MANAGER_BACKEND"
@@ -715,6 +716,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=OpenRC service=gdm package=gdm label=GDM unit=/etc/init.d/gdm' \
         'Vendor default display manager: not derivable from installed package evidence (no installed desktop metapackage declares a display-manager dependency)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_BACKEND" == OpenRC ]] || fail "parsed OpenRC backend: $DISPLAY_MANAGER_BACKEND"
@@ -737,6 +739,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         "Vendor default display manager: GDM (derived from the installed gnome-desktop group's mandatory packages)" \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT" == "GDM (derived from the installed gnome-desktop group's mandatory packages)" ]] \
@@ -748,6 +751,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         'Vendor default display manager: not derivable from installed package evidence (no installed desktop group is recorded in the comps group state)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ -z "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" \
@@ -758,6 +762,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         "Vendor default display manager: GDM (derived from the installed task-gnome-desktop task's dependencies)" \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == gdm.service ]] \
@@ -771,6 +776,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
         'Vendor default display manager: GDM (derived from the last-boot display-manager evidence)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == gdm.service ]] \
@@ -780,6 +786,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         'Vendor default display manager: LightDM (derived from the installation history (first-installed display manager))' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == lightdm.service ]] \
@@ -789,6 +796,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         'Vendor default display manager: LightDM (assumed from the installed set (the only installed display manager))' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" == lightdm.service ]] \
@@ -798,6 +806,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=ly.service package=ly label=ly unit=/usr/lib/systemd/system/ly@.service' \
         'Vendor default display manager: not derivable from installed package evidence (no installed desktop metapackage dependency names exactly one display manager; probe-unavailable (no journal evidence source names a last-boot display manager); the installation history records no display-manager install; no display manager is installed)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: none')")"
     parse_cached_display_inventory
     [[ -z "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" ]] \
@@ -887,6 +896,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
         'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: lightdm.service:installable')")"
     touch "$fake_root/usr/lib/systemd/system/graphical.target"
     touch "$fake_root/usr/lib/systemd/system/sddm.service"
@@ -918,6 +928,7 @@ grep -q "No parser for diagnostic section 'environment'" <<<"$refusal_out" \
     DISPLAY_BASELINE_B64="$(b64 "$(printf '%s\n' \
         'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service' \
         'Vendor default display manager: SDDM (derived from kde-plasma-desktop)' \
+        'Display manager conflict: none' \
         'Display manager switch candidates: lightdm.service:installable')")"
     display_manager_already_correct() { return 0; }
     restore_display_manager() { :; }

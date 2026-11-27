@@ -99,6 +99,7 @@ assert_listed /usr/share/applications/org.bootbitch.BootBitch.desktop "desktop e
 assert_listed /usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml "AppStream metadata"
 assert_listed /usr/libexec/boot-bitch/boot-bitch-helper "privileged repair helper"
 assert_listed /usr/libexec/boot-bitch/boot-bitch-efi-label.py "EFI label updater"
+assert_listed /usr/libexec/boot-bitch/numlock-on "Num Lock early-boot payload"
 
 [[ -x "$TMP/root/usr/bin/boot-bitch" ]] || \
     fail "application binary is not executable in the extracted package."
@@ -119,23 +120,23 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
 done
 
 # Committed Qt UI translation catalogs must ship in every package format so
-# the GUI localizes instead of falling back to English-only. The exact shipped
-# set is the curated 23-catalog list (round 112: id/sk/vi are unshipped —
-# no Argos model exists for them; their .qm catalogs must not appear).
+# the GUI localizes instead of falling back to English-only. The shipped set
+# is EXACTLY the 23 catalogs — the complete set, nothing outside it exists
+# (the 2026-11-14 purge ruling). One exact-set comparison asserts both
+# directions at once: every shipped catalog present AND no out-of-set .qm.
 translations_dir="$TMP/root/usr/share/boot-bitch/translations"
 [[ -d "$translations_dir" ]] || \
     fail "translation catalog directory is missing from the package: usr/share/boot-bitch/translations"
-find "$translations_dir" -name '*.qm' -print | grep -q . || \
-    fail "the translation catalog directory carries no compiled .qm catalogs"
 shipped_catalogs='ar cs da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh'
-for lang in $shipped_catalogs; do
-    [[ -f "$translations_dir/boot-bitch_${lang}.qm" ]] || \
-        fail "shipped translation catalog missing from the package: boot-bitch_${lang}.qm"
-done
-extra_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' \
-    | grep -vE '^boot-bitch_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
-[[ -z "$extra_catalogs" ]] || \
-    fail "unexpected catalogs shipped in the package (unshipped languages must not ship): $extra_catalogs"
+expected_catalogs="$(for lang in $shipped_catalogs; do printf 'boot-bitch_%s.qm\n' "$lang"; done | sort)"
+actual_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' | sort)"
+[[ "$actual_catalogs" == "$expected_catalogs" ]] || {
+    echo "Expected 23 catalogs:" >&2
+    echo "$expected_catalogs" >&2
+    echo "Actual catalogs:" >&2
+    echo "$actual_catalogs" >&2
+    fail "the shipped translation catalog set is not exactly the 23 catalogs"
+}
 
 grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootbitch.BootBitch.png$' \
     "$TMP/root/usr/share/applications/org.bootbitch.BootBitch.desktop" || \

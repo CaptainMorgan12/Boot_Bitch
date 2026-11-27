@@ -107,20 +107,16 @@ from collections import Counter
 # Constants
 # --------------------------------------------------------------------------- #
 
-# The Qt locale codes the tool accepts as --target. The SHIPPED catalog set
-# is exactly 23 (round 112): ar cs da de el es fi fr hu it ja ko nb nl no
-# pl pt ro ru sv tr uk zh — every shipped code is here. The Argos-FILLABLE
-# set is the 22 without zh: zh is hand-written via the
+# The Qt locale codes the tool accepts as --target — the COMPLETE catalog
+# set, the shipped 23 (round 112): ar cs da de el es fi fr hu it ja ko nb
+# nl no pl pt ro ru sv tr uk zh. Nothing outside this set exists (the
+# 2026-11-14 purge ruling: the untranslatable catalogs were removed
+# entirely, so the tool never offers them and Argos never runs on them).
+# The Argos-FILLABLE set is the 22 without zh: zh is hand-written via the
 # translate_overrides.tsv zh column (its Argos fill is not trusted — it
 # refused at round 110 and, when re-probed at round 186, it runs but still
-# emits the Boot->shoes corruption class). "vi" is additionally accepted as
-# a target but is UNSHIPPED: no Argos vi model exists and no vi overrides
-# column exists, so its catalog stays English-fallback (a fill resolves
-# only the standalone protected terms) — the round-96 tracked addition.
-# "id" and "sk" are NOT targets: their .ts sources stay committed as frozen
-# unshipped sources (the round-112 drop) and --target id / --target sk is
-# refused (invalid choice). The Argos backend maps a small number of these
-# to a different package code below.
+# emits the Boot->shoes corruption class). The Argos backend maps a small
+# number of these to a different package code below.
 # "nb" is the round-110 addition: the shipped boot-bitch_nb.ts catalog
 # (Bokmål, the modern Qt locale spelling) is fillable via the installed
 # translate-en_nb model.  "no" and "nb" are both kept as targets: the
@@ -128,7 +124,6 @@ from collections import Counter
 SUPPORTED_TARGETS = (
     "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko",
     "sv", "da", "fi", "no", "nb", "cs", "hu", "ro", "tr", "el", "ar", "uk",
-    "vi",
 )
 
 # Qt locale code -> Argos Translate package code. Qt calls Norwegian "no";
@@ -246,6 +241,11 @@ PROTECTED_TERMS = tuple(sorted((
     "modprobe", "modules-load.d", "cpio", "zcat", "cryptsetup",
     "findmnt", "lsblk", "blkid", "objcopy", "sbverify", "pesign",
     "mokutil", "gdm", "sddm", "lightdm",
+    # the greetd family (the round-83c hygiene addition — the round-59
+    # class: the names entered the corpus unprotected and the Argos
+    # corruption class recurred; the hand-writes pinned them, this
+    # protects future fills)
+    "greetd", "wlgreet",
     # kernel module names (the round-150 additions)
     "nvidia", "hid_apple", "hid-generic", "virtio_net",
     # filesystem path terms (the round-150 additions; "/" is a boundary, so
@@ -975,11 +975,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--target",
         required=True,
         choices=SUPPORTED_TARGETS,
-        help="Target language code. The shipped 23 are ar cs da de el es fi "
-        "fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh — the Argos-fillable "
-        "set is the 22 without zh (zh is hand-written via the overrides TSV; "
-        "its fill output is not trusted). vi is accepted but unfillable (no "
-        "Argos model). id and sk are NOT accepted.",
+        help="Target language code — the complete shipped set of 23: ar cs "
+        "da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh. "
+        "The Argos-fillable set is the 22 without zh (zh is hand-written "
+        "via the overrides TSV; its fill output is not trusted).",
     )
     parser.add_argument(
         "--backend",

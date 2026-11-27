@@ -195,7 +195,7 @@ std::vector<std::string> capabilityKeys()
     static const char *const keys[] = {
         "validate", "filesystem", "dpkg", "fixbroken", "aptupdate", "upgrade",
         "dkms", "display", "gpu", "input-devices", "network", "initramfs",
-        "efi", "grub", "extlinux", "bootstack", "kernels"
+        "efi", "grub", "extlinux", "bootstack", "kernels", "numlock"
     };
     std::vector<std::string> result;
     for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -215,7 +215,7 @@ std::vector<std::string> diagnosticKeys()
         // change had reordered only the diagnosticSpecs display table while
         // this list still drove the Diagnostics-tab check list with the old
         // order).
-        "input", "network",
+        "input", "numlock", "network",
         "errors", "usage", "filesystem", "fstab", "btrfs", "mapper", "luks",
         "report"
     };
@@ -294,7 +294,7 @@ const char *const mapTokenList[] = {
     "environment", "backend", "package", "boot", "boot-evidence", "kernel",
     "grub", "uki", "display", "gpu", "input", "network", "errors", "usage",
     "filesystem", "fstab",
-    "btrfs", "mapper", "luks", "report", "capabilities", "all",
+    "btrfs", "mapper", "luks", "report", "numlock", "capabilities", "all",
     "-", "union", "shell-class"
 };
 

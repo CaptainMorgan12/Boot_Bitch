@@ -989,6 +989,15 @@ const ToolSpec toolSpecs[] = {
       "Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules."),
       "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false, 0,
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Choose an input device repair action from the evidence.") },
+    { "numlock", "",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Num Lock at early boot stages"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Enable Num Lock"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Add the boot-bitch Num Lock module to the detected initramfs and rebuild the initrd image(s), so Num Lock is on from the earliest boot point: the drive-decryption prompt (where one exists), then the graphical login and the console login inherit the state. "
+      "The change takes effect at the next boot; the desktop's own Num Lock setting is never changed."),
+      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Manual recovery tool"), false, false, false, 0,
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Enable Num Lock at the earliest boot point.") },
     { "network", "network",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity repair"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair network"),
@@ -1036,7 +1045,8 @@ const ToolSpec toolSpecs[] = {
       "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Full Repair plan: Manual recovery tool"), true, true, false,
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Run the guarded boot-stack reconciliation? The helper runs the mapper/crypttab validation, the initramfs rebuild and the GRUB-legacy regeneration in one pass with every component preflight and backup."),
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Reconcile the boot stack.") }
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Reconcile the boot stack.") },
+
 };
 const int toolSpecCount = sizeof(toolSpecs) / sizeof(toolSpecs[0]);
 
@@ -1068,7 +1078,8 @@ const RepairStageTitle repairStageTitles[] = {
     { "gpu", QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair") },
     { "kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair") },
     { "input-devices", QT_TRANSLATE_NOOP("LegacyMainWindow", "Input device repair") },
-    { "network", QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity repair") }
+    { "network", QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity repair") },
+    { "numlock", QT_TRANSLATE_NOOP("LegacyMainWindow", "Num Lock at early boot stages") }
 };
 const int repairStageTitleCount = sizeof(repairStageTitles) / sizeof(repairStageTitles[0]);
 
@@ -1307,6 +1318,12 @@ const DiagnosticSpec diagnosticSpecs[] = {
       "proof for the LUKS unlock prompt, plus recent boot evidence."),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "read-only input device and initramfs keyboard inspection") },
+    { "numlock",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Num Lock at early boot stages"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Reports the truthful per-stage Num Lock state: the drive-decryption prompt (where one exists for the detected boot chain and encryption), the graphical login, the console login, the desktop session (reported as the desktop's own setting, never changed) and the firmware/GRUB boundary (reported as out-of-reach), plus the mechanism and knob evidence, without changing anything."),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "read-only Num Lock early boot state inspection") },
     { "network",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Network / connectivity"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -1316,6 +1333,7 @@ const DiagnosticSpec diagnosticSpecs[] = {
       "changing anything."),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "read-only network adapter and connectivity inspection") },
+
     { "errors",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot errors"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -2759,20 +2777,40 @@ bool LegacyMainWindow::applyCommandTranscriptMapped(const ParsedTranscript &pars
                || m_pendingVerb == QString::fromLatin1("browse-target")) {
         return false; // read-only
     } else if (!commandOk && !cancelled) {
-        // A genuine failure of a modifying action may have completed an
-        // earlier stage before stopping: the complete set (fail safe). A
-        // read-only action (the validate/fs-inspect verbs, a read-only map
-        // row, unlock/config/browse traffic) invalidates nothing — modern
-        // only invalidates the modifying repair/copy verbs on failure.
+        // Round 43 (the modern mirror — the user's Fedora finding): a genuine
+        // failure of a modifying action follows the SAME map-row scoping as a
+        // successful one — the stages the transcript reports changed
+        // invalidate their map rows' affected sections, never the blanket
+        // complete set.  A read-only action (the validate/fs-inspect verbs, a
+        // read-only map row, unlock/config/browse traffic) invalidates
+        // nothing; a failure whose transcript reports no change invalidates
+        // nothing (the modern round-194 refinement); an unclassifiable key
+        // list keeps the fail-safe complete set (the round-16 contract).
         const QString verb = m_pendingVerb;
         const bool modifyingVerb = verb == QString::fromLatin1("repair")
             || verb == QString::fromLatin1("host-repair")
             || verb == QString::fromLatin1("fs-repair")
             || verb == QString::fromLatin1("host-fs-repair");
-        full = modifyingVerb
-            && stagesAreModifying(m_repairDiagnosticMap, m_activeRepairStages);
-        if (!full) {
+        if (!modifyingVerb
+            || !stagesAreModifying(m_repairDiagnosticMap, m_activeRepairStages)) {
             return false;
+        }
+        const QStringList keys =
+            invalidatingRepairToolKeys(parsed, m_activeRepairStages);
+        if (keys.isEmpty()) {
+            return false; // no stage reported a change before the failure
+        }
+        for (QStringList::ConstIterator it = keys.begin(); it != keys.end(); ++it) {
+            const std::vector<std::string> mapped =
+                mapAffectedSectionsForTool(m_repairDiagnosticMap, toStd(*it));
+            if (mapSectionsAreComplete(mapped)) {
+                full = true;
+                break;
+            }
+            appendUniqueSections(&affected, mapSectionsToQStringList(mapped));
+        }
+        if (!full && affected.isEmpty()) {
+            full = true; // an unclassifiable failed request: fail safe
         }
     } else if (cancelled) {
         if (!repairTranscriptHasChangedStatus(parsed)) {
@@ -2875,12 +2913,32 @@ void LegacyMainWindow::accumulateRepairPlanInvalidation(const ParsedTranscript &
     QValueList<QString> affected;
     bool full = false;
     if (!commandOk && !cancelled) {
-        // A genuine stage failure may have left more than its mapped sections
-        // in an unknown state: the complete set; a failed read-only
-        // pre-stage invalidates nothing.
-        full = stagesAreModifying(m_repairDiagnosticMap, m_activeRepairStages);
-        if (!full) {
+        // Round 43 (the modern mirror — the user's Fedora finding): a failed
+        // plan stage follows the SAME map-row scoping as a successful one —
+        // the failed numlock stage accumulates the numlock row's affected
+        // sections, never the blanket complete set.  A failed read-only
+        // pre-stage invalidates nothing; a failure whose transcript reports
+        // no change invalidates nothing; an unclassifiable key list keeps
+        // the fail-safe complete set.
+        if (!stagesAreModifying(m_repairDiagnosticMap, m_activeRepairStages)) {
             return;
+        }
+        const QStringList keys =
+            invalidatingRepairToolKeys(parsed, m_activeRepairStages);
+        if (keys.isEmpty()) {
+            return; // no stage reported a change before the failure
+        }
+        for (QStringList::ConstIterator it = keys.begin(); it != keys.end(); ++it) {
+            const std::vector<std::string> mapped =
+                mapAffectedSectionsForTool(m_repairDiagnosticMap, toStd(*it));
+            if (mapSectionsAreComplete(mapped)) {
+                full = true;
+                break;
+            }
+            appendUniqueSections(&affected, mapSectionsToQStringList(mapped));
+        }
+        if (!full && affected.isEmpty()) {
+            full = true; // an unclassifiable failed stage: fail safe
         }
     } else if (cancelled) {
         if (!repairTranscriptHasChangedStatus(parsed)) {
@@ -14331,6 +14389,9 @@ const LegacyCapabilityReasonSpec legacyCapabilityReasonSpecs[] = {
     { "no-boot-filesystem", QT_TRANSLATE_NOOP("LegacyMainWindow", "No /boot (and no resolved EFI System Partition) is visible for the selected scope.") },
     { "no-display-manager", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported display manager was detected in the target.") },
     { "no-display-manager-unit", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported display manager unit is installed in the target.") },
+    { "no-initramfs-integration-path", QT_TRANSLATE_NOOP("LegacyMainWindow", "No Num Lock initramfs integration path is available for the detected initramfs backend.") },
+    { "numlock-declined", QT_TRANSLATE_NOOP("LegacyMainWindow", "The Num Lock early boot change was declined; nothing was changed.") },
+    { "numlock-already-enabled", QT_TRANSLATE_NOOP("LegacyMainWindow", "Num Lock early boot is already enabled in this scope; no changes were made.") },
     { "no-dnf-repositories", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no enabled dnf repositories.") },
     { "no-dnf-repositories-to-refresh", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no enabled dnf repositories to refresh.") },
     { "no-dracut-kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "No installed dracut kernels were found under target /boot.") },

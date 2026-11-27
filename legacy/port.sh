@@ -313,6 +313,18 @@ transform_syntax()
     note "date --iso-8601" "$(count_literal '$(date --iso-8601=seconds 2>/dev/null || date)' "$file")"
     apply_sed "$file" -e 's#\$(date --iso-8601=seconds 2>/dev/null || date)#$(legacy_date_iso)#g' \
         || return 1
+
+    # Round 46 (the cancel's raw leak): the modern abort's forkless stamp
+    # (bash 4.2 %(...)T) has no bash-3.1 equivalent — the ported legacy
+    # helper keeps the forkful $(date) stamp (the pre-round-46 form).  The
+    # legacy GUI's cancel topology (the direct kill path, no CANCEL record)
+    # predates the session protocol; the bash-3.1 job-status notify the fix
+    # suppresses on modern cannot be suppressed there and stays documented
+    # in the round report.
+    note "forkless abort stamps (round 46)" "$(count_literal "printf -v stamp '%(%H:%M:%S)T' -1 2>/dev/null || stamp=\"\"" "$file")"
+    apply_sed "$file" \
+        -e 's/^\( *\)printf -v stamp .%(%H:%M:%S)T. -1 2>\/dev\/null || stamp=""$/\1stamp="$(date '\''+%H:%M:%S'\'' 2>\/dev\/null || true)"/' \
+        || return 1
 }
 
 # 1c. A12-05: bash 3.1.17 corrupts its /dev/fd fifo bookkeeping
@@ -1033,19 +1045,19 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 93
+    check_count 'legacy_readarray' 'legacy_readarray' 110
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 147
-    check_count 'legacy_sort_versions' 'legacy_sort_versions' 18
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 182
+    check_count 'legacy_sort_versions' 'legacy_sort_versions' 23
     check_count 'legacy_date_iso' 'legacy_date_iso' 5
-    check_count 'legacy_lc' 'legacy_lc ' 77
+    check_count 'legacy_lc' 'legacy_lc ' 86
     check_count 'legacy_uc' 'legacy_uc ' 20
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 24
     check_count 'legacy_assoc_get' 'legacy_assoc_get ' 49
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 4
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 75
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 77
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }

@@ -2,6 +2,7 @@
 
 #include "CapabilityChecker.h"
 #include "SystemScanner.h"
+#include "BootBitchPolkitAgent.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -207,6 +208,8 @@ struct GrubMenuEntry {
     int depth = 0;         // submenu nesting level (0 = top-level)
     QString kind;          // "menuentry" or "submenu" (helper protocol)
     QString configfile;    // external config the submenu loads, or empty
+    bool wrapped = false;  // round 79: inside a depth-0 if/fi wrapper — pinned,
+                           // never individually reorderable
 };
 
 // The complete `grub-list` result: the GRUB config path, the resolved default,
@@ -217,6 +220,7 @@ struct GrubMenuInventory {
     QString defaultEntry;
     QString espPartuuid;
     QString driveModel;
+    QString defaultNote;   // round 79: the UKI-first honest-limitation note, or empty
     QList<GrubMenuEntry> rows;
 };
 
@@ -341,7 +345,7 @@ private:
     bool m_shouldAnimate = false;
 };
 
-class MainWindow final : public QMainWindow
+class MainWindow final : public QMainWindow, public BootBitchAgentHost
 {
     Q_OBJECT
 
@@ -576,6 +580,11 @@ private:
     void rebalanceBootEntriesCurrentView(int remainingRetries = 2);
     void moveBootEntry(bool up);
     void applyBootEntryOrder();
+    // Round 79 (plan-boot-menu-reorder §5): the Boot menu table-only reorder
+    // (depth-0 rows only) and the Save committing the order through the
+    // verified grub-reorder helper verb.
+    void moveGrubMenuEntry(bool up);
+    void applyGrubMenuOrder();
     void deleteSelectedBootEntry();
     void renameSelectedBootEntry();
     // Runs the EFI/UKI bootloader repair (`efi` stage) for the active Boot
@@ -621,6 +630,7 @@ private:
     void updateSnapshotControls();
     void clearSnapshotResults();
     void scheduleSnapshotPreload();
+    void probeSnapshotStorePresence();
     // Round 73 (A1, Fedora stuck-indicator): disarms the armed "queued behind
     // the running operation" snapshot state when a deferred load is resolved
     // WITHOUT dispatching a new request (an already-loaded scope, an in-flight
@@ -720,6 +730,43 @@ private:
     // helper's snapshots/host-snapshots create verb with the CONFIRM prompt;
     // a success reloads the snapshot inventory).
     void createSnapshot();
+    // Round 12b/13 (the maintainer's UX rulings): the completion
+    // auto-inspect — after a successful snapshot CREATE (round 12b) or a
+    // successful DELETE (round 13), the pane follows the two-step flow:
+    // the concise completion outcome, then the background inventory reload
+    // (the bounded poll below), the resolved snapshot's read-only inspect
+    // (the shared verb + the BusyOperationScope discipline) and the PURE
+    // snapshot details (the round-229 presentation).  The create resolves
+    // the newest "Boot Bitch manual snapshot" row; the delete resolves the
+    // LATEST remaining snapshot.  The failure paths are HONEST — the
+    // concise outcome plus a one-line note (unresolvable / inspect-failed /
+    // empty store), never a fabricated dump, never a blocking popup.
+    void scheduleSnapshotAutoInspect(const QString &outcomeText,
+                                     bool resolveLatestRemaining,
+                                     const QString &unresolvedNote,
+                                     const QString &inspectFailedNote,
+                                     const QString &emptyNote);
+    void cancelSnapshotAutoInspect();
+    // Round 14 (item 3): the explicit Load Snapshots press completes with the
+    // newest VISIBLE row selected (the table's presentation order — the row
+    // the user sees at the top; the selection + the scroll-to) and the
+    // read-only inspect filling the pane with its PURE details (the round-229
+    // presentation).  The honest fallbacks: an empty store keeps the honest
+    // inventory message; a failed or line-less inspect appends the one-line
+    // note to the load message — never a fabricated dump, never a blocking
+    // popup.  Automatic loads (the scope-entry preload, the X3 reloads and
+    // the deferred retry) do NOT auto-select — they keep the honest
+    // "Loaded N …" idle state.
+    void selectLatestVisibleSnapshotAndInspect();
+    // The shared read-only inspect request: the BusyOperationScope
+    // discipline, the inspecting log line, the inspect verb and the
+    // completion/failure log line.  The caller renders the outcome.
+    QString runSnapshotInspectRequest(const QString &snapshotId, bool *succeeded);
+    // The round-229 pure-details render, shared by the manual inspect and
+    // the completion auto-inspect: the inspect output from its first
+    // "Snapshot: <id>" line onward.  Returns false when the output carries
+    // no such line (the caller chooses the honest fallback presentation).
+    bool renderSnapshotInspectDetails(const QString &output);
     void runChrootShellCommand();
     // Session-scoped (in-memory only) command history navigation for the
     // Chroot/Host shell command field. +1 steps Up (toward older entries),
@@ -774,6 +821,12 @@ private:
                          const QString &level = QStringLiteral("INFO"),
                          LogEntryKind kind = LogEntryKind::Application);
     QString trackedEntryIdentity(const QString &entry) const;
+    // Round 58 (the Fedora env-validation trace): stamps one phase marker
+    // ("[EVAL-TIMING] <phase> (+<ms> since process start)") into the app
+    // session log.  Armed only when BOOT_BITCH_EVAL_TIMING=1 — the real-app
+    // measurement path (the user's Run All click), never active in ordinary
+    // use.
+    void evalTimingLog(const QString &phase);
     QString currentLogScopeKey() const;
     // Diagnostic status identities are derived from exactly the fields the
     // status text contains, so two identities can never share an entry text
@@ -1051,6 +1104,36 @@ private:
     void authorizePrivilegedSessionNow();
     void updateAuthorizationAffordance();
     QString currentPrivilegedScopeKey() const;
+    // Round 16 (0.2.32 — the user's Sparky same-session finding): the ONE
+    // automatic in-place re-prompt for the wrong-password class.  Dispatched
+    // from the authorization failure site AFTER the attempt's single popup
+    // closes; mirrors authorizePrivilegedSessionNow minus the windowless
+    // failure surfacing, and clears m_authorizationAutomaticRetryActive on
+    // every exit so its own failure stays quiet (no second popup, no further
+    // automatic retry — the Authorize button is the path back).
+    void startAuthorizationAutomaticRetry();
+    // Round 17 (0.2.32 — the in-app PolkitQt1 agent, BootBitchAgentHost):
+    // builds the conversation's password dialog (the §4 ui-guide styling, the
+    // LUKS locked-icon pattern); the agent owns + closes it.  The other
+    // callbacks carry the per-attempt outcome: the deliberate dismissal
+    // (quiet), the wrong password (the ONE popup + the ONE dialog re-open),
+    // and a foreign action answered while registered (logged).
+    QDialog *polkitAgentCreatePasswordDialog(const QString &message,
+                                             const QString &identityName) override;
+    void polkitAgentDismissed() override;
+    void polkitAgentWrongPassword() override;
+    void polkitAgentForeignAction(const QString &actionId) override;
+    void polkitAgentConversationReceived(const QString &actionId, bool retry) override;
+    // Round 11 (0.2.32 — the user's Sparky double-reprompt finding): a failed
+    // or cancelled authorization publishes the deferred state for the scope
+    // current at failure time.  Called from the failure site of
+    // ensurePrivilegedSession (production + UI-test seam) and from the
+    // scope-commit request's completion, so the FIRST failed attempt already
+    // defers — every later automatic caller is refused by the
+    // deferred-scope guard and the Authorize button stays the only path that
+    // starts a fresh Polkit conversation.  A no-op while no scope is
+    // committed or when the scope is already deferred.
+    void publishAuthorizationDeferral();
     // Argument classes for the privileged-session request protocol. The class
     // is decided structurally (request kind + argument position), never from
     // the value itself, so a payload can never pick its own validation level.
@@ -1542,6 +1625,18 @@ private:
     void handleIndividualRepairFailureTerminal(const QStringList &toolKeys,
                                                const QString &transcript,
                                                LogEntryKind kind);
+    // Round 69 (ITEM 3, the error-marker regeneration lag): the host-default
+    // FAILURE terminal — the Make Default failure's complete-set invalidation
+    // + the coalesced regeneration fire at the ERROR marker (the DONE record)
+    // while the failure popup stays open for review — the at-marker contract
+    // on the error path (the round-194/195 pattern).  The host-default row is
+    // deliberately broad (the complete running-host set), and a failed Make
+    // Default reports no explicit changed stage (the transaction rolled
+    // back), so this handler does NOT gate on the transcript's change lines
+    // — the boot-default state must re-verify fresh regardless.  Latches
+    // m_repairSuccessTerminalHandled so the post-frame completion does not
+    // apply the invalidation twice.
+    void handleHostDefaultFailureTerminal();
     // Round 196 (ITEM 3): the cancel/abort-marker terminal handler — the
     // round-188 pattern applied to the CANCEL marker: a user force-stop's
     // DONE-143 record (the session force-stop / the CANCEL record / the
@@ -1887,6 +1982,13 @@ private:
     // bounds the deferral to kPrivilegedQueueWaitTimeoutMs so a wedged owner
     // can never make the unlock wait forever.
     QElapsedTimer m_unlockDeferralStarted;
+    // Round 58 (the Fedora env-validation trace): the monotonic start time of
+    // the process, used by evalTimingLog() to stamp the environment-validation
+    // phases into the app session log.  Inert unless BOOT_BITCH_EVAL_TIMING=1
+    // is set in the environment (the bounded trace shape for the real-app
+    // measurement).
+    QElapsedTimer m_evalPhaseTimer;
+    bool m_evalTimingArmed = false;
     bool m_targetDiagnosticsNeedRegeneration = false;
     // Scoped invalidation: sections whose cached evidence was invalidated by a
     // repair action but not yet regenerated. The full flag above supersedes
@@ -2040,6 +2142,11 @@ private:
     quint64 m_snapshotLoadedGeneration = 0;
     bool m_snapshotInventoryInFlight = false;
     QString m_snapshotRequestScopeKey;
+    // Round 12b/13: the completion auto-inspect state (the bounded poll
+    // that resolves the snapshot after the X3 reload).
+    QTimer *m_snapshotAutoInspectTimer = nullptr;
+    QString m_snapshotAutoInspectScope;
+    int m_snapshotAutoInspectTicks = 0;
 
     // ---- Boot entries (running-host UEFI firmware entry manager) -----------
     QComboBox *m_bootEntriesViewCombo = nullptr;
@@ -2085,7 +2192,7 @@ private:
     QHash<QString, QString> m_bootEntriesPendingRename; // id -> trimmed new label
     QStringList m_bootEntriesSavedOrder;
 
-    // ---- GRUB boot-menu view (read-only; host and target scope) ------------
+    // ---- GRUB boot-menu view (host and target scope) -----------------------
     QTreeWidget *m_grubMenuTree = nullptr;
     QPlainTextEdit *m_grubMenuDetails = nullptr;
     QSplitter *m_grubMenuSplitter = nullptr;
@@ -2094,6 +2201,15 @@ private:
     // content-hugging tree minimum still tracks the content.
     bool m_grubMenuSplitterUserAdjusted = false;
     QPushButton *m_grubMenuLoadButton = nullptr;
+    // Round 79 (plan-boot-menu-reorder §5): the Boot menu reorder controls —
+    // Move Up / Move Down / Save, the EFI-view shape.  Table-only reorder;
+    // Save commits through the verified grub-reorder helper verb.
+    QPushButton *m_grubMenuMoveUpButton = nullptr;
+    QPushButton *m_grubMenuMoveDownButton = nullptr;
+    QPushButton *m_grubMenuSaveOrderButton = nullptr;
+    // The depth-0 anchor order captured at load time; a differing current
+    // order arms Save.
+    QStringList m_grubMenuSavedOrder;
     GrubMenuInventory m_grubMenuInventory;
     ExtlinuxInventory m_extlinuxInventory;
     GrubLegacyInventory m_grubLegacyInventory;
@@ -2105,6 +2221,12 @@ private:
     // rows rather than GRUB menuentry or extlinux rows.
     bool m_bootMenuShowingGrubLegacy = false;
     bool m_grubMenuLoaded = false;
+    // Round 79: the reorder controls apply to the conventional-GRUB menu only
+    // (never extlinux/grub-legacy — the verb fails closed there anyway).
+    bool m_grubMenuReorderable() const {
+        return m_grubMenuLoaded && !m_bootMenuShowingExtlinux
+            && !m_bootMenuShowingGrubLegacy;
+    }
 
     // Per-scope cache of the firmware boot entries and boot-menu inventories,
     // keyed by the boot-entries scope key ("host:<disk>" / "target:<disk>").
@@ -2137,6 +2259,7 @@ private:
         bool menuShowingExtlinux = false;
         bool menuShowingGrubLegacy = false;
         bool menuLoaded = false;
+        QStringList grubMenuSavedOrder;  // round 79: the staged reorder state
     };
     QHash<QString, BootEntriesScopeCache> m_bootEntriesCache;
 
@@ -2307,6 +2430,7 @@ private:
     QString m_rememberedTargetComponentPath;
     QString m_snapshotResultIdentity;
     int m_snapshotInventoryCount = 0;
+    bool m_snapshotStorePresent = false;
 
     QMap<QString, QString> m_targetDiagnosticCache;
     QMap<QString, QDateTime> m_targetDiagnosticTimes;
@@ -2555,6 +2679,50 @@ private:
     // starts or a session becomes usable.
     QString m_authorizationFailureText;
     bool m_authorizationRequestInFlight = false;
+    // Round 16 (0.2.32 — the one-popup/one-retry contract): true once the
+    // failure site has handled a FRESH attempt's outcome (the single popup,
+    // the quiet cancel, or the automatic re-prompt); a caller that observes
+    // the deferred-scope guard refusal instead owns its own outcome and the
+    // guard resets the flag so that caller's dialog is never suppressed.
+    bool m_authorizationOutcomePublished = false;
+    // Round 16 (0.2.32): true while the automatic single re-prompt (the
+    // wrong-password class) is in flight — its own failure stays quiet and
+    // never re-arms another automatic retry.
+    bool m_authorizationAutomaticRetryActive = false;
+    // Round 16b (0.2.32 — the user's re-test): the CHAIN-WIDE popup latch —
+    // the first failure popup of a failed-session cycle sets it, and every
+    // popup site (the failure site for any later attempt — the automatic
+    // re-prompt, the Authorize retry — and the deferred-action caller's
+    // dialog) honors it, so the second popup physically cannot render after
+    // the first in the same attempt chain, whatever the class.  Reset only
+    // when the session becomes established (a fresh cycle), when the user
+    // locks the session, or when a deliberate scope re-entry/commit resets
+    // the chain (the round-15/15b resets).
+    bool m_authorizationFailurePopupShown = false;
+    // Round 17 (0.2.32 — the in-app agent): true once the agent's password
+    // dialog was DISMISSED by the user during the current conversation; the
+    // failure site maps it to the quiet cancel class (no popup, no
+    // re-prompt — the deliberate dismissal must never be reported).  Cleared
+    // when the next conversation registers.
+    bool m_polkitAgentConversationDismissed = false;
+    // Round 17f (0.2.32): true once the agent's conversation completed with
+    // a FAILED authentication AFTER a submitted response — the positive
+    // wrong-password evidence (the dismissal is the separate quiet path).
+    // The failure site maps it to the WrongPassword class: the ONE popup
+    // with the correct wording + the ONE automatic re-prompt.  Cleared when
+    // the next conversation registers, on success, and when the failure site
+    // consumes it.
+    bool m_polkitAgentWrongPasswordPending = false;
+#ifdef BOOT_BITCH_HAVE_POLKIT_AGENT
+    // The registered in-app authentication agent for the current
+    // session-establishment conversation (null outside the busy window).
+    class BootBitchPolkitAgent *m_polkitAgent = nullptr;
+#endif
+    // Round 17 (0.2.32 — the UI-test seam): when set, the seam's failed
+    // authorization simulates the agent's wrong-password conversation — the
+    // ONE popup + the ONE automatic re-prompt (the first attempt carries the
+    // failure detail, the retry resolves by the granted flag).
+    bool m_uiTestPolkitAgentWrongPassword = false;
     quint64 m_privilegedSessionRequestCount = 0;
     bool m_uiTestPrivilegedSessionGranted = false;
     // Test-only hold time that keeps the UI-test authorization request

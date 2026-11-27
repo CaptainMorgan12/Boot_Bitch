@@ -241,4 +241,415 @@ grep -q 'ln -sfn "/etc/init.d/\$DISPLAY_MANAGER_SERVICE"' <<<"$openrc_repair_bod
 grep -Eq "grep -Exq 'enabled\|enabled-runtime\|alias\|indirect'" "$HELPER" \
     || { echo 'FAIL: systemd display-manager is-enabled check no longer accepts the alias/indirect enabled states' >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# greetd landing contract (rounds 58/78/83b): the landing brings the wlgreet
+# GRAPHICAL greeter AND the post-login desktop-session command, every landing
+# failure routes through the component-level refusal (the distinguished exit
+# code + the truthful unchanged status — never a stage ERROR), and the
+# round-83b write-verify trap (the Debian-family config.toml whose
+# [default_session] is the LAST section) is pinned.
+# ---------------------------------------------------------------------------
+grep -q 'GREETD_LANDING_REFUSAL_RC=42' "$HELPER" \
+    || { echo 'FAIL: greetd landing refusal code is missing' >&2; exit 1; }
+grep -q 'display_manager_greetd_write_session_command' "$HELPER" \
+    || { echo 'FAIL: greetd session-command write is missing' >&2; exit 1; }
+grep -q 'display_manager_greetd_session_shell' "$HELPER" \
+    || { echo 'FAIL: greetd session-shell detection is missing' >&2; exit 1; }
+grep -q 'reason greetd-no-session-shell' "$HELPER" \
+    || { echo 'FAIL: greetd-no-session-shell refusal is missing' >&2; exit 1; }
+grep -q 'reason greetd-config-missing' "$HELPER" \
+    || { echo 'FAIL: greetd-config-missing refusal is missing' >&2; exit 1; }
+grep -q 'reason greetd-config-write-failed' "$HELPER" \
+    || { echo 'FAIL: greetd-config-write-failed refusal is missing' >&2; exit 1; }
+grep -q 'reason greetd-config-write-verify-failed' "$HELPER" \
+    || { echo 'FAIL: greetd-config-write-verify-failed refusal is missing' >&2; exit 1; }
+grep -q 'reason greetd-gnome-wayland-unsupported' "$HELPER" \
+    || { echo 'FAIL: greetd-gnome-wayland-unsupported refusal is missing (the round-83c GNOME class)' >&2; exit 1; }
+grep -q '^greetd_greeter_is_bare_wlgreet()' "$HELPER" \
+    || { echo 'FAIL: the bare-non-compositor greeter residue detector is missing (the round-83c heal)' >&2; exit 1; }
+grep -q '^display_manager_greetd_shell_is_gnome_wayland()' "$HELPER" \
+    || { echo 'FAIL: the GNOME-Wayland session classifier is missing (the round-83c honest handling)' >&2; exit 1; }
+grep -q '^display_manager_services_same_manager()' "$HELPER" \
+    || { echo 'FAIL: the §15.6 alias-pair comparison helper is missing (the round-83c purge deferral)' >&2; exit 1; }
+grep -q 'grep -Eq .*AutomaticLoginEnable' "$HELPER" \
+    || { echo 'FAIL: the GDM autologin disable probe is missing' >&2; exit 1; }
+grep -q '/etc/gdm3/custom.conf' "$HELPER" \
+    || { echo 'FAIL: the Ubuntu /etc/gdm3/custom.conf autologin path is not probed (the round-83c finding 2)' >&2; exit 1; }
+grep -q 'switch_rc == GREETD_LANDING_REFUSAL_RC' "$HELPER" \
+    || { echo 'FAIL: the walk-through no longer re-displays the menu on a greetd-landing refusal' >&2; exit 1; }
+write_config_body="$(sed -n '/^display_manager_greetd_write_config()/,/^}/p' "$HELPER")"
+if grep -q '[[:space:]]fail ' <<<"$write_config_body"; then
+    echo 'FAIL: greetd config write still hard-fails (the round-83b stage-ERROR class)' >&2
+    exit 1
+fi
+if grep -q 'command = "wlgreet"' <<<"$write_config_body"; then
+    echo 'FAIL: the greetd write still carries the bare-wlgreet tail-flush shape (the write-verify trap)' >&2
+    exit 1
+fi
+
+# The round-83b landing shape: the stock agreety greeter + the
+# [default_session]-LAST config.toml (the Debian-family trap shape) + the
+# stock `command = "sway"` wlgreet.toml (the black-session shape) →
+# the landing writes the wlgreet compositor greeter AND the detected desktop
+# session command (a NON-GNOME desktop session — the GNOME-Wayland class is
+# the round-83c refusal, drilled separately), rc 0, both verifies pass.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/share/wayland-sessions" "$gd_root/usr/bin"
+    printf '[terminal]\nvt = 1\n\n[default_session]\ncommand = "agreety --cmd /bin/sh"\nuser = "greeter"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    printf 'command = "sway"\noutputMode = "all"\nscale = 1\n' \
+        > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '[Desktop Entry]\nName=Plasma\nExec=/usr/bin/startplasma-wayland\n' \
+        > "$gd_root/usr/share/wayland-sessions/plasma.desktop"
+    printf '#!/bin/sh\n' > "$gd_root/usr/bin/startplasma-wayland"; chmod +x "$gd_root/usr/bin/startplasma-wayland"
+    TARGET_ROOT="$gd_root"
+    TARGET_OS_ID=ubuntu
+    TARGET_DISTRO_FAMILY=debian
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT="kde-plasma-desktop (installed desktop metapackage)"
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    display_manager_greetd_landing
+    grep -Fq 'command = "sway --config /etc/greetd/sway-config"' "$gd_root/etc/greetd/config.toml" \
+        || { echo 'FAIL: the [default_session]-last config.toml did not receive the wlgreet compositor command' >&2; exit 1; }
+    grep -Fq 'command = "wlgreet"' "$gd_root/etc/greetd/config.toml" \
+        && { echo 'FAIL: the bare-wlgreet tail-flush shape landed in the config' >&2; exit 1; }
+    grep -Fq 'command = "/usr/bin/startplasma-wayland"' "$gd_root/etc/greetd/wlgreet.toml" \
+        || { echo 'FAIL: the stock wlgreet.toml command was not rewritten to the detected desktop session' >&2; exit 1; }
+)
+
+# The Ubuntu live shape: the greeter is ALREADY configured (the compositor
+# command) — the landing still rewrites the stock `command = "sway"`
+# wlgreet.toml to the detected shell and leaves the greeter config untouched.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/share/wayland-sessions" "$gd_root/usr/bin"
+    printf '[terminal]\nvt = 7\n\n[default_session]\ncommand = "sway --config /etc/greetd/sway-config"\nuser = "_greetd"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    printf 'command = "sway"\n' > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '[Desktop Entry]\nName=Plasma\nExec=/usr/bin/startplasma-wayland\n' \
+        > "$gd_root/usr/share/wayland-sessions/plasma.desktop"
+    printf '#!/bin/sh\n' > "$gd_root/usr/bin/startplasma-wayland"; chmod +x "$gd_root/usr/bin/startplasma-wayland"
+    TARGET_ROOT="$gd_root"
+    TARGET_OS_ID=ubuntu
+    TARGET_DISTRO_FAMILY=debian
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT="kde-plasma-desktop (installed desktop metapackage)"
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    before_config="$(sha256sum "$gd_root/etc/greetd/config.toml" | awk '{print $1}')"
+    display_manager_greetd_landing
+    after_config="$(sha256sum "$gd_root/etc/greetd/config.toml" | awk '{print $1}')"
+    [[ "$before_config" == "$after_config" ]] \
+        || { echo 'FAIL: the already-configured greeter config was rewritten' >&2; exit 1; }
+    grep -Fq 'command = "/usr/bin/startplasma-wayland"' "$gd_root/etc/greetd/wlgreet.toml" \
+        || { echo 'FAIL: the already-configured-greeter landing skipped the session-command write' >&2; exit 1; }
+)
+
+# The no-session-shell refusal: no session entries AND no resolvable existing
+# command → the preflight AND the landing both refuse with the distinguished
+# code and the truthful unchanged status (never a stage ERROR).
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd"
+    printf '[default_session]\ncommand = "sway --config /etc/greetd/sway-config"\nuser = "_greetd"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    TARGET_ROOT="$gd_root"
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT=""
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    repair_change_status() { printf 'Repair change status %s: %s\n' "$1" "$2"; }
+    rc=0
+    display_manager_greetd_landing_preflight || rc=$?
+    [[ "$rc" == "$GREETD_LANDING_REFUSAL_RC" ]] \
+        || { echo 'FAIL: the no-session-shell preflight did not refuse (rc='"$rc"')' >&2; exit 1; }
+    [[ "${DISPLAY_MANAGER_GREETD_REFUSAL_REASON:-}" == greetd-no-session-shell ]] \
+        || { echo 'FAIL: the no-session-shell refusal reason is missing' >&2; exit 1; }
+    rc=0
+    display_manager_greetd_landing || rc=$?
+    [[ "$rc" == "$GREETD_LANDING_REFUSAL_RC" ]] \
+        || { echo 'FAIL: the no-session-shell landing did not refuse (rc='"$rc"')' >&2; exit 1; }
+    emit_out="$(display_manager_greetd_emit_refusal_status)"
+    grep -Fqx 'Repair change status display: unchanged|reason:greetd-no-session-shell' <<<"$emit_out" \
+        || { echo 'FAIL: the no-session-shell refusal status line is wrong' >&2; printf '%s\n' "$emit_out" >&2; exit 1; }
+)
+
+# The custom-command keep: no session entries, but the existing wlgreet
+# command resolves inside the scope → the landing keeps it (rc 0).
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/local/bin"
+    printf '[default_session]\ncommand = "sway --config /etc/greetd/sway-config"\nuser = "_greetd"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    printf 'command = "/usr/local/bin/myshell"\n' > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '#!/bin/sh\n' > "$gd_root/usr/local/bin/myshell"; chmod +x "$gd_root/usr/local/bin/myshell"
+    TARGET_ROOT="$gd_root"
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT=""
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    rc=0
+    display_manager_greetd_landing || rc=$?
+    [[ "$rc" == 0 ]] \
+        || { echo 'FAIL: the resolvable custom post-login command was not kept (rc='"$rc"')' >&2; exit 1; }
+    grep -Fq 'command = "/usr/local/bin/myshell"' "$gd_root/etc/greetd/wlgreet.toml" \
+        || { echo 'FAIL: the custom post-login command was rewritten' >&2; exit 1; }
+)
+
+# The missing-config refusal: no /etc/greetd/config.toml → the landing
+# refuses with the config-missing reason + the truthful status (never a stage
+# ERROR).
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/share/wayland-sessions" "$gd_root/usr/bin"
+    printf 'command = "sway"\n' > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '[Desktop Entry]\nName=Ubuntu\nExec=/usr/bin/gnome-session --session=ubuntu\n' \
+        > "$gd_root/usr/share/wayland-sessions/ubuntu.desktop"
+    printf '#!/bin/sh\n' > "$gd_root/usr/bin/gnome-session"; chmod +x "$gd_root/usr/bin/gnome-session"
+    TARGET_ROOT="$gd_root"
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT="ubuntu-desktop (installed desktop metapackage)"
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    repair_change_status() { printf 'Repair change status %s: %s\n' "$1" "$2"; }
+    rc=0
+    display_manager_greetd_landing || rc=$?
+    [[ "$rc" == "$GREETD_LANDING_REFUSAL_RC" ]] \
+        || { echo 'FAIL: the missing-config landing did not refuse (rc='"$rc"')' >&2; exit 1; }
+    [[ "${DISPLAY_MANAGER_GREETD_REFUSAL_REASON:-}" == greetd-config-missing ]] \
+        || { echo 'FAIL: the missing-config refusal reason is wrong' >&2; exit 1; }
+    emit_out="$(display_manager_greetd_emit_refusal_status)"
+    grep -Fqx 'Repair change status display: unchanged|reason:greetd-config-missing' <<<"$emit_out" \
+        || { echo 'FAIL: the missing-config refusal status line is wrong' >&2; printf '%s\n' "$emit_out" >&2; exit 1; }
+)
+
+# ---------------------------------------------------------------------------
+# Round 83c (the DM runtime fix — the FIVE applied findings): the
+# bare-non-compositor residue heal, the GNOME-Wayland-under-greetd refusal,
+# the gdm3-vs-gdm purge deferral (the live-serving daemon survives), the
+# Ubuntu /etc/gdm3/custom.conf autologin path, and the §15.6 candidate
+# canonicalization.
+# ---------------------------------------------------------------------------
+
+# FINDING 3 — the pre-fix residue heal: a config.toml carrying the broken
+# tail-flush residue `command = "wlgreet"` (a bare greeter client, no
+# compositor) must NOT be read as an already-configured greeter — the
+# landing rewrites it through the single-path write (the compositor command)
+# and still writes the detected non-GNOME session command.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/share/wayland-sessions" "$gd_root/usr/bin"
+    printf '[terminal]\nvt = 1\n\n[default_session]\ncommand = "wlgreet"\nuser = "_greetd"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    printf 'command = "sway"\n' > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '[Desktop Entry]\nName=Plasma\nExec=/usr/bin/startplasma-wayland\n' \
+        > "$gd_root/usr/share/wayland-sessions/plasma.desktop"
+    printf '#!/bin/sh\n' > "$gd_root/usr/bin/startplasma-wayland"; chmod +x "$gd_root/usr/bin/startplasma-wayland"
+    TARGET_ROOT="$gd_root"
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT="kde-plasma-desktop (installed desktop metapackage)"
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    rc=0
+    display_manager_greetd_landing || rc=$?
+    [[ "$rc" == 0 ]] \
+        || { echo 'FAIL: the bare-wlgreet residue landing did not succeed (rc='"$rc"')' >&2; exit 1; }
+    grep -Fq 'command = "sway --config /etc/greetd/sway-config"' "$gd_root/etc/greetd/config.toml" \
+        || { echo 'FAIL: the bare-wlgreet residue was not rewritten to the compositor greeter' >&2; exit 1; }
+    grep -Fq 'command = "wlgreet"' "$gd_root/etc/greetd/config.toml" \
+        && { echo 'FAIL: the bare-wlgreet residue survived the rewrite' >&2; exit 1; }
+    grep -Fq 'msg:dm-greetd-greeter-residue-heal' "$SESSION_LOG" \
+        || { echo 'FAIL: the residue-heal marker was not logged' >&2; cat "$SESSION_LOG" >&2; exit 1; }
+    grep -Fq 'command = "/usr/bin/startplasma-wayland"' "$gd_root/etc/greetd/wlgreet.toml" \
+        || { echo 'FAIL: the healed landing skipped the session-command write' >&2; exit 1; }
+)
+
+# FINDING 4 — the GNOME-Wayland-under-greetd refusal: the detected session
+# shell is a wayland-sessions gnome-session entry → the classifier names the
+# class, the preflight AND the landing refuse with the distinguished code +
+# the truthful unchanged status, and the wlgreet.toml stays untouched.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    gd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$gd_root"' EXIT
+    SESSION_LOG="$gd_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$gd_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$gd_root/etc/greetd" "$gd_root/usr/share/wayland-sessions" "$gd_root/usr/bin"
+    printf '[default_session]\ncommand = "sway --config /etc/greetd/sway-config"\nuser = "_greetd"\n' \
+        > "$gd_root/etc/greetd/config.toml"
+    printf 'command = "sway"\n' > "$gd_root/etc/greetd/wlgreet.toml"
+    printf '[Desktop Entry]\nName=Ubuntu\nExec=/usr/bin/gnome-session --session=ubuntu\nDesktopNames=ubuntu;GNOME\n' \
+        > "$gd_root/usr/share/wayland-sessions/ubuntu.desktop"
+    printf '#!/bin/sh\n' > "$gd_root/usr/bin/gnome-session"; chmod +x "$gd_root/usr/bin/gnome-session"
+    TARGET_ROOT="$gd_root"
+    RUNNING_HOST_MODE=0
+    INSTALLED_DESKTOP_PROBED=1
+    INSTALLED_DESKTOP_FACT="ubuntu-desktop (installed desktop metapackage)"
+    target_package_installed() { [[ "$1" == wlgreet ]]; }
+    display_manager_repo_availability() { printf 'available\n'; }
+    repair_change_status() { printf 'Repair change status %s: %s\n' "$1" "$2"; }
+    shell="$(display_manager_greetd_session_shell)"
+    [[ "$shell" == "/usr/bin/gnome-session --session=ubuntu" ]] \
+        || { echo 'FAIL: the GNOME fixture did not detect the gnome-session shell' >&2; exit 1; }
+    display_manager_greetd_shell_is_gnome_wayland "$shell" \
+        || { echo 'FAIL: the gnome-session wayland shell was not classified GNOME-Wayland' >&2; exit 1; }
+    rc=0
+    display_manager_greetd_landing_preflight || rc=$?
+    [[ "$rc" == "$GREETD_LANDING_REFUSAL_RC" ]] \
+        || { echo 'FAIL: the GNOME-wayland preflight did not refuse (rc='"$rc"')' >&2; exit 1; }
+    [[ "${DISPLAY_MANAGER_GREETD_REFUSAL_REASON:-}" == greetd-gnome-wayland-unsupported ]] \
+        || { echo 'FAIL: the GNOME-wayland refusal reason is wrong' >&2; exit 1; }
+    rc=0
+    display_manager_greetd_landing || rc=$?
+    [[ "$rc" == "$GREETD_LANDING_REFUSAL_RC" ]] \
+        || { echo 'FAIL: the GNOME-wayland landing did not refuse (rc='"$rc"')' >&2; exit 1; }
+    emit_out="$(display_manager_greetd_emit_refusal_status)"
+    grep -Fqx 'Repair change status display: unchanged|reason:greetd-gnome-wayland-unsupported|param:/usr/bin/gnome-session --session=ubuntu' <<<"$emit_out" \
+        || { echo 'FAIL: the GNOME-wayland refusal status line is wrong' >&2; printf '%s\n' "$emit_out" >&2; exit 1; }
+    grep -Fq 'command = "sway"' "$gd_root/etc/greetd/wlgreet.toml" \
+        || { echo 'FAIL: the GNOME-wayland refusal wrote the wlgreet.toml' >&2; exit 1; }
+    # The X11 class is NOT refused: a shell resolved from an xsessions entry
+    # (the same gnome-session Exec text) classifies as non-GNOME-Wayland.
+    mkdir -p "$gd_root/usr/share/xsessions"
+    printf '[Desktop Entry]\nName=GNOME Xorg\nExec=/usr/bin/gnome-session --session=ubuntu-xorg\n' \
+        > "$gd_root/usr/share/xsessions/ubuntu-xorg.desktop"
+    if display_manager_greetd_shell_is_gnome_wayland "/usr/bin/gnome-session --session=ubuntu-xorg"; then
+        echo 'FAIL: an xsessions-only gnome-session Exec was classified GNOME-Wayland' >&2
+        exit 1
+    fi
+)
+
+# FINDING 1 — the gdm3-vs-gdm purge deferral: the session-serving canonical
+# gdm.service must defer its gdm3 ALIAS member (the §15.6 pair collapse —
+# the round-83c Ubuntu breach killed the live GNOME session through the
+# alias name).  The CONTROL: a different serving manager leaves the gdm3
+# stray stoppable.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    pr_root="$(mktemp -d)"
+    trap 'rm -rf -- "$pr_root"' EXIT
+    SESSION_LOG="$pr_root/session.log"; : > "$SESSION_LOG"
+    SESSION_DIR="$pr_root/session"; mkdir -p "$SESSION_DIR"
+    STATE_ROOT="$pr_root/state"; mkdir -p "$STATE_ROOT"
+    mkdir -p "$pr_root/etc/systemd/system"
+    TARGET_ROOT="$pr_root"
+    RUNNING_HOST_MODE=1
+    stopped=()
+    systemctl() {
+        if [[ "$1" == "--root" ]]; then
+            shift 2
+        fi
+        if [[ "$1" == "stop" ]]; then
+            stopped+=("$2")
+            return 0
+        fi
+        if [[ "$1" == "is-enabled" ]]; then
+            printf 'disabled\n'
+            return 0
+        fi
+        return 1
+    }
+    pgrep() { [[ "$1" == "-x" && "$2" == "gdm3" ]] && return 0; return 1; }
+    pkill() { return 1; }
+    display_manager_session_serving_service() { printf 'gdm.service\n'; }
+    mutating_cancel_checkpoint() { return 0; }
+    display_manager_purge_others greetd.service
+    ((${#stopped[@]} == 0)) \
+        || { echo "FAIL: the session-serving GDM alias (gdm3) was stopped: ${stopped[*]}" >&2; exit 1; }
+    grep -Fq 'msg:dm-purge-session-deferred|param:GDM3' "$SESSION_LOG" \
+        || { echo 'FAIL: the gdm3 alias of the session-serving GDM was not deferred' >&2; cat "$SESSION_LOG" >&2; exit 1; }
+    stopped=()
+    display_manager_session_serving_service() { printf 'lightdm.service\n'; }
+    display_manager_purge_others greetd.service
+    [[ " ${stopped[*]} " == *"gdm3.service"* || " ${stopped[*]} " == *" gdm3 "* ]] \
+        || { echo "FAIL: the non-serving gdm3 stray was not stopped: ${stopped[*]}" >&2; exit 1; }
+)
+
+# FINDING 2 — the Ubuntu /etc/gdm3/custom.conf autologin path: a GDM landing
+# disables the autologin in EVERY GDM config layout, the Ubuntu custom.conf
+# included (AutomaticLoginEnable -> False + the AutomaticLogin line removed).
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    al_root="$(mktemp -d)"
+    trap 'rm -rf -- "$al_root"' EXIT
+    SESSION_DIR="$al_root/session"; mkdir -p "$SESSION_DIR"
+    mkdir -p "$al_root/etc/gdm3"
+    printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=ubuntu\nWaylandEnable=true\n' \
+        > "$al_root/etc/gdm3/custom.conf"
+    TARGET_ROOT="$al_root"
+    RUNNING_HOST_MODE=0
+    display_manager_disable_autologin gdm.service
+    grep -Fxq 'AutomaticLoginEnable=False' "$al_root/etc/gdm3/custom.conf" \
+        || { echo 'FAIL: the Ubuntu custom.conf autologin was not disabled' >&2; cat "$al_root/etc/gdm3/custom.conf" >&2; exit 1; }
+    if grep -Fq 'AutomaticLogin=' "$al_root/etc/gdm3/custom.conf"; then
+        echo 'FAIL: the Ubuntu custom.conf AutomaticLogin line survived' >&2
+        exit 1
+    fi
+)
+
+# FINDING 5 — the candidate canonicalization: the gdm3 alias member of the
+# restore target (gdm) is never a separate switch candidate (the §15.6
+# pair collapse); a different restore target keeps it.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    cd_root="$(mktemp -d)"
+    trap 'rm -rf -- "$cd_root"' EXIT
+    TARGET_ROOT="$cd_root"
+    RUNNING_HOST_MODE=0
+    DISPLAY_MANAGER_CACHED_PARSED=1
+    DISPLAY_MANAGER_CACHED_CANDIDATES=(sddm.service:installed gdm3.service:installed lightdm.service:installed)
+    out="$(display_manager_switch_candidates greetd.service gdm.service)"
+    grep -Fq 'sddm.service|SDDM|installed' <<<"$out" \
+        || { echo 'FAIL: the canonicalized candidate list lost SDDM' >&2; printf '%s\n' "$out" >&2; exit 1; }
+    grep -Fq 'lightdm.service|LightDM|installed' <<<"$out" \
+        || { echo 'FAIL: the canonicalized candidate list lost LightDM' >&2; printf '%s\n' "$out" >&2; exit 1; }
+    grep -Fq 'gdm3.service' <<<"$out" \
+        && { echo 'FAIL: the gdm3 alias of the restore target remained a switch candidate' >&2; printf '%s\n' "$out" >&2; exit 1; }
+    out="$(display_manager_switch_candidates greetd.service sddm.service)"
+    grep -Fq 'gdm3.service|GDM3|installed' <<<"$out" \
+        || { echo 'FAIL: the pair member vanished with an unrelated restore target' >&2; printf '%s\n' "$out" >&2; exit 1; }
+)
+
 echo "PASS: graphical login manager detection, diagnostics, and repair contract is wired."

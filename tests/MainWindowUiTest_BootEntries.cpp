@@ -268,12 +268,17 @@ void MainWindowUiTest::bootEntriesReadyInTargetScope()
 
     // A selected repair target makes the page ready in target scope.
     prepareRepairScope(window, /*host=*/false);
+    // Round 10 (0.2.32): the scope label follows the SHARED per-tab scope
+    // wording via updateTargetLabels() (the production scope-commit path
+    // runs it before updateBootEntriesControls()); the label no longer
+    // carries its own view-specific wording.
+    window.updateTargetLabels();
     window.updateBootEntriesControls();
     QVERIFY(window.bootEntriesReady(&reason));
     QVERIFY(window.m_bootEntriesLoadButton->isEnabled());
     QVERIFY(window.m_bootEntriesScopeLabel);
-    QVERIFY2(window.m_bootEntriesScopeLabel->text().contains(QStringLiteral("Repair target")),
-             "the scope label must name the repair target");
+    QCOMPARE(window.m_bootEntriesScopeLabel->text(),
+             QStringLiteral("Target: /dev/test-system"));
 }
 
 // Outside Host Maintenance the page must fail closed: every action disabled and

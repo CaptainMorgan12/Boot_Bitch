@@ -232,14 +232,14 @@ MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
 # (1) Golden full-file checksum: a map edit must deliberately re-baseline this
 # contract (the "checksum/content assertion" lock).
 MAP_SHA="$(sha256sum "$MAP_FILE" | awk '{print $1}')"
-[[ "$MAP_SHA" == '74c4c8fec4428e716b99da56a1c263995d71d95f35528471512347ca74e7e834' ]] \
+[[ "$MAP_SHA" == '2f5ab2f92c76fbc5623522d748c041229fac92153df31e0271364af1dd1ad222' ]] \
     || fail "repair-diagnostic-map.tsv sha256 $MAP_SHA != the golden checksum (a map change must update the parity contract)"
 
 # (2) Golden data-row content: every row key in the locked order (the row
 # content is asserted row-by-row below so a drift names the exact row).
 MAP_ROWS="$(grep -vE '^#|^[[:space:]]*$' "$MAP_FILE")"
 [[ -n "$MAP_ROWS" ]] || fail "repair-diagnostic-map.tsv carries no data rows"
-GOLDEN_ROW_COUNT=77
+GOLDEN_ROW_COUNT=79
 [[ "$(printf '%s\n' "$MAP_ROWS" | wc -l)" -eq "$GOLDEN_ROW_COUNT" ]] \
     || fail "repair-diagnostic-map.tsv row count changed (expected $GOLDEN_ROW_COUNT)"
 
@@ -300,6 +300,8 @@ grub	grub	grub
 extlinux	boot-evidence	boot boot-evidence
 bootstack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
 boot-stack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
+numlock	display kernel boot-evidence	numlock display kernel boot boot-evidence
+numlock:install-prerequisite	-	package backend usage capabilities display kernel
 kernels	kernel	kernel usage boot boot-evidence grub uki
 kernels:*	kernel	kernel usage boot boot-evidence grub uki
 host-default	report	all
@@ -823,8 +825,8 @@ check_dialog_lock modern "$MODERN_DLG" \
     'standardDialogLayout(&dialog, 470)' \
     'the modern Add Note dialog carries the 470 standard floor'
 check_dialog_lock modern "$MODERN_DLG" \
-    'dialog.resize(640, dialog.sizeHint().height());' \
-    'the modern Add Note dialog preserves the 640 opening (no maximum)'
+    'openStandardDialogAtContentHeight(&dialog, 640);' \
+    'the modern Add Note dialog preserves the 640 opening through the content-height opener (no maximum)'
 check_dialog_lock legacy "$LEGACY_DLG" \
     'PlaceholderTextEdit *memo = new PlaceholderTextEdit(&dialog, "addNoteMemo");' \
     'the legacy Add Note input is the multi-line memo'

@@ -167,29 +167,24 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
 done
 
 # Committed Qt UI translation catalogs must ship in every package format so
-# the GUI localizes instead of falling back to English-only. The exact shipped
-# set is the curated 23-catalog list (round 112: id/sk/vi are unshipped —
-# no Argos model exists for them; their .qm catalogs must not appear).
+# the GUI localizes instead of falling back to English-only. The shipped set
+# is EXACTLY the 23 catalogs — the complete set, nothing outside it exists
+# (the 2026-11-14 purge ruling). One exact-set comparison asserts both
+# directions at once: every shipped catalog present AND no out-of-set .qm.
 translations_dir="$TMP/root/usr/share/boot-bitch/translations"
 [[ -d "$translations_dir" ]] || {
     echo "FAIL: translation catalog directory is missing from the package: usr/share/boot-bitch/translations" >&2
     exit 1
 }
-find "$translations_dir" -name '*.qm' -print | grep -q . || {
-    echo "FAIL: the translation catalog directory carries no compiled .qm catalogs." >&2
-    exit 1
-}
 shipped_catalogs='ar cs da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh'
-for lang in $shipped_catalogs; do
-    [[ -f "$translations_dir/boot-bitch_${lang}.qm" ]] || {
-        echo "FAIL: shipped translation catalog missing from the package: boot-bitch_${lang}.qm" >&2
-        exit 1
-    }
-done
-extra_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' \
-    | grep -vE '^boot-bitch_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
-[[ -z "$extra_catalogs" ]] || {
-    echo "FAIL: unexpected catalogs shipped in the package (unshipped languages must not ship): $extra_catalogs" >&2
+expected_catalogs="$(for lang in $shipped_catalogs; do printf 'boot-bitch_%s.qm\n' "$lang"; done | sort)"
+actual_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' | sort)"
+[[ "$actual_catalogs" == "$expected_catalogs" ]] || {
+    echo "FAIL: the shipped translation catalog set is not exactly the 23 catalogs." >&2
+    echo "Expected:" >&2
+    echo "$expected_catalogs" >&2
+    echo "Actual:" >&2
+    echo "$actual_catalogs" >&2
     exit 1
 }
 
@@ -218,6 +213,12 @@ grep -q '<binary>boot-bitch</binary>' \
     echo "FAIL: EFI label updater missing from extracted package." >&2
     exit 1
 }
+
+[[ -x "$TMP/root/usr/libexec/boot-bitch/numlock-on" ]] || {
+    echo "FAIL: Num Lock payload missing from extracted package." >&2
+    exit 1
+}
+
 
 bash -n "$TMP/root/usr/libexec/boot-bitch/boot-bitch-helper"
 python3 -m py_compile "$TMP/root/usr/libexec/boot-bitch/boot-bitch-efi-label.py"

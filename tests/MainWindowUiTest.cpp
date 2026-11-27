@@ -100,7 +100,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
     window.show();
     QTest::qWait(50);
     QVERIFY(window.m_diagnosticList);
-    QCOMPARE(window.m_diagnosticList->count(), 20);
+    QCOMPARE(window.m_diagnosticList->count(), 21);
 
     const QHash<QString, QString> expected = {
         {QStringLiteral("environment"), QStringLiteral("Summarize the selected system, protection state and inspection readiness.")},
@@ -122,6 +122,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
         {QStringLiteral("luks"), QStringLiteral("Show LUKS ancestry plus crypttab and fstab mapper references.")},
         {QStringLiteral("input"), QStringLiteral("Review keyboard, mouse and touchpad devices, modules and layout read-only.")},
         {QStringLiteral("network"), QStringLiteral("Review adapters, drivers, firmware and the live route/DNS state read-only.")},
+        {QStringLiteral("numlock"), QStringLiteral("Review the per-stage Num Lock state and mechanisms read-only.")},
         {QStringLiteral("report"), QStringLiteral("Combine every read-only diagnostic for the selected scope.")}
     };
 
@@ -585,6 +586,172 @@ void MainWindowUiTest::repairToolRefusesRunWhenRequiredDiagnosticMissing()
         const QString captured = QString::fromUtf8(file.readAll());
         QVERIFY2(!captured.contains(QStringLiteral("BEGIN")),
                  "a missing required diagnostic must abort before launching the helper");
+    }
+}
+
+// Round 41 (the user's Fedora regression): typing the answer + Enter at a
+// repair CONFIRM prompt must SEND the answer.  The historical prompt-input
+// discipline (the round-72 Enter-consumption subclass + the input focus —
+// the legacy round-72/round-27 work, the modern round-E4 focus) requires:
+// (1) the armed prompt input holds the focus so the typed answer lands in
+// the line; (2) the Enter commits through returnPressed -> the ANSWER
+// record, never the dialog's Cancel (the round-72 trap: the Return key
+// propagated to the parent dialog and clicked the armed Cancel).  The
+// focused-Cancel + Enter case is the INTENDED cancel and must keep working.
+// The repair-dialog prompt surface drives the user's exact Fedora CONFIRM
+// case (the shell surface shares the same prompt loop and answer commit).
+void MainWindowUiTest::promptInputEnterSendsAnswerAndCancelFocusStillCancels()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    // ---- Part 1: the prompt -> type y -> Enter -> the SEND ----
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window);
+        window.m_snapshotPreloadScheduled = true;
+        window.m_autoRefreshDiagnostics->setChecked(false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        const QString gpuSection = QStringLiteral(
+            "GPU hardware: 10de:24b0 (10de:24b0) [driver-in-use=nvidia]\n"
+            "GPU expected driver: nvidia (source=hardware-pciid)\n");
+        const QString kernelSection = QStringLiteral(
+            "Kernel running: 7.1.9.1-tuxedo-amd64\n"
+            "Kernel latest: 7.1.9.1-tuxedo-amd64\n");
+        window.m_targetDiagnosticCache.insert(QStringLiteral("gpu"), gpuSection);
+        window.m_targetDiagnosticCache.insert(QStringLiteral("kernel"), kernelSection);
+
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("prompt-request.log"));
+        QVERIFY2(startFakePrivilegedSession(window, capturePath, QStringLiteral("repairprompt")),
+                 "the scripted privileged session must start");
+        closeRepairProgressDialogWhenDone(&window);
+
+        // The deferred interaction: the runSelectedRepairTool call below
+        // blocks inside the request's nested prompt loop, so the typing runs
+        // from a poll timer once the prompt input arms.
+        QTimer *promptDriver = new QTimer(&window);
+        promptDriver->setInterval(20);
+        bool promptSawFocus = false;
+        QObject::connect(promptDriver, &QTimer::timeout, &window,
+                         [promptDriver, &window, &promptSawFocus] {
+            QLineEdit *input = qobject_cast<QLineEdit *>(window.m_activePromptInput.data());
+            if (!input || !input->isEnabled()) {
+                return;
+            }
+            promptDriver->stop();
+            // The regression's marker: the input must hold the focus so the
+            // typed answer lands in the line (the historical discipline).
+            promptSawFocus = input->hasFocus();
+            if (!promptSawFocus) {
+                input->setFocus();
+                QTest::qWait(10);
+                promptSawFocus = input->hasFocus();
+            }
+            QTest::keyClicks(input, QStringLiteral("y"));
+            QTest::keyClick(input, Qt::Key_Return);
+            promptDriver->deleteLater();
+        });
+        promptDriver->start();
+
+        QTreeWidgetItem *item = repairItem(window, QStringLiteral("gpu"));
+        QVERIFY(item);
+        window.m_repairToolTree->setCurrentItem(item);
+        window.runSelectedRepairTool();
+
+        QVERIFY2(promptSawFocus,
+                 "the armed prompt input must hold the focus (the round-41 regression)");
+
+        // The ANSWER record must carry the typed answer "y" — the Enter must
+        // never have resolved the prompt as cancelled.
+        QFile file(capturePath);
+        QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QStringList lines = QString::fromUtf8(file.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        QString sentAnswer;
+        for (const QString &line : lines) {
+            const QStringList fields = line.split(QLatin1Char('\t'));
+            if (fields.size() >= 3 && fields.at(0) == QStringLiteral("ANSWER")) {
+                sentAnswer = QString::fromUtf8(QByteArray::fromBase64(fields.at(2).toLatin1()));
+            }
+        }
+        QCOMPARE(sentAnswer, QStringLiteral("y"));
+        flushLogRefresh(window);
+        QVERIFY2(!window.m_logView->toPlainText().contains(QStringLiteral("[prompt cancelled]")),
+                 "the Enter must not resolve the answered prompt as cancelled");
+        QVERIFY2(window.m_logView->toPlainText().contains(QStringLiteral(">> y")),
+                 "the answer echo must appear in the transcript");
+    }
+
+    // ---- Part 2: the focus on Cancel + Enter = the intended cancel ----
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window);
+        window.m_snapshotPreloadScheduled = true;
+        window.m_autoRefreshDiagnostics->setChecked(false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        const QString gpuSection = QStringLiteral(
+            "GPU hardware: 10de:24b0 (10de:24b0) [driver-in-use=nvidia]\n");
+        const QString kernelSection = QStringLiteral(
+            "Kernel running: 7.1.9.1-tuxedo-amd64\n");
+        window.m_targetDiagnosticCache.insert(QStringLiteral("gpu"), gpuSection);
+        window.m_targetDiagnosticCache.insert(QStringLiteral("kernel"), kernelSection);
+
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("prompt-cancel-request.log"));
+        QVERIFY2(startFakePrivilegedSession(window, capturePath, QStringLiteral("repairprompt")),
+                 "the scripted privileged session must start");
+        closeRepairProgressDialogWhenDone(&window);
+        acceptNextMessageBox(&window, QMessageBox::Yes);
+        acceptNextUniformOkDialog(&window);
+
+        QTimer *cancelDriver = new QTimer(&window);
+        cancelDriver->setInterval(20);
+        bool cancelButtonArmed = false;
+        QObject::connect(cancelDriver, &QTimer::timeout, &window,
+                         [cancelDriver, &window, &cancelButtonArmed] {
+            QLineEdit *input = qobject_cast<QLineEdit *>(window.m_activePromptInput.data());
+            if (!input || !input->isEnabled()) {
+                return;
+            }
+            cancelDriver->stop();
+            QPushButton *cancel = nullptr;
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                cancel = top->findChild<QPushButton *>(QStringLiteral("repairProgressCancelButton"));
+                if (cancel) {
+                    break;
+                }
+            }
+            cancelButtonArmed = cancel && cancel->isEnabled();
+            if (cancelButtonArmed) {
+                cancel->setFocus();
+                cancel->click();
+            }
+            cancelDriver->deleteLater();
+        });
+        cancelDriver->start();
+
+        QTreeWidgetItem *item = repairItem(window, QStringLiteral("gpu"));
+        QVERIFY(item);
+        window.m_repairToolTree->setCurrentItem(item);
+        window.runSelectedRepairTool();
+
+        QVERIFY2(cancelButtonArmed,
+                 "the Cancel button must be armed while a CONFIRM prompt waits (round 153.4)");
+        QVERIFY2(window.m_activePromptInput.data() == nullptr
+                     || !window.m_activePromptInput->isEnabled(),
+                 "the cancel path must have disabled the prompt input (the A10-01 gate)");
+        // The prompt input must be disabled after the cancel (A10-01): the
+        // cancelled request must never accept a late answer.
+        QLineEdit *cancelledInput = qobject_cast<QLineEdit *>(window.m_activePromptInput.data());
+        QVERIFY2(!cancelledInput || !cancelledInput->isEnabled(),
+                 "the prompt input must be disabled once the cancel was requested");
     }
 }
 

@@ -246,7 +246,9 @@ valid_kver() { [[ "$1" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]]; }
 # could traverse or escape: empty values, a relative base, an absolute rel,
 # `.`/`..` segments, a base resolving to `/`, or a target resolving to the
 # base itself.  The base is resolved lexically (realpath -m) and the parent
-# must stay inside it before anything is deleted.
+# must stay inside it before anything is deleted.  The base "/" is REFUSED by
+# contract (test-kernels-cleanup-contract asserts the root-base refusal) — the
+# host-mode (TARGET_ROOT=/) sweeps go through safe_rm_tree_target below.
 safe_rm_tree()
 {
     local base="$1" rel="$2" base_real target parent_real
@@ -265,6 +267,40 @@ safe_rm_tree()
     esac
     [[ "$target" != "$base_real" ]] || return 1
     rm -rf -- "$target"
+}
+
+# Round 74 (the host-mode residue — the user's TUXEDO-host finding): the
+# shared safe_rm_tree REFUSES the base "/" (a contracted invariant —
+# test-kernels-cleanup-contract asserts the root-base refusal), so every
+# TARGET_ROOT-based sweep silently no-op'd in HOST mode (TARGET_ROOT=/),
+# leaving the removed kernel's module directory behind ("not empty so not
+# removed" — the residue the inventory kept re-offering).  This wrapper
+# selects the safe form per scope: a mounted target root keeps safe_rm_tree
+# verbatim; the host scope runs the SAME mechanical containment checks
+# (non-empty relative rel, no dot segments, the parent resolves inside the
+# scope root, never the root itself) inline against the absolute path.  The
+# rel at every caller is valid_kver-gated (the name can never contain a
+# separator, a dot segment or a shell token), so the sweep can never reach
+# outside the intended kernel subpath.
+safe_rm_tree_target()
+{
+    local rel="$1" base_real parent_real
+    [[ -n "$rel" && "$rel" != /* ]] || return 1
+    if [[ "${TARGET_ROOT:-/}" != / ]]; then
+        safe_rm_tree "$TARGET_ROOT" "$rel"
+        return 0
+    fi
+    case "/$rel/" in
+        */../*|*/./*) return 1 ;;
+    esac
+    base_real="$(realpath -m -- /)" || return 1
+    parent_real="$(realpath -m -- "$(dirname -- "/$rel")")" || return 1
+    case "$parent_real/" in
+        "$base_real"*) ;;
+        *) return 1 ;;
+    esac
+    rm -rf -- "/$rel"
+    return 0
 }
 
 # EFI bootloader ids are directory names under the ESP root: a leading
@@ -1049,6 +1085,7 @@ Usage:
   $PROGRAM_NAME extlinux-list <disk> <root-device>
   $PROGRAM_NAME grub-legacy-list <disk> <root-device>
   $PROGRAM_NAME efi-reorder  <disk> <root-device> <csv-bootorder>
+  $PROGRAM_NAME grub-reorder <disk> <root-device> <csv-grub-anchors>
   $PROGRAM_NAME efi-delete   <disk> <root-device> <boot####>
   $PROGRAM_NAME efi-rename   <disk> <root-device> <boot####> <label>
   $PROGRAM_NAME fs-inspect   <disk> <root-device>
@@ -1244,11 +1281,121 @@ mount_records_prune()
     MOUNTS=("${kept[@]}")
 }
 
+# Round 76 (the dkms failure-path mount release — the user's live finding): a
+# FAILED package apply (the dkms missing-headers exit-100 class) can leave a
+# STRAY holder — a reparented build/scan child whose cwd, root, exe or open
+# fds live INSIDE the helper's own session mounts.  Such a stray is no longer
+# in the helper's descendant tree, so sweep_own_descendants cannot reach it
+# and the plain umount stays busy (MOUNT_LEAK).  This bounded /proc scan finds
+# the EXACT holders — processes using the helper's OWN recorded session mounts
+# (string-prefix containment, never a same-device match, so a foreign mount of
+# the same filesystem is never touched) — and reaps them (TERM, a short grace,
+# then KILL) before the unmount loop, so the mount release applies to every
+# dkms-repair failure exit exactly like the success paths.  Self + the direct
+# parent are excluded; a foreign process is never signalled.
+sweep_mount_holders()
+{
+    local m mounted=false
+    for m in "${MOUNTS[@]:-}"; do
+        [[ -n "$m" ]] || continue
+        mountpoint -q "$m" 2>/dev/null && { mounted=true; break; }
+    done
+    [[ "$mounted" == true ]] || return 0
+
+    local self="$$" base="$BASHPID" ppid="${PPID:-0}"
+    local entry pid link target fd pids="" fd_count
+    for entry in /proc/[0-9]*; do
+        pid="${entry##*/}"
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" == "$self" || "$pid" == "$base" || "$pid" == "$ppid" ]] && continue
+        for link in cwd root exe; do
+            target="$(readlink -- "$entry/$link" 2>/dev/null || true)"
+            target="${target% (deleted)}"
+            if mount_holder_target_matches "$target"; then
+                pids+=" $pid"
+                break
+            fi
+        done
+        [[ " $pids " == *" $pid "* ]] && continue
+        # Open fds as the last evidence class (cwd/root/exe did not match);
+        # bounded per process so a fd-heavy foreign process stays cheap.
+        fd_count=0
+        for fd in "$entry"/fd/*; do
+            [[ -e "$fd" ]] || continue
+            (( ++fd_count <= 512 )) || break
+            target="$(readlink -- "$fd" 2>/dev/null || true)"
+            target="${target% (deleted)}"
+            if mount_holder_target_matches "$target"; then
+                pids+=" $pid"
+                break
+            fi
+        done
+    done
+    [[ -n "$pids" ]] || return 0
+    msg_log mount-holder-sweep "${pids# }"
+    local holder
+    for holder in $pids; do
+        [[ -n "$holder" ]] || continue
+        kill "$holder" 2>/dev/null || true
+    done
+    sleep 0.4
+    for holder in $pids; do
+        [[ -n "$holder" ]] || continue
+        if kill -0 "$holder" 2>/dev/null; then
+            kill -9 "$holder" 2>/dev/null || true
+        fi
+    done
+    return 0
+}
+
+# True when the target path resolves under one of the helper's own recorded
+# session mounts (string-prefix containment, never a same-device match — a
+# foreign mount of the same filesystem is deliberately excluded).
+mount_holder_target_matches()
+{
+    local target="$1" m
+    [[ -n "$target" && "$target" == /* ]] || return 1
+    for m in "${MOUNTS[@]:-}"; do
+        [[ -n "$m" ]] || continue
+        case "$target/" in
+            "$m/"*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # EXIT trap for every helper invocation: when this request crossed the
 # read-write boundary, append the session log into the repaired system, remove
 # request-scoped target paths and mapper aliases, unmount helper-owned mounts,
 # close session-owned LUKS mappings and delete the session directory.  Always
 # exits with the status captured on entry so the original failure is preserved.
+# Reap the helper's own remaining descendants (the failed stage's orphaned
+# children) with a bounded grace, so the cleanup's mount release never waits
+# on them.  The descendant snapshot is the shared ONE-ps-pass collection; only
+# this helper's own tree is ever touched, never a foreign process.
+sweep_own_descendants()
+{
+    # Round 60 (Finding 2 — the failure-path mount release): the sweep must
+    # target THIS process's own descendants, so it uses BASHPID, not $$ —
+    # inside a subshell $$ still names the caller's shell (the broker), and
+    # sweeping from $$ there would collect and kill the sweep's own
+    # ancestors.  In the main helper process BASHPID and $$ are the same.
+    local self="$BASHPID" pid descendants=""
+    descendants="$(collect_descendants "$self" 2>/dev/null || true)"
+    for pid in $descendants; do
+        [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && "$pid" != "$self" ]] || continue
+        kill "$pid" 2>/dev/null || true
+    done
+    sleep 0.3
+    for pid in $descendants; do
+        [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && "$pid" != "$self" ]] || continue
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    return 0
+}
+
 cleanup()
 {
     local rc=$?
@@ -1264,6 +1411,23 @@ cleanup()
     # its teardown.
     kill_registered_children "$$"
     unregister_active_child "$$"
+
+    # Round 60 (Finding 2 — the failure-path mount release): a FAILED stage
+    # can leave orphaned descendants (the dkms postinst's make jobs, the
+    # interrupted package-manager children) holding the session mounts, so the
+    # plain umount below fails busy and the MOUNT_LEAK evidence fires.  Reap
+    # the helper's own remaining descendant tree BEFORE the unmount loop (the
+    # round-47 "reap first, then unmount" lesson) so the release succeeds on
+    # the failure exits exactly like the success paths; the no-lazy rule is
+    # unchanged.
+    sweep_own_descendants
+    # Round 76 (the dkms failure-path mount release — the user's live
+    # finding): the descendant sweep cannot reach a REPARENTED stray (the
+    # failed apply's build/scan children adopted by the init namespace), which
+    # kept the session mounts busy on the user's exit-100 dkms repair.  The
+    # holder scan reaps the exact processes still using the helper's own
+    # session mounts, so the release applies to every failure exit.
+    sweep_mount_holders
 
     # Read-only diagnostics, validation and rollback preflight must remain
     # genuinely read-only.  Append the helper log into the repaired system only
@@ -1458,7 +1622,15 @@ abort_mutating_request()
     # The teardown itself is not re-run (the first frame's sweep plus the
     # shared cleanup's kill_registered_children cover the tree).
     if (( ABORT_MUTATING_IN_PROGRESS )); then
-        stamp="$(date '+%H:%M:%S' 2>/dev/null || true)"
+        # Round 46 (the user's Ubuntu finding — the cancel's raw leak): the
+        # stamp is computed WITHOUT a command substitution.  The force-stop's
+        # tree-TERM can kill a $(date) substitution mid-flight, and bash's
+        # job-status notify then prints "Terminated <the interrupted
+        # command>" to stderr — which the broker merges into the transcript
+        # (the user saw the raw `stamp="$(date ...)"` fragment after the
+        # abort line).  The printf %(...)T builtin forks nothing, so the
+        # force-stop has no job to name here.
+        printf -v stamp '%(%H:%M:%S)T' -1 2>/dev/null || stamp=""
         # Round 213 (the cancel alignment): the abort evidence prints EXACTLY
         # ONCE per abort.  The live TUXEDO cancel printed the line TWICE: the
         # first frame printed its evidence and the relay's re-entry printed
@@ -1485,7 +1657,12 @@ abort_mutating_request()
     shell_abort_runner_tree
     shell_abort_emit_verdict
     filecopy_abort_emit_verdict
-    stamp="$(date '+%H:%M:%S' 2>/dev/null || true)"
+    # Round 46 (the user's Ubuntu finding — the cancel's raw leak): forkless
+    # stamp — see the re-entry branch above (a $(date) substitution killed by
+    # the force-stop's tree-TERM becomes the named job in bash's
+    # "Terminated <command>" stderr notify, leaking the raw source fragment
+    # into the transcript tail).
+    printf -v stamp '%(%H:%M:%S)T' -1 2>/dev/null || stamp=""
     # Round 213: the once-only evidence latch (see the re-entry guard above).
     if (( ABORT_EVIDENCE_PRINTED == 0 )); then
         ABORT_EVIDENCE_PRINTED=1
@@ -3405,6 +3582,36 @@ target_dpkg_package_installed()
     ' "$status_file"
 }
 
+# Round 76 (the remove-newest refusal — the user's live finding): the package
+# record is PRESENT in any install-in-progress state (`install ok
+# half-configured`/`unpacked`/`triggers-*` included — the zfs-blocker class the
+# user's target carries), i.e. every dpkg state except `not-installed` and
+# `config-files`.  A half-configured versioned image package must still join
+# its kernel's grouped removal plan: omitting it (the exact-`install ok
+# installed` gate) let apt cascade-purge it as a "protected" package and the
+# removal validator refused its own removal target.  Read-only.
+target_dpkg_package_present()
+{
+    local pkg="$1" status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 1
+    awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n"; found = 0 }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            if (name != pkg) next
+            n = split(state, tok, / /)
+            cur = tok[3]
+            if (cur != "not-installed" && cur != "config-files") found = 1
+            exit
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$status_file"
+}
+
 # Read-only apk package-state evidence for an Alpine target.  Native host
 # maintenance queries the live apk; a non-running target is inspected through
 # its installed database file so no target command is executed.
@@ -3967,6 +4174,27 @@ rpm_database_has_packages()
     local output
     if target_has_executable /usr/bin/rpm /bin/rpm /usr/sbin/rpm; then
         rpm_database_present || return 1
+        # Round 58 (ITEM 2): the targeted index query first — the full
+        # `rpm -qa | head -n 1` enumeration measured 90% CPU with the 15 s
+        # bound on the user's Fedora run (the backend detection runs every
+        # request), while `rpm -q rpm` answers from the database index in
+        # milliseconds.  The rpm package entry exists in every genuine
+        # rpm-managed database, and the utility-rpm case (the EMPTY sqlite
+        # TUXEDO/Ubuntu ship) answers "not found" exactly like the empty
+        # enumeration would — the same fail-closed evidence.  The bounded
+        # enumeration stays as the honest fallback for a database without
+        # the rpm package entry itself (the damaged-root class).
+        set +e
+        output="$(
+            RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
+                LC_ALL=C \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                rpm -q rpm --qf '%{NAME}\n' 2>/dev/null
+        )"
+        set -e
+        if [[ -n "$output" && "$output" == rpm* ]]; then
+            return 0
+        fi
         set +e
         output="$(
             RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
@@ -7443,8 +7671,18 @@ adaptive_apt_upgrade()
     if ((CHROOT_TRY_RC == 124)); then
         fail "$(reason package-manager-timeout "Upgrade installed packages ($chosen)")."
     fi
-    ((CHROOT_TRY_RC == 0)) \
-        || fail "Upgrade installed packages ($chosen) failed with exit code $CHROOT_TRY_RC."
+    if ((CHROOT_TRY_RC != 0)); then
+        # Round 69 (the universal unblocker): a failed upgrade apply on the
+        # half-configured class (the pending postinsts re-ran and the DKMS
+        # module build failed — dpkg exit 100) is the SAME zfs-vs-kernel
+        # blocker behind every package repair.  The verdict names the module +
+        # the kernel + the bound + the per-kernel remedy direction — never
+        # the bare exit code.
+        if dpkg_half_configured_failure_report upgrade "$CHROOT_TRY_OUTPUT"; then
+            return 0
+        fi
+        fail "Upgrade installed packages ($chosen) failed with exit code $CHROOT_TRY_RC."
+    fi
     apply_output="$CHROOT_TRY_OUTPUT"
 
     # dpkg --audit is non-destructive and gives an immediate post-upgrade sanity
@@ -7527,8 +7765,60 @@ adaptive_fix_broken()
     if ((CHROOT_TRY_RC == 124)); then
         fail "$(reason package-manager-timeout "Repair broken package dependencies")."
     fi
-    ((CHROOT_TRY_RC == 0)) \
-        || fail "Repair broken package dependencies failed with exit code $CHROOT_TRY_RC."
+    if ((CHROOT_TRY_RC != 0)); then
+        # Round 60 (Finding 1b): the half-configured-package class — the
+        # configure step re-ran the pending postinsts and a dkms postinst build
+        # failure (the zfs/kernel incompatibility) made dpkg exit 100.  That is
+        # NOT fixable by a reinstall: the honest verdict names the
+        # half-configured packages + the failing module build and the user
+        # action — never loop the reinstall.
+        local half_configured_pkgs="" half_configured_dkms="" half_configured_class="" half_configured_bound=""
+        local dkms_kver="" dkms_mod_ver=""
+        local -a half_configured_lines=()
+        mapfile -t half_configured_lines < <(dpkg_configure_failure_reason "$CHROOT_TRY_OUTPUT" 2>/dev/null || true)
+        half_configured_pkgs="${half_configured_lines[0]:-}"
+        half_configured_dkms="${half_configured_lines[1]:-}"
+        half_configured_class="${half_configured_lines[2]:-}"
+        half_configured_bound="${half_configured_lines[3]:-}"
+        # Round 71: the shared resolver (the kver-less shape resolves the
+        # kernel from the make.log header — never the "unknown" leak).
+        IFS=$'\t' read -r dkms_kver dkms_mod_ver <<< "$(dpkg_dkms_info_parts "${half_configured_dkms:-}" 2>/dev/null || true)"
+        [[ -n "$dkms_mod_ver" ]] || dkms_mod_ver="unknown"
+        [[ -n "$dkms_kver" ]] || dkms_kver="unknown"
+        [[ -n "$half_configured_bound" ]] || half_configured_bound="unknown"
+        if [[ -n "$half_configured_pkgs" ]]; then
+            if [[ "$half_configured_class" == genuine-incompatibility ]]; then
+                # Round 64 (Finding 2): the module's own configure/build
+                # GENUINELY failed against the kernel — removing kernels does
+                # NOT unblock it (the user's real-target re-test).  The honest
+                # verdict names the module + the kernel + the remedy direction
+                # (the kernel repair's per-kernel actions — the user's "never
+                # global" ruling), never a reinstall loop.  Round 69: the
+                # verdict also names the module's declared compatibility bound
+                # (the `Highest compatible kernel version` evidence) so the
+                # prior-kernel remedy's evidence is visible in the verdict.
+                msg_log fixbroken-dpkg-module-incompatible "$half_configured_pkgs" "$dkms_mod_ver" "$dkms_kver" "$half_configured_bound"
+                repair_change_status fixbroken "unchanged|$(reason dpkg-module-incompatible "$half_configured_pkgs" "$dkms_mod_ver" "$dkms_kver" "$half_configured_bound")"
+                return 0
+            fi
+            if [[ "$half_configured_class" == state-blocker ]]; then
+                # Round 64 (Finding 2): the STATE-BLOCKER class — the make.log
+                # carries no configure/compile error of the module's own; the
+                # build was blocked by the inconsistent kernel-tree state (the
+                # round-60 synthetic-drill shape).  Removing the offending
+                # kernel IS the documented unblocker; the distinct verdict
+                # names it (the round-60 generalization, disproven for the
+                # genuine class, holds for this class only).
+                msg_log fixbroken-dpkg-state-blocked "$half_configured_pkgs" "$dkms_mod_ver" "$dkms_kver"
+                repair_change_status fixbroken "unchanged|$(reason dpkg-state-blocked "$half_configured_pkgs" "$dkms_mod_ver" "$dkms_kver")"
+                return 0
+            fi
+            msg_log fixbroken-dpkg-half-configured "$half_configured_pkgs" "${half_configured_dkms:-unknown}"
+            repair_change_status fixbroken "unchanged|$(reason dpkg-half-configured "$half_configured_pkgs" "${half_configured_dkms:-unknown}")"
+            return 0
+        fi
+        fail "Repair broken package dependencies failed with exit code $CHROOT_TRY_RC."
+    fi
 
     # The simulation and the apply transcript both report kept-back packages;
     # merge them into the same evidence lines used by the upgrade stage.
@@ -9225,6 +9515,63 @@ apt_installed_kernel_support_packages()
     ' "$status_file" | LC_ALL=C sort
 }
 
+# Round 82 (the stale-evidence plan fix): the PRESENCE-based mirrors of
+# apt_installed_kernel_packages / apt_installed_kernel_support_packages —
+# every dpkg state except `not-installed` and `config-files` qualifies (the
+# same gate apt_present_unversioned_kernel_metapackages uses for the metas).
+# The removal plan re-derivation consumes these so a half-configured headers
+# package that appeared mid-session (the round-81b class — `install ok
+# half-configured`, its postinst's dkms autoinstall failed) joins the plan;
+# the strict `install ok installed` enumerators stay the diagnostic's
+# evidence source.  Read-only.
+apt_present_versioned_kernel_packages()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 0
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            n = split(state, tok, / /)
+            cur = tok[3]
+            if (cur == "not-installed" || cur == "config-files") next
+            if (name ~ /^linux-(image(-unsigned)?|headers|modules(-extra)?|main-modules-zfs)-[0-9]/ ||
+                name ~ /^linux-modules-[a-z][a-z0-9-]*-[0-9]/) {
+                print name
+            }
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
+apt_present_kernel_support_packages()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 0
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            n = split(state, tok, / /)
+            cur = tok[3]
+            if (cur == "not-installed" || cur == "config-files") next
+            if (name !~ /^linux-/) next
+            if (name ~ /^linux-(image|headers|modules|modules-extra)-/) next
+            rest = name
+            sub(/^linux-/, "", rest)
+            if (rest !~ /(^|-)[0-9]/) next
+            print name
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
 # Prints every versioned kernel image package left in the dpkg status database
 # in the "removed but not purged" state (`Status: deinstall ok config-files`,
 # the `rc` flag): a linux-image-<v> (or linux-image-unsigned-<v>) meta whose real
@@ -9464,6 +9811,43 @@ apt_unversioned_kernel_metapackages()
     ' "$status_file" | LC_ALL=C sort
 }
 
+# Round 76 (the remove-newest refusal — the user's live finding): the
+# PRESENCE-based mirror of apt_unversioned_kernel_metapackages for the managed
+# downgrade machinery.  The user's TUXEDO target carries its managed
+# metapackages in install-in-progress states (`install ok unpacked` /
+# `half-configured` — the interrupted txos transition), which the strict
+# `install ok installed` gate skipped: the cascade detection then never saw
+# the metapackages apt re-points at the repository replacement (the `Inst <meta>
+# [old] (new)` upgrade shape).  Every state except `not-installed` and
+# `config-files` qualifies, so the removal transaction classifies the same
+# metapackage set apt itself acts on.  Used by the managed-downgrade cascade
+# detection only; the stale-metapackage probe keeps the strict variant.
+apt_present_unversioned_kernel_metapackages()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 1
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            n = split(state, tok, / /)
+            cur = tok[3]
+            if (cur == "not-installed" || cur == "config-files") next
+            rest = name
+            if (name ~ /^linux-image-/) sub(/^linux-image-/, "", rest)
+            else if (name ~ /^linux-headers-/) sub(/^linux-headers-/, "", rest)
+            else if (name ~ /^linux-base-/) sub(/^linux-base-/, "", rest)
+            else if (name ~ /^linux-modules-/) sub(/^linux-modules-/, "", rest)
+            else next
+            if (rest !~ /[0-9]+\.[0-9]+\.[0-9]+/) print name
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
 # Prints the versioned kernel versions pinned by the managed metapackage's
 # Depends/Pre-Depends/Recommends fields (role=managed-default).  Only
 # linux-<kind>-* references whose remainder carries a kernel version token (a
@@ -9567,17 +9951,28 @@ apt_kernel_support_version_from_package()
 }
 
 # True when the supplied build/support-package version key has no installed
-# kernel: no module tree and no installed linux-image-/linux-modules-* package
-# whose version equals the key or extends it with a hyphen-terminated flavour
-# suffix (linux-kbuild-6.5.0-10038 matches the 6.5.0-10038-tuxedo module tree,
-# but never 6.5.0-10038.1).  This is the same generic module-tree + dpkg-status
-# evidence discipline as the rest of the inventory; never distro-ID parsing.
+# kernel: no live module tree and no installed linux-image-/linux-modules-*
+# package whose version equals the key or extends it with a hyphen-terminated
+# flavour suffix (linux-kbuild-6.5.0-10038 matches the 6.5.0-10038-tuxedo module
+# tree, but never 6.5.0-10038.1).  Round 74 (the residue class): an inventory
+# version whose grouped packages are ALL gone is on-disk residue, not a live
+# kernel — it must not block the support-package orphan.  This is the same
+# generic module-tree + dpkg-status evidence discipline as the rest of the
+# inventory; never distro-ID parsing.
 kernel_support_version_is_orphaned()
 {
-    local key="$1" v pkg pver
+    local key="$1" v pkg pver i
     [[ -n "$key" ]] || return 1
-    for v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
-        [[ "$v" == "$key" || "$v" == "$key"-* ]] && return 1
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        v="${KERNEL_INVENTORY_VERSIONS[$i]}"
+        [[ "$v" == "$key" || "$v" == "$key"-* ]] || continue
+        # Round 74 (the residue class, apt/dpkg-scoped): a matching version
+        # whose grouped packages are ALL gone is on-disk residue, not a live
+        # kernel — it must not block the support-package orphan.
+        if [[ "${TARGET_PACKAGE_MANAGER:-}" != apt/dpkg ]] \
+            || kernel_version_has_installed_packages "${KERNEL_INVENTORY_PKGS[$i]}"; then
+            return 1
+        fi
     done
     while IFS= read -r pkg; do
         [[ "$pkg" == linux-image-* || "$pkg" == linux-modules-* || "$pkg" == linux-modules-extra-* \
@@ -9639,6 +10034,18 @@ KERNEL_MANAGED=()
 KERNEL_REMOVABLE=()
 KERNEL_REMOVABLE_PKGS=()
 KERNEL_LATEST_PKGS=()
+# Round 82 (the stale-evidence plan fix): KERNEL_REMOVAL_PLAN_PKGS is the
+# removal stage's THEN-CURRENT plan (the cached inventory re-derived fresh at
+# plan time and unioned) — the authoritative candidate set the removal
+# validators consult FIRST via kernel_package_is_removal_candidate; the
+# cached-inventory arrays stay the fallback for the menu's pre-offer probes.
+# KERNEL_REMOVAL_LINEAGE_VERSIONS is the parallel set of kernel VERSIONS being
+# removed — the removal lineage apt_kernel_package_is_removal_lineage accepts
+# versioned kernel packages against (empty while no removal is in progress:
+# fail-closed).  Both are reset by the inventory parse/collect and re-set by
+# the removal stage at plan time.
+KERNEL_REMOVAL_PLAN_PKGS=()
+KERNEL_REMOVAL_LINEAGE_VERSIONS=()
 KERNEL_MISSING_HEADERS=()
 # Round 147 (ITEM 4): per-kernel header installability evidence, parallel to
 # KERNEL_MISSING_HEADERS (same index).  One entry per missing-headers kernel
@@ -9701,6 +10108,23 @@ KERNEL_BROKEN=()
 # `Kernel broken:` diagnostic line and the per-kernel menu annotation; never the
 # raw apt output.
 KERNEL_BROKEN_REASON=()
+# Round 64 (Finding 2): the module-vs-kernel incompatibility evidence — one
+# entry per DKMS module whose build GENUINELY failed against an installed
+# kernel (the make.log carries the module's own configure/compile error; the
+# kernel removal does NOT unblock it).  Parallel arrays: KERNEL_MODULE_INCOMPAT
+# ("<mod> <ver>"), KERNEL_MODULE_INCOMPAT_KVER, KERNEL_MODULE_INCOMPAT_PKGS
+# (the comma-joined owning apt package set).  Surfaced as the
+# `Kernel module build incompatibility:` diagnostic line and gating the kernel
+# menu's per-kernel remedy actions (the round-42 fail-closed pattern).
+KERNEL_MODULE_INCOMPAT=()
+KERNEL_MODULE_INCOMPAT_KVER=()
+KERNEL_MODULE_INCOMPAT_PKGS=()
+# Round 66 (Finding 2): the installed kernels whose initramfs pairing is
+# MISSING (the shared kernel_initramfs_present probe).  Surfaced as the
+# `Kernel initramfs missing:` diagnostic line, the kernel menu's state
+# annotation and the verify's incompleteness verdict — never "working" while
+# an initrd is absent.
+KERNEL_NO_INITRD=()
 # KERNEL_STALE_METAPACKAGES lists the unversioned kernel metapackages whose
 # pinned kernel version(s) are all stale (their source repository is disabled).
 # They are removed together with the stale kernel, never protected/reinstalled.
@@ -9850,6 +10274,8 @@ kernel_inventory_collect()
     KERNEL_REMOVABLE=()
     KERNEL_REMOVABLE_PKGS=()
     KERNEL_LATEST_PKGS=()
+    KERNEL_REMOVAL_PLAN_PKGS=()
+    KERNEL_REMOVAL_LINEAGE_VERSIONS=()
     KERNEL_MISSING_HEADERS=()
     KERNEL_HEADERS_INSTALLABILITY=()
     KERNEL_BUILD_COMPILER=""
@@ -9865,6 +10291,10 @@ kernel_inventory_collect()
     KERNEL_STALE_METAPACKAGES=()
     KERNEL_ORPHANED_SUPPORT_VERSIONS=()
     KERNEL_ORPHANED_SUPPORT_PKGS=()
+    KERNEL_MODULE_INCOMPAT=()
+    KERNEL_MODULE_INCOMPAT_KVER=()
+    KERNEL_MODULE_INCOMPAT_PKGS=()
+    KERNEL_NO_INITRD=()
 
     profile_target_backends
 
@@ -9986,9 +10416,13 @@ kernel_inventory_collect()
         # dpkg_path_owner never maps it.  Add it explicitly so the grouped
         # removal plan includes it and apt does not cascade-remove it as an
         # unrequested package (which the removal validator refuses fail-closed).
+        # Round 76 (the remove-newest refusal): presence, never the exact
+        # `install ok installed` state — a half-configured versioned image (the
+        # zfs-blocker class) must still join the plan, or apt cascade-purges it
+        # and the validator refuses the very kernel being removed.
         # It is a no-op where /boot/vmlinuz-<v> is itself owned by
         # linux-image-<v> (plain Debian), thanks to the sort -u join below.
-        target_dpkg_package_installed "linux-image-$v" && vpkgs+=("linux-image-$v")
+        target_dpkg_package_present "linux-image-$v" && vpkgs+=("linux-image-$v")
         fi
 
         joined="$(printf '%s\n' "${vpkgs[@]}" | LC_ALL=C sort -u | paste -sd, -)"
@@ -10024,9 +10458,20 @@ kernel_inventory_collect()
         done < <(apt_managed_kernel_versions "$meta")
     done
 
-    for v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        local v="${KERNEL_INVENTORY_VERSIONS[$i]}"
         if [[ "$v" == "$KERNEL_RUNNING" || "$v" == "$KERNEL_LATEST" ]]; then
             continue
+        fi
+        # Round 74 (the residue class): a version whose grouped package set is
+        # empty — or whose every grouped package is already gone — is on-disk
+        # residue, not a live kernel.  Offering "remove this kernel" for it
+        # re-runs a no-op apt transaction forever (the "Package '…' is not
+        # installed, so not removed" class); the orphaned-kernel cleanup is
+        # the resolution.  apt/dpkg-scoped (the residue evidence class); the
+        # other backends keep the pre-round-74 classification.
+        if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+            kernel_version_has_installed_packages "${KERNEL_INVENTORY_PKGS[$i]}" || continue
         fi
         local managed=false
         for m in "${KERNEL_MANAGED[@]}"; do
@@ -10160,12 +10605,21 @@ kernel_inventory_collect()
     fi
 
     # Orphaned-kernel probe (zombie state): an inventory version whose grouped
-    # package set is empty (no package owns its module tree nor its vmlinuz), or
-    # a stray /boot image with no module tree and no owning package.  Such a
-    # version is on-disk residue only and is removed by the zombie cleanup.
-    local orphan_kver known
+    # package set is empty (no package owns its module tree nor its vmlinuz),
+    # or — round 74 (the residue class) — whose grouped packages are ALL gone
+    # from the live dpkg status (the removal took the packages while the
+    # module-dir leftovers remain), or a stray /boot image with no module tree
+    # and no owning package.  Such a version is on-disk residue only and is
+    # removed by the zombie cleanup.
+    local orphan_kver known pkgs_gone
     for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
-        [[ -z "${KERNEL_INVENTORY_PKGS[$i]}" ]] \
+        pkgs_gone=false
+        [[ -z "${KERNEL_INVENTORY_PKGS[$i]}" ]] && pkgs_gone=true
+        if [[ "$pkgs_gone" == false && "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] \
+            && ! kernel_version_has_installed_packages "${KERNEL_INVENTORY_PKGS[$i]}"; then
+            pkgs_gone=true
+        fi
+        [[ "$pkgs_gone" == true ]] \
             && KERNEL_ORPHANED_KERNELS+=("${KERNEL_INVENTORY_VERSIONS[$i]}")
     done
     while IFS= read -r orphan_kver; do
@@ -10553,6 +11007,18 @@ kernel_inventory_collect()
         KERNEL_REMOVABLE=()
         KERNEL_REMOVABLE_PKGS=()
     fi
+    # Round 64 (Finding 2): the module-vs-kernel incompatibility evidence (the
+    # kernel menu's per-kernel remedy actions gate on it — the round-42
+    # fail-closed pattern).
+    kernel_module_incompatibilities || true
+    # Round 66 (Finding 2): the missing-initramfs flag — the live pairing probe
+    # per installed kernel (the same shared probe the diagnostic's pairing loop
+    # and the verify's verdict consume), so the menu's state annotation and the
+    # verify see the incompleteness even after a post-mutation re-collect.
+    local noinitrd_v
+    for noinitrd_v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+        kernel_initramfs_present "$noinitrd_v" || KERNEL_NO_INITRD+=("$noinitrd_v")
+    done
     # Round 118 (performance): mark the inventory fresh for this run so the
     # combined diagnostic's preamble subshells and the kernel section reuse it
     # (repair_change_status resets the flag on every changed mutation).
@@ -10591,6 +11057,8 @@ parse_cached_kernel_inventory()
     KERNEL_REMOVABLE=()
     KERNEL_REMOVABLE_PKGS=()
     KERNEL_LATEST_PKGS=()
+    KERNEL_REMOVAL_PLAN_PKGS=()
+    KERNEL_REMOVAL_LINEAGE_VERSIONS=()
     KERNEL_MISSING_HEADERS=()
     KERNEL_HEADERS_INSTALLABILITY=()
     KERNEL_BUILD_COMPILER=""
@@ -10606,6 +11074,10 @@ parse_cached_kernel_inventory()
     KERNEL_BROKEN=()
     KERNEL_BROKEN_REASON=()
     KERNEL_STALE_METAPACKAGES=()
+    KERNEL_MODULE_INCOMPAT=()
+    KERNEL_MODULE_INCOMPAT_KVER=()
+    KERNEL_MODULE_INCOMPAT_PKGS=()
+    KERNEL_NO_INITRD=()
 
     while IFS= read -r line; do
         line="${line%$'\r'}"
@@ -10693,6 +11165,16 @@ parse_cached_kernel_inventory()
             "Kernel incomplete: "*)
                 KERNEL_PARTIAL+=("${line#Kernel incomplete: }")
                 ;;
+            "Kernel module build incompatibility: "*)
+                rest="${line#Kernel module build incompatibility: }"
+                KERNEL_MODULE_INCOMPAT+=("${rest%% kernel=*}")
+                v="${rest#* kernel=}"
+                KERNEL_MODULE_INCOMPAT_KVER+=("${v%% packages=*}")
+                KERNEL_MODULE_INCOMPAT_PKGS+=("${rest#* packages=}")
+                ;;
+            "Kernel initramfs missing: "*)
+                KERNEL_NO_INITRD+=("${line#Kernel initramfs missing: }")
+                ;;
         esac
     done <<<"$baseline"
 
@@ -10762,6 +11244,24 @@ kernel_package_is_removable()
     return 1
 }
 
+# Round 74 (the residue class — the user's TUXEDO-host finding): true when at
+# least one of the version's grouped packages is STILL installed (a live
+# kernel); false for an empty grouped set or a set whose every package is gone
+# (the on-disk residue class — the removal took the packages but the module-dir
+# leftovers remain, so the version is removed, not live).  Read-only: the
+# grouped set is the collected evidence; the installed state re-reads the live
+# package database of the detected backend.
+kernel_version_has_installed_packages()
+{
+    local joined="$1" pkg
+    [[ -n "$joined" ]] || return 1
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        target_dpkg_package_installed "$pkg" && return 0
+    done < <(tr ',' '\n' <<<"$joined")
+    return 1
+}
+
 # True when the supplied kernel version is in the pre-computed stale set (a
 # non-running kernel missing headers whose header package is unavailable).
 kernel_is_stale()
@@ -10816,6 +11316,21 @@ kernel_broken_reason()
     return 0
 }
 
+# The grouped package set (comma-joined) for one inventory version, or empty.
+# Shared by the residue-class checks (the parallel KERNEL_INVENTORY_PKGS
+# lookup without re-deriving the index at every call site).
+kernel_inventory_pkgs_for()
+{
+    local v="$1" i
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        if [[ "${KERNEL_INVENTORY_VERSIONS[$i]}" == "$v" ]]; then
+            printf '%s\n' "${KERNEL_INVENTORY_PKGS[$i]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # True when removing the newest installed kernel is safe.  On the running host
 # the newest kernel must not be the running kernel (its modules are loaded) AND
 # the running kernel must still be a valid fallback: on Arch a `pacman -Syu`
@@ -10831,13 +11346,28 @@ kernel_broken_reason()
 # from KERNEL_REMOVABLE, yet an older kernel still exists to fall back to.
 # Removing the newest can therefore never leave a target with zero kernels, and
 # never removes the host's running kernel.
+# Round 74 (the residue class): the newest kernel counts as removable only
+# while it is a LIVE kernel — a residue-only newest (its packages gone, the
+# module-dir leftovers remaining) has nothing to remove through apt and is
+# resolved by the orphaned-kernel cleanup, never the remove-newest row.  The
+# installed-package check is apt/dpkg-scoped (the residue evidence class);
+# the other backends keep the pre-round-74 conditions.
 kernel_newest_is_removable()
 {
+    local base_ok=false
     if (( RUNNING_HOST_MODE == 1 )); then
         [[ -n "$KERNEL_LATEST" && -n "$KERNEL_RUNNING" && "$KERNEL_LATEST" != "$KERNEL_RUNNING" ]] \
-            && kernel_in_list "$KERNEL_RUNNING" "${KERNEL_INVENTORY_VERSIONS[@]}"
+            && kernel_in_list "$KERNEL_RUNNING" "${KERNEL_INVENTORY_VERSIONS[@]}" \
+            && base_ok=true
     else
-        [[ -n "$KERNEL_LATEST" ]] && ((${#KERNEL_INVENTORY_VERSIONS[@]} > 1))
+        [[ -n "$KERNEL_LATEST" ]] && ((${#KERNEL_INVENTORY_VERSIONS[@]} > 1)) \
+            && base_ok=true
+    fi
+    [[ "$base_ok" == true ]] || return 1
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+        kernel_version_has_installed_packages "$(kernel_inventory_pkgs_for "$KERNEL_LATEST" 2>/dev/null || true)"
+    else
+        return 0
     fi
 }
 
@@ -10846,12 +11376,33 @@ kernel_newest_is_removable()
 # --remove-newest — the newest installed kernel while removing it is safe (see
 # kernel_newest_is_removable).  The running kernel is never a candidate: its
 # modules are loaded.
-# KERNEL_REMOVE_MODE narrows the decision to one interactive menu action
+# Round 76 (the remove-newest completion gap): the PRE-APPLY removal target —
+# true when the version's grouped package set intersects the removal plan.
+# kernel_is_removal_candidate re-derives from the LIVE package state, so once
+# the removed newest's packages are gone it no longer sees the removal target
+# and the completion's residue sweep + absence proof skipped it.  The plan
+# membership is state-independent (the plan was decided pre-apply on the
+# positive evidence), so the completion and the forceful-removal paths keep
+# verifying the version that was actually removed.
+kernel_was_removal_target()
+{
+    local joined="$1" pkg target
+    shift
+    for pkg in $(tr ',' ' ' <<<"${joined:-}"); do
+        [[ -n "$pkg" ]] || continue
+        for target in "$@"; do
+            [[ -n "$target" && "$pkg" == "$target" ]] && return 0
+        done
+    done
+    return 1
+}
+
 # (`oldest` = superseded only; `newest` = the newest kernel while removable;
 # `stale` = a non-running kernel whose headers are unavailable from any enabled
 # repository; `this` = exactly the single named kernel version in
 # KERNEL_REMOVE_THIS_VERSION, only while it is a removable superseded kernel);
 # an empty mode keeps the Full Repair `kernels` semantics.
+# KERNEL_REMOVE_MODE narrows the decision to one interactive menu action.
 kernel_is_removal_candidate()
 {
     local v="$1"
@@ -10896,6 +11447,16 @@ kernel_is_removal_candidate()
 kernel_package_is_removal_candidate()
 {
     local p
+    # Round 82 (the stale-evidence plan fix): the removal stage's THEN-CURRENT
+    # plan — re-derived fresh at plan time (the fresh union) and stored in
+    # KERNEL_REMOVAL_PLAN_PKGS — is the authoritative candidate set for the
+    # removal validators, so a package that appeared mid-session (the
+    # half-configured headers class) is accepted.  The cached-inventory
+    # arrays stay the fallback (the menu's pre-offer probes, where no plan
+    # exists yet and the array is empty).
+    for p in "${KERNEL_REMOVAL_PLAN_PKGS[@]}"; do
+        [[ "$p" == "$1" ]] && return 0
+    done
     case "$KERNEL_REMOVE_MODE" in
         newest)
             if kernel_newest_is_removable; then
@@ -11099,7 +11660,7 @@ rpm_package_available()
         run_selected_chroot /usr/bin/env \
             HOME=/root LC_ALL=C \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            dnf5 repoquery --available "$package" 2>/dev/null
+            dnf5 -C repoquery --available "$package" 2>/dev/null
     )"
     rc=$?
     set -e
@@ -11149,55 +11710,54 @@ apt_list_decompress()
 # network.
 apt_kernel_repo_latest()
 {
-    local meta img rest lists_dir file best_version best_img
-    # Prefer an installed linux-image-* metapackage; fall back to the newest
-    # installed versioned image package so the family is still identifiable.
-    meta=""
+    local meta metas_joined img rest lists_dir file best_version best_img direct=""
+    local -a metas=()
+    # Round 68 (the vendor-package evidence requirement): EVERY installed
+    # linux-image-* metapackage is the evidence set — the TUXEDO transition
+    # state may carry linux-image-tuxedo AND linux-image-tuxedo-txos (plus the
+    # older -tuxedo-*/-txos naming), and the vendor version tokens are
+    # preserved verbatim.  The derivation takes the newest versioned image
+    # across the WHOLE set, never the first match.
     while IFS= read -r img; do
         [[ "$img" == linux-image-* ]] || continue
-        meta="$img"
-        break
+        metas+=("$img")
     done < <(apt_managed_kernel_metapackage)
-    if [[ -z "$meta" ]]; then
+    if ((${#metas[@]} == 0)); then
         img="$(dpkg_path_owner "/boot/vmlinuz-$KERNEL_LATEST" 2>/dev/null | head -n1 || true)"
         [[ "$img" == linux-image-* ]] || return 1
-        meta="$img"
+        metas+=("$img")
     fi
-
-    # Round 80 (the Ubuntu mapping quirk): when the selected meta IS a
-    # versioned image package (the no-metapackage fallback picked the newest
-    # installed image — Ubuntu rigs without linux-image-generic, Debian
-    # systems whose vmlinuz owner is the versioned linux-image-<v>-<flavour>),
-    # its own Depends never names another versioned image: Ubuntu's signed
-    # image depends on linux-modules-<v>-generic (plus the unsigned image),
-    # and the TUXEDO/Debian versioned images depend on modules only.  The
-    # Depends scan below would find no linux-image-<digit> token and the
-    # pre-round-80 code fell through to the bare package Version
-    # (7.0.0-38.38), which maps to the NONEXISTENT linux-image-7.0.0-38.38.
-    # Derive the canonical version from the package name's remainder instead
-    # (7.0.0-38-generic) — the real linux-image-<v> name the installability
-    # probes construct.  The optional unsigned- prefix is stripped exactly
-    # like apt_managed_kernel_versions (Ubuntu's unsigned image owns the
-    # vmlinuz on signed/unsigned systems).
-    if [[ "$meta" == linux-image-* ]]; then
+    for meta in "${metas[@]}"; do
         rest="${meta#linux-image-}"
         rest="${rest#unsigned-}"
         if [[ "$rest" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            printf '%s\n' "$rest"
-            return 0
+            # A versioned meta contributes its own token (the no-metapackage
+            # fallback shape) — the bare Version is never used.
+            direct="$(printf '%s\n%s\n' "$direct" "$rest" | grep -v '^$' | LC_ALL=C sort -V | tail -n 1)"
         fi
-    fi
+        metas_joined="${metas_joined:+$metas_joined }$meta"
+    done
+
+    # Round 80 (the Ubuntu mapping quirk): when the selected meta IS a
+    # Round 80 (the Ubuntu mapping quirk): a versioned meta's own Depends
+    # never names another versioned image (Ubuntu's signed image depends on
+    # linux-modules-<v>-generic plus the unsigned image; the TUXEDO/Debian
+    # versioned images depend on modules only), so its canonical version comes
+    # from its name's remainder — collected into `direct` above, never the
+    # bare package Version.  The optional unsigned- prefix is stripped exactly
+    # like apt_managed_kernel_versions.
 
     lists_dir="$TARGET_ROOT/var/lib/apt/lists"
     [[ -d "$lists_dir" ]] || return 1
 
-    # The highest-versioned stanza for the metapackage across every index file
-    # names the candidate; its Depends pins the versioned linux-image-<V> whose
-    # <V> is the canonical kernel version.  One awk pass over the decompressed
-    # indexes, then a version sort of the candidate set.  A stanza whose
-    # Depends names no versioned image contributes nothing (round 80: never
-    # fall back to the bare package Version — it is not a kernel version and
-    # maps to a nonexistent image name).
+    # The highest-versioned stanza for ANY of the installed metas across every
+    # index file names the candidate; its Depends pins the versioned
+    # linux-image-<V> whose <V> is the canonical kernel version (the vendor
+    # tokens — 7.3.4+tux.1.1-txos-amd64 — preserved verbatim).  One awk pass
+    # over the decompressed indexes, then a version sort of the candidate set.
+    # A stanza whose Depends names no versioned image contributes nothing
+    # (round 80: never fall back to the bare package Version — it is not a
+    # kernel version and maps to a nonexistent image name).
     best_version=""
     best_img=""
     while IFS=$'\t' read -r version img; do
@@ -11209,8 +11769,11 @@ apt_kernel_repo_latest()
                 [[ -n "$file" ]] || continue
                 apt_list_decompress "$file"
             done < <(find "$lists_dir" -maxdepth 1 -type f -name '*_Packages*' 2>/dev/null | LC_ALL=C sort)
-        } | awk -v meta="$meta" '
-            BEGIN { RS = ""; FS = "\n" }
+        } | awk -v metas="$metas_joined" '
+            BEGIN {
+                RS = ""; FS = "\n"
+                nset = split(metas, mset, / /)
+            }
             {
                 name = ""; ver = ""; deps = ""
                 for (i = 1; i <= NF; i++) {
@@ -11220,7 +11783,9 @@ apt_kernel_repo_latest()
                     else if (line ~ /^(Depends|Pre-Depends): /) deps = deps " " substr(line, index(line, ": ") + 2)
                     else if (line ~ /^[[:space:]]/ && deps != "") deps = deps " " line
                 }
-                if (name != meta || ver == "") next
+                matched = 0
+                for (m = 1; m <= nset; m++) if (name == mset[m]) { matched = 1; break }
+                if (matched != 1 || ver == "") next
                 img = ""
                 n = split(deps, tok, /[ ,|]+/)
                 for (j = 1; j <= n; j++) {
@@ -11237,6 +11802,12 @@ apt_kernel_repo_latest()
         ' | LC_ALL=C sort -V -k1,1 | tail -n 1
     )
 
+    # The final pick: the newest token across the versioned metas' own names
+    # AND the unversioned metas' stanza-derived images.
+    if [[ -n "$direct" ]]; then
+        printf '%s\n%s\n' "$direct" "${best_img:-}" | grep -v '^$' | LC_ALL=C sort -V | tail -n 1
+        return 0
+    fi
     [[ -n "$best_version" && -n "$best_img" ]] || return 1
     printf '%s\n' "$best_img"
 }
@@ -11256,7 +11827,7 @@ rpm_kernel_repo_latest()
         run_selected_chroot /usr/bin/env \
             HOME=/root LC_ALL=C \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            dnf5 repoquery --available --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' \
+            dnf5 -C repoquery --available --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' \
                 kernel-core kernel 2>/dev/null || true
     )"
     [[ -n "$output" ]] || return 1
@@ -11775,7 +12346,18 @@ safe_apt_install_packages()
     if (( CHROOT_TRY_RC == 124 )); then
         fail "$(reason package-manager-timeout "$label")."
     fi
-    (( CHROOT_TRY_RC == 0 )) || fail "$label failed with exit code $CHROOT_TRY_RC."
+    if (( CHROOT_TRY_RC != 0 )); then
+        # Round 69 (the universal unblocker): a failed apply on the
+        # half-configured class is the same zfs-vs-kernel blocker behind every
+        # package repair (the pending postinsts re-ran and the DKMS module
+        # build failed — dpkg exit 100).  The ERROR names the module + the
+        # kernel + the bound + the per-kernel remedy direction — never the
+        # bare exit code.
+        local blocker_prose=""
+        blocker_prose="$(dpkg_half_configured_failure_prose "$CHROOT_TRY_OUTPUT" 2>/dev/null || true)"
+        [[ -z "$blocker_prose" ]] || fail "$label: $blocker_prose"
+        fail "$label failed with exit code $CHROOT_TRY_RC."
+    fi
 }
 
 repair_stale_mapper_mount_alias()
@@ -12869,6 +13451,635 @@ enable_host_snapshot_config()
     msg_log snapshot-enable-complete "$ROOT_DEVICE"
 }
 
+# ===== Round 25 (0.2.32, the Num Lock early-boot repair — phase 4) =========
+# The manual repair verb: ONE CONFIRM names the derived plan, then the
+# per-family integration (written from the DETECTED initramfs backend —
+# never a hardcoded path, never a distro-ID gate) + the family's rebuild
+# verb. The change takes effect at the next boot (the reboot-to-confirm
+# terminal). The GDM/SDDM Numlock=off corrections and the getty drop-in
+# stay the fallback chain (applied only on a PROVEN propagation drop) —
+# NOT this phase's primary. The reversion contract: remove the additive
+# files + re-run the family's rebuild verb (the round-21 drill-proven
+# revert); every file this verb writes is additive and byte-canonical.
+
+# Round 38 (the user's ruling — the D1 escape hatch promoted): the
+# helper-embedded copy of the shipped micro-binary. When an installed
+# package predates the payload, the HOST-scope repair PLACES the payload
+# itself (the decode + the install below) instead of refusing. The binary
+# is the round-24/26 shipped numlock-on (the KDGKBLED/KDSKBLED ioctls, the
+# per-VT loop, the kmsg marker, O_NONBLOCK — see src/numlock-on.c); the
+# port transformation carries this constant verbatim.
+NUMLOCK_PAYLOAD_B64="f0VMRgIBAQAAAAAAAAAAAAMAPgABAAAAkBIAAAAAAABAAAAAAAAAALg4AAAAAAAAAAAAAEAAOAAOAEAAIAAfAAYAAAAEAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAEAMAAAAAAAAQAwAAAAAAAAgAAAAAAAAAAwAAAAQAAAB0AwAAAAAAAHQDAAAAAAAAdAMAAAAAAAAcAAAAAAAAABwAAAAAAAAAAQAAAAAAAAABAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAIAAAAAAAA4AgAAAAAAAAAEAAAAAAAAAEAAAAFAAAAABAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAhQUAAAAAAACFBQAAAAAAAAAQAAAAAAAAAQAAAAQAAAAAIAAAAAAAAAAgAAAAAAAAACAAAAAAAACoAwAAAAAAAKgDAAAAAAAAABAAAAAAAAABAAAABgAAAHAtAAAAAAAAcD0AAAAAAABwPQAAAAAAAOgCAAAAAAAAAAMAAAAAAAAAEAAAAAAAAAIAAAAGAAAAyC0AAAAAAADIPQAAAAAAAMg9AAAAAAAA4AEAAAAAAADgAQAAAAAAAAgAAAAAAAAABAAAAAQAAABQAwAAAAAAAFADAAAAAAAAUAMAAAAAAAAkAAAAAAAAACQAAAAAAAAABAAAAAAAAAAEAAAABAAAAGgjAAAAAAAAaCMAAAAAAABoIwAAAAAAACAAAAAAAAAAIAAAAAAAAAAIAAAAAAAAAAQAAAAEAAAAiCMAAAAAAACIIwAAAAAAAIgjAAAAAAAAIAAAAAAAAAAgAAAAAAAAAAQAAAAAAAAAU+V0ZAQAAABoIwAAAAAAAGgjAAAAAAAAaCMAAAAAAAAgAAAAAAAAACAAAAAAAAAACAAAAAAAAABQ5XRkBAAAAPAhAAAAAAAA8CEAAAAAAADwIQAAAAAAADwAAAAAAAAAPAAAAAAAAAAEAAAAAAAAAFHldGQGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAUuV0ZAQAAABwLQAAAAAAAHA9AAAAAAAAcD0AAAAAAACQAgAAAAAAAJACAAAAAAAAAQAAAAAAAAAEAAAAFAAAAAMAAABHTlUAFjG8LVfaK0Vjz806+Sf9+ygWAQYvbGliNjQvbGQtbGludXgteDg2LTY0LnNvLjIAAgAAAA4AAAABAAAABgAAAAABgQAAAAACDgAAAA8AAADRZc5tOfKLHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAASAAAAAAAAAAAAAAAAAAAAAAAAAFgAAAASAAAAAAAAAAAAAAAAAAAAAAAAAIoAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAC8AAAASAAAAAAAAAAAAAAAAAAAAAAAAAEsAAAASAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAASAAAAAAAAAAAAAAAAAAAAAAAAAEUAAAASAAAAAAAAAAAAAAAAAAAAAAAAAC4AAAASAAAAAAAAAAAAAAAAAAAAAAAAAFEAAAASAAAAAAAAAAAAAAAAAAAAAAAAAKYAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAASAAAAAAAAAAAAAAAAAAAAAAAAALUAAAAgAAAAAAAAAAAAAAAAAAAAAAAAADYAAAASAAAAAAAAAAAAAAAAAAAAAAAAAB8AAAAiAAAAAAAAAAAAAAAAAAAAAAAAABgAAAARABsAYEAAAAAAAAAIAAAAAAAAAABvcGVuAF9fbGliY19zdGFydF9tYWluAHN0ZGVycgBfX2N4YV9maW5hbGl6ZQBkcHJpbnRmAHN0cmVycm9yAGlvY3RsAGNsb3NlAGZwdXRzAHN0cmNtcABfX2Vycm5vX2xvY2F0aW9uAGxpYmMuc28uNgBHTElCQ18yLjIuNQBHTElCQ18yLjM0AF9JVE1fZGVyZWdpc3RlclRNQ2xvbmVUYWJsZQBfX2dtb25fc3RhcnRfXwBfSVRNX3JlZ2lzdGVyVE1DbG9uZVRhYmxlAAAAAAIAAwAAAAMAAwADAAMAAwADAAAAAwAAAAMAAwADAAEAAgBpAAAAEAAAAAAAAAB1GmkJAAADAHMAAAAQAAAAtJGWBgAAAgB/AAAAAAAAAHA9AAAAAAAACAAAAAAAAABwEwAAAAAAAHg9AAAAAAAACAAAAAAAAAAwEwAAAAAAAIA9AAAAAAAACAAAAAAAAACUIQAAAAAAAIg9AAAAAAAACAAAAAAAAACeIQAAAAAAAJA9AAAAAAAACAAAAAAAAACoIQAAAAAAAJg9AAAAAAAACAAAAAAAAACyIQAAAAAAAKA9AAAAAAAACAAAAAAAAAC8IQAAAAAAAKg9AAAAAAAACAAAAAAAAADGIQAAAAAAALA9AAAAAAAACAAAAAAAAADQIQAAAAAAALg9AAAAAAAACAAAAAAAAADaIQAAAAAAAMA9AAAAAAAACAAAAAAAAADkIQAAAAAAAFBAAAAAAAAACAAAAAAAAABQQAAAAAAAAKg/AAAAAAAABgAAAAEAAAAAAAAAAAAAALA/AAAAAAAABgAAAAMAAAAAAAAAAAAAALg/AAAAAAAABgAAAAoAAAAAAAAAAAAAAMA/AAAAAAAABgAAAAwAAAAAAAAAAAAAAMg/AAAAAAAABgAAAA4AAAAAAAAAAAAAAGBAAAAAAAAABQAAAA8AAAAAAAAAAAAAAABAAAAAAAAABwAAAAIAAAAAAAAAAAAAAAhAAAAAAAAABwAAAAQAAAAAAAAAAAAAABBAAAAAAAAABwAAAAUAAAAAAAAAAAAAABhAAAAAAAAABwAAAAYAAAAAAAAAAAAAACBAAAAAAAAABwAAAAcAAAAAAAAAAAAAAChAAAAAAAAABwAAAAgAAAAAAAAAAAAAADBAAAAAAAAABwAAAAkAAAAAAAAAAAAAADhAAAAAAAAABwAAAAsAAAAAAAAAAAAAAEBAAAAAAAAABwAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEiD7AhIiwWtLwAASIXAdAL/0EiDxAjDAAAAAAAAAAAA/zXKLwAA/yXMLwAADx9AAP8lyi8AAGgAAAAA6eD/////JcIvAABoAQAAAOnQ/////yW6LwAAaAIAAADpwP////8lsi8AAGgDAAAA6bD/////JaovAABoBAAAAOmg/////yWiLwAAaAUAAADpkP////8lmi8AAGgGAAAA6YD/////JZIvAABoBwAAAOlw/////yWKLwAAaAgAAADpYP////8lAi8AAGaQAAAAAAAAAABBV0FWSYn2QVVBif1BVEyNJR8PAABVvQEAAABTMdtRQTntfmFNizzuSI01MhAAAEyJ/+iJ////hcB0QEiNNfIOAABMif/odv///4XAdQVNifzrLUiNNd0OAABMif/oXv///4XAdOhIjTX3DwAATIn/6Ev///+FwHTV6wq7AQAAAEj/xeuahdt0YDHtMdtMjTUcLAAASI01yQ8AAEyJ5+gd////TYss7oXAdRJMie/o9gEAAIXAD5XAD7bA6x9IjTVwDgAATInn6PT+//8x9kyJ74XAQA+UxuiMAgAASP/FCcNIg/0Jda3rekQ57X0Eie3rSUiLNZcuAABIjT1pDwAAu0AAAADodv7//+maAAAASI01Tg8AAEyJ5+ii/v//TYs87oXAdRxMif/oewEAAIXAD5XAD7bACcNI/8VBOe1/z+shTInnSI016A0AAOhv/v//MfZMif+FwEAPlMboBwIAAOvTSI01+g4AAEyJ5+hO/v//hcB0M74BCQAASI09Fw8AADHA6Ef+//+JxYXAeBqJx0yJ4kiNNQgPAAAxwOgO/v//ie/o9/3//1qJ2FtdQVxBXUFeQV/DZg8fhAAAAAAAMe1JidFeSIniSIPk8FBURTHAMclIjT0l/v///xX3LAAA9GYuDx+EAAAAAAAPH0AASI09kS0AAEiNBYotAABIOfh0FUiLBdYsAABIhcB0Cf/gDx+AAAAAAMMPH4AAAAAASI09YS0AAEiNNVotAABIKf5IifBIwe4/SMH4A0gBxkjR/nQUSIsFpSwAAEiFwHQI/+BmDx9EAADDDx+AAAAAAPMPHvqAPS0tAAAAdStVSIM9giwAAABIieV0DEiLPf4sAADoaf3//+hk////xgUFLQAAAV3DDx8Aww8fgAAAAADzDx766Xf///9VMcC+AgkAAEiJ/VNIg+wY6BL9//+FwHkn6Jn8//+LOOgS/f//SInuSI09YwwAAEiJwjHA6I78//+4/////+t4icOJx0iNVCQPMcC+ZEsAAMZEJA8A6I38//+FwHkp6FT8//+LOOjN/P//SInuSI09TQwAAEiJwjHA6En8//+J3+hy/P//67L2RCQPAkiNBfgLAABIie5IjRXxCwAASI09TQwAAEgPRdAxwOgY/P//id/oQfz//zHASIPEGFtdw0FUMcBBifS+AgkAAFVIif1TSIPsEOhO/P//hcB5KujV+///izjoTvz//0iJ7kiNPR8MAABIicIxwOjK+///uAEAAADp8AAAAInDicdIjVQkDzHAvmRLAADGRCQPAOjG+///hcB5MeiN+///izjoBvz//0iJ7kiNPQUMAABIicIxwOiC+///id/oq/v//7gCAAAA6aEAAACKVCQPvmVLAACJ34nQg+L9g8gCRYXkD0XQMcCIVCQPD7bS6Gr7//+FwHku6DH7//+LOOiq+///SInuSI091wsAAEiJwjHA6Cb7//+J3+hP+///uAMAAADrSEWF5EiNBdIKAABIiemJ30yNJckKAABIjTXPCwAATA9F4DHATIni6C37//9IiepMieYxwEiNPbILAADo2fr//4nf6AL7//8xwEiDxBBbXUFcwwAAAEiD7AhIg8QIwwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAIAb24Ab2ZmAGJvb3QtYml0Y2g6IG51bWxvY2sgcmVhZCAlczogb3Blbi1mYWlsZWQgKCVzKQoAYm9vdC1iaXRjaDogbnVtbG9jayByZWFkICVzOiBpb2N0bC1mYWlsZWQgKCVzKQoAYm9vdC1iaXRjaDogbnVtbG9jayByZWFkICVzOiAlcwoAYm9vdC1iaXRjaDogbnVtbG9jayBzZXQgJXM6IG9wZW4tZmFpbGVkICglcykKAGJvb3QtYml0Y2g6IG51bWxvY2sgc2V0ICVzOiByZWFkLWZhaWxlZCAoJXMpCgBib290LWJpdGNoOiBudW1sb2NrIHNldCAlczogc2V0LWZhaWxlZCAoJXMpCgBib290LWJpdGNoOiBudW1sb2NrICVzICglcykKAC1hAHJlYWQAdXNhZ2U6IG51bWxvY2stb24gWy1hXSBbb258b2ZmfHJlYWRdIFtkZXYgLi4uXQoAL2Rldi9rbXNnAGJvb3QtYml0Y2g6IG51bWxvY2sgJXMgKG1hcmtlcikKAC9kZXYvdHR5MAAvZGV2L3R0eTEAL2Rldi90dHkyAC9kZXYvdHR5MwAvZGV2L3R0eTQAL2Rldi90dHk1AC9kZXYvdHR5NgAvZGV2L3R0eTcAL2Rldi90dHk4AAAAARsDOzwAAAAGAAAAMO7//4gAAADQ7v//sAAAAODu//8kAQAAoPD//1gAAACJ8f//yAAAAEjy///wAAAAAAAAABQAAAAAAAAAAXpSAAF4EAEbDAcIkAEHEBQAAAAcAAAAQPD//yIAAAAAAAAAAAAAABQAAAAAAAAAAXpSAAF4EAEbDAcIkAEAACQAAAAcAAAAoO3//6AAAAAADhBGDhhKDwt3CIAAPxo7KjMkIgAAAAAUAAAARAAAABju//8IAAAAAAAAAAAAAAAkAAAAXAAAALnw//+/AAAAAEEOEIYCSw4YgwNEDjACrA4YQQ4QQQ4IMAAAAIQAAABQ8f//QQEAAABCDhCMAksOGIYDRA4ggwREDjADJwEOIEEOGEEOEEIOCAAAAEgAAAC4AAAAtO3//7cBAAAAQg4QjwJCDhiOA0UOII0ERQ4ojAVIDjCGBkYOOIMHQw5AA4sBDjhDDjBBDihCDiBCDhhCDhBCDggAAAAAAAAAAAAAAAQAAAAQAAAABQAAAEdOVQACgADABAAAAAEAAAAAAAAABAAAABAAAAABAAAAR05VAAAAAAADAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHATAAAAAAAAMBMAAAAAAACUIQAAAAAAAJ4hAAAAAAAAqCEAAAAAAACyIQAAAAAAALwhAAAAAAAAxiEAAAAAAADQIQAAAAAAANohAAAAAAAA5CEAAAAAAAABAAAAAAAAAGkAAAAAAAAADAAAAAAAAAAAEAAAAAAAAA0AAAAAAAAAfBUAAAAAAAAZAAAAAAAAAHA9AAAAAAAAGwAAAAAAAAAIAAAAAAAAABoAAAAAAAAAeD0AAAAAAAAcAAAAAAAAAAgAAAAAAAAA9f7/bwAAAACQAwAAAAAAAAUAAAAAAAAAOAUAAAAAAAAGAAAAAAAAALgDAAAAAAAACgAAAAAAAADPAAAAAAAAAAsAAAAAAAAAGAAAAAAAAAAVAAAAAAAAAAAAAAAAAAAAAwAAAAAAAADoPwAAAAAAAAIAAAAAAAAA2AAAAAAAAAAUAAAAAAAAAAcAAAAAAAAAFwAAAAAAAAAICAAAAAAAAAcAAAAAAAAAWAYAAAAAAAAIAAAAAAAAALABAAAAAAAACQAAAAAAAAAYAAAAAAAAAPv//28AAAAAAAAACAAAAAD+//9vAAAAACgGAAAAAAAA////bwAAAAABAAAAAAAAAPD//28AAAAACAYAAAAAAAD5//9vAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAyD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAANhAAAAAAAABGEAAAAAAAAFYQAAAAAAAAZhAAAAAAAAB2EAAAAAAAAIYQAAAAAAAAlhAAAAAAAACmEAAAAAAAALYQAAAAAAAAAAAAAAAAAABQQAAAAAAAAEdDQzogKERlYmlhbiAxNi4yLjAtMykgMTYuMi4wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAQA8f8AAAAAAAAAAAAAAAAAAAAACQAAAAEAEwCIIwAAAAAAACAAAAAAAAAAEwAAAAQA8f8AAAAAAAAAAAAAAAAAAAAAIAAAAAIADQB5EwAAAAAAAL8AAAAAAAAAKQAAAAIADQA4FAAAAAAAAEEBAAAAAAAAMQAAAAEAFgCAPQAAAAAAAEgAAAAAAAAANwAAAAQA8f8AAAAAAAAAAAAAAAAAAAAAQgAAAAIADQDAEgAAAAAAAAAAAAAAAAAARAAAAAIADQDwEgAAAAAAAAAAAAAAAAAAVwAAAAIADQAwEwAAAAAAAAAAAAAAAAAAbQAAAAEAGwBoQAAAAAAAAAEAAAAAAAAAeQAAAAEAFQB4PQAAAAAAAAAAAAAAAAAAoAAAAAIADQBwEwAAAAAAAAAAAAAAAAAArAAAAAEAFABwPQAAAAAAAAAAAAAAAAAANwAAAAQA8f8AAAAAAAAAAAAAAAAAAAAAywAAAAEAEQBgIwAAAAAAAAAAAAAAAAAAAAAAAAQA8f8AAAAAAAAAAAAAAAAAAAAA2QAAAAEAFwDIPQAAAAAAAAAAAAAAAAAA4gAAAAAAEADwIQAAAAAAAAAAAAAAAAAA9QAAAAEAGQDoPwAAAAAAAAAAAAAAAAAACwEAABIAAAAAAAAAAAAAAAAAAAAAAAAAKAEAABIAAAAAAAAAAAAAAAAAAAAAAAAARQEAACAAAAAAAAAAAAAAAAAAAAAAAAAAugEAACAAGgBIQAAAAAAAAAAAAAAAAAAAYQEAABAAGgBYQAAAAAAAAAAAAAAAAAAAaAEAABICDgB8FQAAAAAAAAAAAAAAAAAApQEAABIAAAAAAAAAAAAAAAAAAAAAAAAAbgEAABIAAAAAAAAAAAAAAAAAAAAAAAAAgAEAABIAAAAAAAAAAAAAAAAAAAAAAAAAkgEAABIAAAAAAAAAAAAAAAAAAAAAAAAApAEAABIAAAAAAAAAAAAAAAAAAAAAAAAAuAEAABAAGgBIQAAAAAAAAAAAAAAAAAAAxQEAABIAAAAAAAAAAAAAAAAAAAAAAAAA2AEAACAAAAAAAAAAAAAAAAAAAAAAAAAA5wEAABECGgBQQAAAAAAAAAAAAAAAAAAA9AEAABEADwAAIAAAAAAAAAQAAAAAAAAAAwIAABAAGwBwQAAAAAAAAAAAAAAAAAAAvgEAABIADQCQEgAAAAAAACIAAAAAAAAACAIAABAAGwBgQAAAAAAAAAAAAAAAAAAAFAIAABIADQDQEAAAAAAAALcBAAAAAAAAGQIAABIAAAAAAAAAAAAAAAAAAAAAAAAAKgIAABECGgBYQAAAAAAAAAAAAAAAAAAANgIAACAAAAAAAAAAAAAAAAAAAAAAAAAAUAIAABIAAAAAAAAAAAAAAAAAAAAAAAAAZQIAACIAAAAAAAAAAAAAAAAAAAAAAAAAgAIAABICCgAAEAAAAAAAAAAAAAAAAAAAhgIAABEAGwBgQAAAAAAAAAgAAAAAAAAAAFNjcnQxLm8AX19hYmlfdGFnAG51bWxvY2stb24uYwByZWFkX2xlZABzZXRfbGVkAHZ0cy4wAGNydHN0dWZmLmMAZGVyZWdpc3Rlcl90bV9jbG9uZXMAX19kb19nbG9iYWxfZHRvcnNfYXV4AGNvbXBsZXRlZC4wAF9fZG9fZ2xvYmFsX2R0b3JzX2F1eF9maW5pX2FycmF5X2VudHJ5AGZyYW1lX2R1bW15AF9fZnJhbWVfZHVtbXlfaW5pdF9hcnJheV9lbnRyeQBfX0ZSQU1FX0VORF9fAF9EWU5BTUlDAF9fR05VX0VIX0ZSQU1FX0hEUgBfR0xPQkFMX09GRlNFVF9UQUJMRV8AX19saWJjX3N0YXJ0X21haW5AR0xJQkNfMi4zNABfX2Vycm5vX2xvY2F0aW9uQEdMSUJDXzIuMi41AF9JVE1fZGVyZWdpc3RlclRNQ2xvbmVUYWJsZQBfZWRhdGEAX2ZpbmkAZnB1dHNAR0xJQkNfMi4yLjUAaW9jdGxAR0xJQkNfMi4yLjUAY2xvc2VAR0xJQkNfMi4yLjUAZHByaW50ZkBHTElCQ18yLjIuNQBfX2RhdGFfc3RhcnQAc3RyY21wQEdMSUJDXzIuMi41AF9fZ21vbl9zdGFydF9fAF9fZHNvX2hhbmRsZQBfSU9fc3RkaW5fdXNlZABfZW5kAF9fYnNzX3N0YXJ0AG1haW4Ab3BlbkBHTElCQ18yLjIuNQBfX1RNQ19FTkRfXwBfSVRNX3JlZ2lzdGVyVE1DbG9uZVRhYmxlAHN0cmVycm9yQEdMSUJDXzIuMi41AF9fY3hhX2ZpbmFsaXplQEdMSUJDXzIuMi41AF9pbml0AHN0ZGVyckBHTElCQ18yLjIuNQAALnN5bXRhYgAuc3RydGFiAC5zaHN0cnRhYgAubm90ZS5nbnUuYnVpbGQtaWQALmludGVycAAuZ251Lmhhc2gALmR5bnN5bQAuZHluc3RyAC5nbnUudmVyc2lvbgAuZ251LnZlcnNpb25fcgAucmVsYS5keW4ALnJlbGEucGx0AC5pbml0AC5wbHQuZ290AC50ZXh0AC5maW5pAC5yb2RhdGEALmVoX2ZyYW1lX2hkcgAuZWhfZnJhbWUALm5vdGUuZ251LnByb3BlcnR5AC5ub3RlLkFCSS10YWcALmluaXRfYXJyYXkALmZpbmlfYXJyYXkALmRhdGEucmVsLnJvAC5keW5hbWljAC5nb3QucGx0AC5kYXRhAC5ic3MALmNvbW1lbnQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABsAAAAHAAAAAgAAAAAAAABQAwAAAAAAAFADAAAAAAAAJAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAuAAAAAQAAAAIAAAAAAAAAdAMAAAAAAAB0AwAAAAAAABwAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAANgAAAPb//28CAAAAAAAAAJADAAAAAAAAkAMAAAAAAAAoAAAAAAAAAAQAAAAAAAAACAAAAAAAAAAAAAAAAAAAAEAAAAALAAAAAgAAAAAAAAC4AwAAAAAAALgDAAAAAAAAgAEAAAAAAAAFAAAAAQAAAAgAAAAAAAAAGAAAAAAAAABIAAAAAwAAAAIAAAAAAAAAOAUAAAAAAAA4BQAAAAAAAM8AAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAUAAAAP///28CAAAAAAAAAAgGAAAAAAAACAYAAAAAAAAgAAAAAAAAAAQAAAAAAAAAAgAAAAAAAAACAAAAAAAAAF0AAAD+//9vAgAAAAAAAAAoBgAAAAAAACgGAAAAAAAAMAAAAAAAAAAFAAAAAQAAAAgAAAAAAAAAAAAAAAAAAABsAAAABAAAAAIAAAAAAAAAWAYAAAAAAABYBgAAAAAAALABAAAAAAAABAAAAAAAAAAIAAAAAAAAABgAAAAAAAAAdgAAAAQAAABCAAAAAAAAAAgIAAAAAAAACAgAAAAAAADYAAAAAAAAAAQAAAAZAAAACAAAAAAAAAAYAAAAAAAAAIAAAAABAAAABgAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAFwAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAB7AAAAAQAAAAYAAAAAAAAAIBAAAAAAAAAgEAAAAAAAAKAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAhgAAAAEAAAAGAAAAAAAAAMAQAAAAAAAAwBAAAAAAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAI8AAAABAAAABgAAAAAAAADQEAAAAAAAANAQAAAAAAAAqQQAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAACVAAAAAQAAAAYAAAAAAAAAfBUAAAAAAAB8FQAAAAAAAAkAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAmwAAAAEAAAACAAAAAAAAAAAgAAAAAAAAACAAAAAAAADuAQAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAKMAAAABAAAAAgAAAAAAAADwIQAAAAAAAPAhAAAAAAAAPAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAACxAAAAAQAAAAIAAAAAAAAAMCIAAAAAAAAwIgAAAAAAADQBAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAuwAAAAcAAAACAAAAAAAAAGgjAAAAAAAAaCMAAAAAAAAgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAM4AAAAHAAAAAgAAAAAAAACIIwAAAAAAAIgjAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAADcAAAADgAAAAMAAAAAAAAAcD0AAAAAAABwLQAAAAAAAAgAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAgAAAAAAAAA6AAAAA8AAAADAAAAAAAAAHg9AAAAAAAAeC0AAAAAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAPQAAAABAAAAAwAAAAAAAACAPQAAAAAAAIAtAAAAAAAASAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAABAQAABgAAAAMAAAAAAAAAyD0AAAAAAADILQAAAAAAAOABAAAAAAAABQAAAAAAAAAIAAAAAAAAABAAAAAAAAAAigAAAAEAAAADAAAAAAAAAKg/AAAAAAAAqC8AAAAAAAAoAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAAoBAAABAAAAAwAAAAAAAADoPwAAAAAAAOgvAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAATAQAAAQAAAAMAAAAAAAAASEAAAAAAAABIMAAAAAAAABAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAGQEAAAgAAAADAAAAAAAAAGBAAAAAAAAAWDAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAB4BAAABAAAAMAAAAAAAAAAAAAAAAAAAAFgwAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAB4MAAAAAAAAIAEAAAAAAAAHgAAABUAAAAIAAAAAAAAABgAAAAAAAAACQAAAAMAAAAAAAAAAAAAAAAAAAAAAAAA+DQAAAAAAACZAgAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAABEAAAADAAAAAAAAAAAAAAAAAAAAAAAAAJE3AAAAAAAAJwEAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAA="
+
+numlock_payload_path()
+{
+    printf '%s\n' "/usr/libexec/boot-bitch/numlock-on"
+}
+
+# Round 44 (the Fedora fallback chain): the systemd getty drop-in — the
+# POST-PIVOT console mechanism where the dracut systemd-initrd's set does
+# NOT survive (the round-32 verdict).  The ExecStartPre runs OUR payload
+# with the -a per-VT loop when each getty instance starts (the %I instance
+# parameter is unused by -a, which covers the full VT set), re-applying the
+# LED state the pivot reset.  The REVERSION contract: the revert removes
+# this file and runs `systemctl --root <root> daemon-reload` (the drop-in
+# takes effect at the next getty start; the removal is the round-30
+# additive-revert pattern).
+numlock_getty_dropin_path()
+{
+    printf '%s\n' "/etc/systemd/system/getty@.service.d/10-boot-bitch-numlock.conf"
+}
+
+# The getty layout must be recognizable before the drop-in is written: the
+# systemd service manager with the getty@.service template present (the
+# honest refusal stays where the layout is unrecognizable).
+numlock_getty_layout_recognizable()
+{
+    [[ "${TARGET_SERVICE_MANAGER:-}" == systemd ]] || return 1
+    [[ -f "$TARGET_ROOT/usr/lib/systemd/system/getty@.service" \
+        || -f "$TARGET_ROOT/lib/systemd/system/getty@.service" \
+        || -f "$TARGET_ROOT/etc/systemd/system/getty@.service" ]]
+}
+
+numlock_write_getty_dropin()
+{
+    local dropin="$TARGET_ROOT$(numlock_getty_dropin_path)"
+    mkdir -p -- "$(dirname -- "$dropin")"
+    cat > "$dropin" <<'EOF'
+[Service]
+ExecStartPre=/usr/libexec/boot-bitch/numlock-on -a
+EOF
+    [[ -s "$dropin" ]] \
+        || fail "Failed to write the systemd getty Num Lock drop-in."
+}
+
+# Round 44: the PROVEN propagation drop (the round-32 evidence class) —
+# the cached numlock baseline proves the initrd payload present while the
+# live console reads the CONSOLE VT (tty1 — the getty's) OFF: the initrd
+# set did not survive the pivot to the console login.  (A DM session may
+# light its own session VTs — the console-login VT is the honest marker,
+# never a session VT.)  The evidence is the CACHED diagnostic section (the
+# post-reboot re-probe the §2c contract names), never a live guess.
+numlock_propagation_drop_evidenced()
+{
+    local baseline="${NUMLOCK_BASELINE_B64:-}" decoded="" state_line=""
+    local vt_state_re='tty[0-9]+=(on|off)' vt_off_re='tty1=off'
+    [[ -n "$baseline" ]] || return 1
+    decoded="$(printf '%s' "$baseline" | base64 -d 2>/dev/null || true)"
+    [[ -n "$decoded" ]] || return 1
+    grep -q 'initrd-numlock=present' <<<"$decoded" \
+        || grep -q 'hook=present' <<<"$decoded" \
+        || return 1
+    state_line="$(sed -nE 's/^Num Lock console state now:[[:space:]]*(.*)/\1/p' <<<"$decoded" | head -n1)"
+    [[ "$state_line" =~ $vt_state_re ]] || return 1
+    [[ "$state_line" =~ $vt_off_re ]] || return 1
+    return 0
+}
+
+# The already-enabled pre-check: the family's integration files exist AND
+# the rebuilt initrd carries the payload — the proven no-change state.
+numlock_mechanism_present()
+{
+    local files_ok=false
+    case "$TARGET_INITRAMFS_BACKEND" in
+        initramfs-tools)
+            [[ -s "$TARGET_ROOT/etc/initramfs-tools/hooks/bb-numlock" ]] \
+                && [[ -s "$TARGET_ROOT/etc/initramfs-tools/scripts/init-top/bb-numlock" ]] \
+                && files_ok=true ;;
+        dracut)
+            [[ -s "$TARGET_ROOT/usr/lib/dracut/modules.d/90boot-bitchnumlock/module-setup.sh" ]] \
+                && [[ -s "$TARGET_ROOT/etc/dracut.conf.d/99-boot-bitch-numlock.conf" ]] \
+                && files_ok=true ;;
+        mkinitfs)
+            [[ -s "$TARGET_ROOT/etc/mkinitfs/features.d/boot-bitch-numlock.files" ]] \
+                && files_ok=true ;;
+        mkinitcpio)
+            # Round 35 (the Arch false-positive): the hook files alone are
+            # not enough — the REGISTRATION (the conf's HOOKS=, a preset
+            # options line or the drop-in) must carry bb-numlock, otherwise
+            # the image payload is inert (the round-31 finding).
+            [[ -s "$TARGET_ROOT/etc/initcpio/hooks/bb-numlock" ]] \
+                && [[ -s "$TARGET_ROOT/etc/initcpio/install/bb-numlock" ]] \
+                && ( grep -q 'bb-numlock' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
+                     || grep -ql 'bb-numlock' "$TARGET_ROOT"/etc/mkinitcpio.d/*.preset 2>/dev/null \
+                     || grep -ql 'bb-numlock' "$TARGET_ROOT"/etc/mkinitcpio.conf.d/*.conf 2>/dev/null ) \
+                && files_ok=true ;;
+    esac
+    # Round 32 (the Alpine finding): the OpenRC console fallback — the
+    # enabled numlock service IS the console-stage mechanism; the initrd-side
+    # payload alone must not short-circuit the apply on OpenRC.
+    if [[ "${TARGET_SERVICE_MANAGER:-}" == OpenRC ]]; then
+        # Round 34: the full-path discipline — the helper's check context
+        # resolves /sbin via the explicit path (the same lesson as the
+        # rc-update invocation fix).
+        [[ -x /sbin/rc-update ]] || return 1
+        /sbin/rc-update show 2>/dev/null | grep -qw numlock && return 0
+        return 1
+    fi
+    # Round 44 (the Fedora fallback chain): the systemd getty drop-in IS
+    # the console-stage mechanism — its REGISTRATION evidence is the
+    # ExecStartPre content (the round-32 hardening analog: a stray
+    # same-named file is never the mechanism).
+    if [[ -s "$TARGET_ROOT$(numlock_getty_dropin_path)" ]] \
+        && grep -q 'ExecStartPre=.*numlock-on' "$TARGET_ROOT$(numlock_getty_dropin_path)" 2>/dev/null; then
+        return 0
+    fi
+    $files_ok || return 1
+    local img="" listing=""
+    # Round 31 (the Fedora finding): the presence proof must span EVERY
+    # installed image — the lexically-first glob match can be a kernel the
+    # family's rebuild left untouched (the stale 7.2.14 beside the rebuilt
+    # 7.3.3 on the Fedora rig), and the rebuilt image is the proof target.
+    for img in "$TARGET_ROOT"/boot/initrd.img-* "$TARGET_ROOT"/boot/initrd-*.img \
+               "$TARGET_ROOT"/boot/initramfs-*.img "$TARGET_ROOT"/boot/initramfs-*; do
+        [[ -f "$img" ]] || continue
+        if command -v lsinitramfs >/dev/null 2>&1; then
+            listing="$(lsinitramfs "$img" 2>/dev/null || true)"
+        elif command -v lsinitrd >/dev/null 2>&1; then
+            listing="$(lsinitrd "$img" 2>/dev/null || true)"
+        elif command -v lsinitcpio >/dev/null 2>&1; then
+            # Round 31 (the Arch finding): the mkinitcpio zstd images list
+            # via the family's own lister.
+            listing="$(lsinitcpio "$img" 2>/dev/null || true)"
+        elif command -v zcat >/dev/null 2>&1 && command -v cpio >/dev/null 2>&1; then
+            # Round 31 (the Alpine finding): the musl rigs ship no lsinit*
+            # lister — the mkinitfs gzip-cpio images list via zcat+cpio.
+            listing="$(zcat "$img" 2>/dev/null | cpio -t 2>/dev/null || true)"
+        fi
+        grep -q 'numlock-on' <<<"$listing" && return 0
+    done
+    return 1
+}
+
+numlock_integrate_initramfs_tools()
+{
+    local hook="$TARGET_ROOT/etc/initramfs-tools/hooks/bb-numlock"
+    local script="$TARGET_ROOT/etc/initramfs-tools/scripts/init-top/bb-numlock"
+    mkdir -p -- "$(dirname -- "$hook")" "$(dirname -- "$script")"
+    cat > "$hook" <<'HOOK'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0;; esac
+. /usr/share/initramfs-tools/hook-functions
+if [ -x /usr/libexec/boot-bitch/numlock-on ]; then
+    copy_exec /usr/libexec/boot-bitch/numlock-on /usr/libexec/boot-bitch/numlock-on
+fi
+exit 0
+HOOK
+    chmod 755 "$hook"
+    cat > "$script" <<'SCRIPT'
+#!/bin/sh
+PREREQ="console_setup"
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0;; esac
+if [ -x /usr/libexec/boot-bitch/numlock-on ]; then
+    /usr/libexec/boot-bitch/numlock-on -a on
+fi
+exit 0
+SCRIPT
+    chmod 755 "$script"
+    [[ -s "$hook" && -s "$script" ]] \
+        || fail "Failed to write the initramfs-tools Num Lock integration files."
+    msg_log numlock-module-written "initramfs-tools"
+}
+
+numlock_integrate_dracut()
+{
+    local moddir="$TARGET_ROOT/usr/lib/dracut/modules.d/90boot-bitchnumlock"
+    mkdir -p -- "$moddir"
+    cat > "$moddir/module-setup.sh" <<'MOD'
+#!/bin/bash
+check() { return 0; }
+depends() { return 0; }
+install() {
+    inst_hook pre-trigger 10 "$moddir/numlock.sh"
+    inst /usr/libexec/boot-bitch/numlock-on /usr/bin/numlock-on
+    # Round 32 (the Fedora evidence): the systemd-based initrd's console
+    # lifecycle discards the pre-trigger VT set — the systemd-initrd unit
+    # variant (the design's named shape) runs the payload in the initrd's
+    # own unit context with the real console fd, so the state survives the
+    # handoff into the booted system.
+    inst "$moddir/bb-numlock.service" "$systemdsystemunitdir/bb-numlock.service"
+    $SYSTEMCTL -q --root "$initdir" enable bb-numlock.service 2>/dev/null || true
+}
+MOD
+    cat > "$moddir/numlock.sh" <<'SH'
+#!/bin/sh
+/usr/bin/numlock-on -a on
+SH
+    cat > "$moddir/bb-numlock.service" <<'UNIT'
+[Unit]
+Description=Boot Bitch Num Lock early
+DefaultDependencies=no
+After=systemd-vconsole-setup.service
+Before=initrd-switch-root.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/numlock-on -a on
+StandardInput=tty
+TTYPath=/dev/tty0
+RemainAfterExit=yes
+[Install]
+WantedBy=initrd.target
+UNIT
+    chmod 755 "$moddir/module-setup.sh" "$moddir/numlock.sh"
+    local conf="$TARGET_ROOT/etc/dracut.conf.d/99-boot-bitch-numlock.conf"
+    mkdir -p -- "$(dirname -- "$conf")"
+    printf '%s\n' 'add_dracutmodules+=" boot-bitchnumlock "' > "$conf"
+    [[ -s "$moddir/module-setup.sh" && -s "$moddir/numlock.sh" && -s "$moddir/bb-numlock.service" && -s "$conf" ]] \
+        || fail "Failed to write the dracut Num Lock module files."
+    msg_log numlock-module-written "dracut"
+}
+
+numlock_integrate_mkinitfs()
+{
+    local feat="$TARGET_ROOT/etc/mkinitfs/features.d/boot-bitch-numlock.files"
+    mkdir -p -- "$(dirname -- "$feat")"
+    printf '%s\n' "/usr/libexec/boot-bitch/numlock-on" > "$feat"
+    local feats_conf="$TARGET_ROOT/etc/mkinitfs/mkinitfs.conf"
+    [[ -f "$feats_conf" ]] \
+        || fail "The scope has no mkinitfs.conf; the Num Lock feature cannot be registered."
+    if ! grep -E '^[[:space:]]*features=' "$feats_conf" 2>/dev/null | grep -qw 'boot-bitch-numlock'; then
+        [[ -f "$SESSION_DIR/mkinitfs-numlock.conf.bak" ]] \
+            || cp -a -- "$feats_conf" "$SESSION_DIR/mkinitfs-numlock.conf.bak" || true
+        local feats_tmp="$feats_conf.boot-bitch-tmp"
+        if sed -E 's/^(features="[^"]*)"/\1 boot-bitch-numlock"/' "$feats_conf" > "$feats_tmp" 2>/dev/null \
+            && grep -q 'boot-bitch-numlock' "$feats_tmp"; then
+            install -m 0644 "$feats_tmp" "$feats_conf" \
+                || fail "Failed to register boot-bitch-numlock in mkinitfs.conf."
+            rm -f -- "$feats_tmp"
+        else
+            rm -f -- "$feats_tmp"
+            fail "Failed to register boot-bitch-numlock in mkinitfs.conf."
+        fi
+    fi
+    # The round-25 probe fact: Alpine's mkinitfs initramfs-init (1187 lines)
+    # carries NO boot-time hook mechanism — the feature file includes the
+    # payload, but the initrd-side execution has no supported hook point.
+    # Round 32 (the Alpine evidence): the console stage therefore rides the
+    # EXISTING OpenRC numlock service — enable + start it when the detected
+    # service manager is OpenRC (the per-stage honest reporting stays: the
+    # decrypt prompt is not-applicable, the console login becomes the
+    # fix-target via the service; the REVERT removes the runlevel entry and
+    # stops the service).
+    msg_log numlock-module-written "mkinitfs"
+    msg_log numlock-mkinitfs-no-hook
+    if [[ "${TARGET_SERVICE_MANAGER:-}" == OpenRC ]]; then
+        if [[ -x "$TARGET_ROOT/etc/init.d/numlock" ]]; then
+            # Round 32 (the Alpine evidence): the OpenRC numlock service runs
+            # the kbd setleds loop — the musl rigs lack kbd entirely. The
+            # prerequisite rides the guarded install (the same class as the
+            # capability Install; the proven no-op stays honest), then the
+            # runlevel registration + the start.
+            if ! target_has_executable /usr/bin/setleds /bin/setleds; then
+                guarded_install_one_package kbd \
+                    || fail "The OpenRC numlock service needs the kbd package (setleds), which could not be installed."
+            fi
+            # Round 34 (the user's Alpine finding): run_chroot_try's FIRST
+            # argument is the display LABEL — the round-32 calls passed the
+            # program path as the label, so the child ran `env … add numlock
+            # default` (no executable → `env: 'add': No such file or
+            # directory`). The label leads, the full program path follows,
+            # and the args reach the child intact.
+            run_chroot_try "rc-update numlock" /sbin/rc-update add numlock default
+            (( CHROOT_TRY_RC == 0 )) \
+                || fail "The OpenRC numlock service could not be registered in the default runlevel."
+            # The round-32 drill: `start` on an already-started service is an
+            # OpenRC no-op — `restart` re-runs the setleds loop idempotently.
+            run_chroot_try "rc-service numlock" /sbin/rc-service numlock restart
+            (( CHROOT_TRY_RC == 0 )) \
+                || fail "The OpenRC numlock service could not be started."
+            msg_log numlock-openrc-enabled
+        fi
+    fi
+}
+
+numlock_integrate_mkinitcpio()
+{
+    local hook="$TARGET_ROOT/etc/initcpio/hooks/bb-numlock"
+    local inst="$TARGET_ROOT/etc/initcpio/install/bb-numlock"
+    mkdir -p -- "$(dirname -- "$hook")" "$(dirname -- "$inst")"
+    cat > "$hook" <<'HOOK'
+run_hook() {
+    /usr/bin/numlock-on -a on
+}
+HOOK
+    cat > "$inst" <<'INST'
+build() {
+    add_binary /usr/libexec/boot-bitch/numlock-on /usr/bin/numlock-on
+}
+help() {
+    cat <<HELP
+Turns Num Lock on for every console VT early in the initramfs (before
+the encrypt prompt). Boot Bitch's Num Lock early-boot repair.
+HELP
+}
+INST
+    chmod 755 "$hook" "$inst"
+    local conf="$TARGET_ROOT/etc/mkinitcpio.conf"
+    [[ -f "$conf" ]] || fail "The scope has no mkinitcpio.conf."
+    if grep -qE '^[[:space:]]*HOOKS=.*bb-numlock' "$conf" 2>/dev/null; then
+        :
+    elif grep -qE '^[[:space:]]*HOOKS=' "$conf" 2>/dev/null; then
+        # The classic conf shape: the entry-preserving insertion before
+        # encrypt|sd-encrypt|block|filesystems (the round-25 path).
+        [[ -f "$SESSION_DIR/mkinitcpio-numlock.conf.bak" ]] \
+            || cp -a -- "$conf" "$SESSION_DIR/mkinitcpio-numlock.conf.bak" || true
+        local hooks_line="" list="" anchor="" newline="" tmp="$conf.boot-bitch-tmp"
+        hooks_line="$(grep -E '^[[:space:]]*HOOKS=' "$conf" | head -n1 || true)"
+        [[ -n "$hooks_line" ]] || fail "The mkinitcpio.conf has no HOOKS= line."
+        list="$(sed -nE 's/^[[:space:]]*HOOKS=\(([^)]*)\).*/\1/p' <<<"$hooks_line")"
+        [[ -n "$list" ]] || fail "The mkinitcpio HOOKS= list could not be parsed."
+        anchor="$(awk '{for(i=1;i<=NF;i++) if ($i ~ /^(encrypt|sd-encrypt|block|filesystems)$/) {print $i; exit}}' <<<"$list")"
+        if [[ -n "$anchor" ]]; then
+            newline="$(awk -v a="$anchor" '{for(i=1;i<=NF;i++){ if($i==a){printf "bb-numlock "}; printf "%s%s",$i,(i==NF?"":" ")}}' <<<"$list")"
+        else
+            newline="bb-numlock $list"
+        fi
+        if sed -E "s/^(HOOKS=\([^)]*\)).*/HOOKS=($newline)/" "$conf" > "$tmp" 2>/dev/null \
+            && grep -q 'bb-numlock' "$tmp"; then
+            install -m 0644 "$tmp" "$conf" \
+                || fail "Failed to register bb-numlock in the mkinitcpio HOOKS= list."
+            rm -f -- "$tmp"
+        else
+            rm -f -- "$tmp"
+            fail "Failed to register bb-numlock in the mkinitcpio HOOKS= list."
+        fi
+    else
+        # Round 32 (the Arch evidence): the PRESET-based shape — no HOOKS=
+        # in the conf; the hooks live in /etc/mkinitcpio.d/*.preset's
+        # default_options=/fallback_options= (and the per-preset *_options)
+        # lines. Register the hook in every editable options line, before
+        # encrypt|sd-encrypt|block|filesystems (the entry-preserving edit);
+        # an ineditable shape refuses honestly.
+        local preset="" edited=0
+        for preset in "$TARGET_ROOT"/etc/mkinitcpio.d/*.preset; do
+            [[ -f "$preset" ]] || continue
+            local p_tmp="$preset.boot-bitch-tmp" changed=0
+            local preset_opt_re='^([[:space:]]*[A-Za-z_]*options=\"?)([^\"]*)(\"?)$'
+            local preset_has_bb_re='(^|[[:space:]])bb-numlock([[:space:]]|$)'
+            cp -a -- "$preset" "$p_tmp"
+            while IFS= read -r line; do
+                [[ "$line" =~ $preset_opt_re ]] || continue
+                local opt_list="${BASH_REMATCH[2]}"
+                [[ "$opt_list" =~ $preset_has_bb_re ]] && continue
+                local anchor2=""
+                anchor2="$(awk '{for(i=1;i<=NF;i++) if ($i ~ /^(encrypt|sd-encrypt|block|filesystems)$/) {print $i; exit}}' <<<"$opt_list")"
+                local new_opt=""
+                if [[ -n "$anchor2" ]]; then
+                    new_opt="$(awk -v a="$anchor2" '{for(i=1;i<=NF;i++){ if($i==a){printf "bb-numlock "}; printf "%s%s",$i,(i==NF?"":" ")}}' <<<"$opt_list")"
+                else
+                    new_opt="bb-numlock $opt_list"
+                fi
+                sed -i "s#^\([[:space:]]*[A-Za-z_]*options=\"\?\)[^\"]*\(\"\?\)\$#\1${new_opt}\2#" "$p_tmp" 2>/dev/null \
+                    || true
+                changed=1
+            done < <(grep -E '^[[:space:]]*[A-Za-z_]*options=' "$preset" || true)
+            if (( changed )) && grep -q 'bb-numlock' "$p_tmp"; then
+                install -m 0644 "$p_tmp" "$preset" \
+                    || fail "Failed to register bb-numlock in the mkinitcpio preset $preset."
+                edited=1
+            fi
+            rm -f -- "$p_tmp"
+        done
+    fi
+    # Round 35 (the user's queued Arch item): the DROP-IN rung. When neither
+    # the classic HOOKS= line nor an editable preset options line exists
+    # (the Arch rig's all-commented shape), the drop-in carries the DERIVED
+    # effective hooks — the mkinitcpio default order (the evidence-based
+    # derivation the ladder's other rungs use; the preset's uncommented
+    # content on this shape carries no hooks) with the numlock hook inserted
+    # BEFORE encrypt|sd-encrypt|block|filesystems (the first anchor). The
+    # drop-in is additive — the REVERT removes it + rebuilds the images. The
+    # honest refusal stays only when the derived list cannot be written.
+    if ! grep -q 'bb-numlock' "$conf" 2>/dev/null \
+        && ! grep -ql 'bb-numlock' "$TARGET_ROOT"/etc/mkinitcpio.d/*.preset 2>/dev/null; then
+        # Round 35 (the user's queued Arch item): the DROP-IN rung. The
+        # effective hooks are DERIVED FROM THE EXISTING BOOTED IMAGE's own
+        # build config (the mkinitcpio image carries /buildconfig with the
+        # HOOKS it was built with — the evidence-based derivation; the
+        # round-35 rig drill disproved the assumed upstream default: the
+        # rig's working set differed and the default list broke the boot).
+        # The numlock hook is inserted BEFORE the FIRST
+        # encrypt|sd-encrypt|block|filesystems anchor. The drop-in is
+        # additive — the REVERT removes it + rebuilds the images. The honest
+        # refusal stays only when the image's hooks cannot be derived.
+        local img="" buildconfig="" dropin_list=""
+        for img in "$TARGET_ROOT"/boot/initramfs-*.img; do
+            [[ -f "$img" ]] || continue
+            if command -v lsinitcpio >/dev/null 2>&1; then
+                buildconfig="$(lsinitcpio -a "$img" /buildconfig 2>/dev/null || true)"
+            elif command -v zstd >/dev/null 2>&1 && command -v cpio >/dev/null 2>&1; then
+                buildconfig="$(zstd -dc "$img" 2>/dev/null | cpio -i --to-stdout buildconfig 2>/dev/null || true)"
+            fi
+            [[ -n "$buildconfig" ]] && break
+        done
+        dropin_list="$(grep -E '^[[:space:]]*HOOKS=' <<<"$buildconfig" | head -n1 \
+            | sed -nE 's/^[[:space:]]*HOOKS=\(([^)]*)\).*/\1/p')"
+        [[ -n "$dropin_list" ]] \
+            || fail "The mkinitcpio image's hook set could not be derived; the Num Lock hook cannot be registered."
+        local dropin="$TARGET_ROOT/etc/mkinitcpio.conf.d/10-boot-bitch-numlock.conf"
+        mkdir -p -- "$(dirname -- "$dropin")"
+        # The FIRST anchor only (the round-35 derivation rule — a once flag,
+        # never the double insertion).
+        dropin_list="$(awk '{done=0; for(i=1;i<=NF;i++){ if(!done && $i ~ /^(encrypt|sd-encrypt|block|filesystems)$/){printf "bb-numlock "; done=1}; printf "%s%s",$i,(i==NF?"":" ")}}' <<<"$dropin_list")"
+        printf 'HOOKS=(%s)\n' "$dropin_list" > "$dropin" \
+            || fail "Failed to write the mkinitcpio Num Lock drop-in."
+        [[ -s "$dropin" ]] \
+            || fail "Failed to write the mkinitcpio Num Lock drop-in."
+        msg_log numlock-dropin-written
+    fi
+    msg_log numlock-module-written "mkinitcpio"
+}
+
+run_numlock_repair()
+{
+    # Round 28 (the user's TUXEDO finding): the GUI sends the standard scope
+    # arguments (the disk + the root component — consumed by the main
+    # dispatch before the verb) plus the serialized --evidence baseline
+    # pairs; the verb accepts those flags exactly like every other repair
+    # verb (the baselines land in the shared stores; the repair re-verifies
+    # the live state before the mutation) and refuses anything else.
+    while (($# > 0)); do
+        case "$1" in
+            --evidence)
+                (($# >= 3)) || fail "The --evidence flag requires a diagnostic section key and a base64 value."
+                store_evidence_baseline "$2" "$3"
+                shift 3
+                ;;
+            *) fail "numlock does not accept extra arguments: $1" ;;
+        esac
+    done
+    CURRENT_STAGE="enable Num Lock at early boot stages"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" yes
+    else
+        prepare_target rw
+    fi
+    profile_target_backends
+
+    local scope="the selected repair target"
+    (( RUNNING_HOST_MODE == 1 )) && scope="the running host"
+
+    # The capability gate mirrors the capability row (the same probe): an
+    # unknown initramfs family has no integration path — fail closed.
+    if ! numlock_unavailable_reason; then
+        fail "$(reason no-initramfs-integration-path)"
+    fi
+
+    # The shipped payload presence (read-only — the copy for the TARGET
+    # scope happens AFTER the CONFIRM, in the apply phase). The TARGET
+    # scope is SELF-CONTAINED (round 30, the user's finding): the target's
+    # own Boot Bitch package may predate the payload, so the integration
+    # copies the RECOVERY HOST's shipped binary into the target root at the
+    # standard path (the payload is Boot Bitch's own file; the placement is
+    # part of the additive integration — the chrooted hook's copy_exec
+    # resolves it) and the REVERT removes it with the hook and the script.
+    # The host scope requires the payload on the host itself (the running
+    # host IS the recovery host).
+    local host_payload="$(numlock_payload_path)"
+    local payload="$TARGET_ROOT$(numlock_payload_path)"
+    local payload_placed=false
+    if (( RUNNING_HOST_MODE == 1 )); then
+        # Round 38 (the user's ruling — the D1 escape hatch promoted): a
+        # MISSING payload is no longer a refusal — the repair PLACES it
+        # itself in the apply phase (the helper-embedded base64 copy, the
+        # round-38 constant). The honest refusal stays only for the
+        # genuinely impossible case (the embedded copy absent). The
+        # REVERSION rule: the revert removes the payload ONLY when the
+        # repair placed it (payload_placed — the pre-state was absent);
+        # a package-owned payload is left untouched.
+        [[ -x "$payload" ]] || [[ -n "${NUMLOCK_PAYLOAD_B64:-}" ]] \
+            || fail "The Num Lock payload is not installed and the embedded copy is missing."
+    else
+        [[ -x "$host_payload" ]] \
+            || fail "The Num Lock payload /usr/libexec/boot-bitch/numlock-on is not installed on the recovery host; reinstall the Boot Bitch package first."
+    fi
+
+    # Round 44 (the Fedora fallback chain): the PROVEN propagation drop —
+    # the cached post-reboot evidence reads the initrd payload present but
+    # every live VT OFF (the round-32 class: the dracut systemd-initrd's
+    # set does not survive the pivot).  The repair then applies the
+    # getty-drop-in fallback rung automatically (the design's §6.2 chain:
+    # the fix-target promotes per the proven drop), never a silent no-op.
+    local getty_fallback=false
+    if (( RUNNING_HOST_MODE == 1 )) && numlock_propagation_drop_evidenced; then
+        getty_fallback=true
+        msg_log numlock-propagation-drop
+    fi
+
+    # The already-enabled short-circuit: the proven mechanism + the rebuilt
+    # initrd carrying the payload = the honest unchanged verdict, no
+    # mutation, no prompt.  A PROVEN drop never takes the short-circuit —
+    # the fallback rung must be offered even though the initrd payload is
+    # present (the round-44 ordering).
+    if numlock_mechanism_present && [[ "$getty_fallback" != true ]]; then
+        repair_change_status numlock "unchanged|$(reason numlock-already-enabled)"
+        msg_log numlock-already-enabled
+        return 0
+    fi
+
+    # The one terminal CONFIRM naming the derived plan (the round-134
+    # shape). A decline = the unchanged verdict, never a partial apply.
+    local prompt=absent plan_text="CONFIRM NUM LOCK EARLY BOOT"$'\n'
+    numlock_boot_decrypt_prompt && prompt=present
+    plan_text+="Scope: $scope"$'\n'
+    if [[ "$getty_fallback" == true ]]; then
+        # Round 44: the proven-drop plan — the initrd payload is already
+        # present (nothing is rebuilt); the console-stage getty drop-in is
+        # the fallback rung the plan adds.
+        plan_text+="The post-reboot evidence proves the Num Lock initrd set did not survive the boot handoff; the console-stage systemd getty drop-in will be written so Num Lock is re-applied when each getty starts."$'\n'
+    else
+        plan_text+="The boot-bitch Num Lock module is about to be added to the ${TARGET_INITRAMFS_BACKEND} initramfs and the initrd image(s) rebuilt."$'\n'
+        if [[ "$prompt" == present ]]; then
+            plan_text+="The drive-decryption prompt will show Num Lock enabled from the next boot."$'\n'
+        fi
+        plan_text+="The graphical login and the console login inherit the state; the desktop's own Num Lock setting is NOT changed."$'\n'
+    fi
+    plan_text+="Answer: type y or yes to proceed; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to decline and leave the system unchanged."
+    # Channel-active only: without a session channel the direct CLI verb IS
+    # the explicit intent (the round-134 confirm pattern — proceed, the
+    # read-only preflights stay the gate).
+    if shell_interactive_ready; then
+        if ! helper_menu_prompt "$plan_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+            repair_change_status numlock "unchanged|$(reason numlock-declined)"
+            msg_log numlock-declined
+            return 0
+        fi
+        case "$HELPER_MENU_ANSWER" in
+            y|Y|yes) ;;
+            *)
+                repair_change_status numlock "unchanged|$(reason numlock-declined)"
+                msg_log numlock-declined
+                return 0 ;;
+        esac
+    fi
+
+    # The pre-apply change evidence: a cancel/failure mid-rebuild must still
+    # carry the changed status (the round-194/195 pattern).
+    repair_change_status_force numlock changed
+
+    if [[ "$getty_fallback" == true ]]; then
+        # Round 44: the proven-drop apply — the initrd payload is already
+        # present and proven; ONLY the console-stage getty drop-in is
+        # written (no placement, no rebuild).  The honest refusal stays
+        # where the getty unit layout is unrecognizable.
+        if ! numlock_getty_layout_recognizable; then
+            fail "The getty unit layout on this scope is unrecognizable; the console-stage Num Lock fallback cannot be applied."
+        fi
+        numlock_write_getty_dropin
+        msg_log numlock-getty-dropin-written
+        repair_change_status numlock changed
+        msg_log numlock-applied "systemd-getty-fallback"
+        msg_log numlock-pending-reboot
+        return 0
+    fi
+
+    # Round 38: the HOST scope places the embedded payload when the shipped
+    # file is missing (the older-package case — the user's ruling).
+    if (( RUNNING_HOST_MODE == 1 )) && [[ ! -x "$payload" ]]; then
+        mkdir -p -- "$(dirname -- "$payload")"
+        if ! printf '%s' "$NUMLOCK_PAYLOAD_B64" | base64 -d > "$payload" 2>/dev/null \
+            || ! chmod 0755 "$payload" || [[ ! -x "$payload" ]]; then
+            rm -f -- "$payload"
+            fail "Failed to place the Num Lock payload on the running host."
+        fi
+        payload_placed=true
+        msg_log numlock-payload-placed
+    fi
+
+    # Round 30: the TARGET scope places the recovery host's payload inside
+    # the target root BEFORE the chrooted rebuild (the additive placement —
+    # the REVERT removes it with the hook and the script).
+    if (( RUNNING_HOST_MODE == 0 )); then
+        mkdir -p -- "$(dirname -- "$payload")"
+        install -m 0755 -- "$host_payload" "$payload" \
+            || fail "Failed to place the Num Lock payload in the selected repair target."
+    fi
+
+    case "$TARGET_INITRAMFS_BACKEND" in
+        initramfs-tools) numlock_integrate_initramfs_tools ;;
+        dracut)          numlock_integrate_dracut ;;
+        mkinitfs)        numlock_integrate_mkinitfs ;;
+        mkinitcpio)      numlock_integrate_mkinitcpio ;;
+        *) fail "$(reason no-initramfs-integration-path)" ;;
+    esac
+
+    # The rebuild rides the existing adaptive machinery (the preflight, the
+    # per-kernel guards, the fingerprint evidence, the round-41 paths).
+    adaptive_initramfs_repair
+
+    # The post-apply proof: the rebuilt initrd carries the payload.
+    if ! numlock_mechanism_present; then
+        fail "The initramfs rebuild completed but the Num Lock payload did not land in the image; the change is not reported as applied."
+    fi
+
+    repair_change_status numlock changed
+    msg_log numlock-applied "$TARGET_INITRAMFS_BACKEND"
+    msg_log numlock-pending-reboot
+}
+
 preflight_dkms()
 {
     local msys
@@ -13182,6 +14393,248 @@ run_dkms_autoinstall()
     fi
 }
 
+# Round 69 (the dkms repair's programmatic resolution): parse the failed
+# `dkms autoinstall` transcript for the modules whose build failed.
+# Round 70 (the production-path fix): the parse accepts EVERY dkms version's
+# shapes — the `Error! Bad return status for module build on kernel: <kver>`
+# + the `Consult .../build/make.log` pair (either order), AND the dkms 3.x
+# summary line (`Autoinstall on <kver> failed for module(s) <mod>(<code>).`)
+# which names the module WITHOUT its version (the `<mod> -` placeholder; the
+# resolution resolves the version from the dkms tree).  CRLF lines are
+# normalized.  Prints "<kver>TAB<mod> <ver>" per failed module (deduplicated);
+# nothing when the transcript names none.
+dkms_autoinstall_failure_modules()
+{
+    local output="$1" line kver="" mod_ver="" joined="" seen_mod=""
+    local autoinstall_re='^Autoinstall[[:space:]]+on[[:space:]]+([^[:space:]]+)[[:space:]]+failed[[:space:]]+for[[:space:]]+module\(s\)[[:space:]]+([^[:space:]]+)\('
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [[ "$line" == *"Error! Bad return status for module build on kernel:"* ]]; then
+            kver="$(sed -E 's/.*module build on kernel: ([^ ]+).*/\1/' <<<"$line")"
+        elif [[ "$line" == *"/var/lib/dkms/"*"/build/make.log"* ]]; then
+            mod_ver="$(sed -nE 's|.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log.*|\1 \2|p' <<<"$line")"
+            if [[ -n "$mod_ver" && -n "$kver" ]]; then
+                [[ " $joined " == *" ${kver}	${mod_ver} "* ]] || { printf '%s\t%s\n' "$kver" "$mod_ver"; joined+=" ${kver}	${mod_ver}"; }
+            fi
+        elif [[ "$line" =~ $autoinstall_re ]]; then
+            # The summary shape: the kernel + the module (no version — the
+            # `-` placeholder; the resolution resolves the version from the
+            # dkms tree).
+            [[ -n "$kver" ]] || kver="${BASH_REMATCH[1]}"
+            seen_mod="${BASH_REMATCH[2]} -"
+            [[ " $joined " == *" ${kver}	${seen_mod} "* ]] || { printf '%s\t%s\n' "$kver" "$seen_mod"; joined+=" ${kver}	${seen_mod}"; }
+        fi
+    done <<<"$output"
+}
+
+# Round 69 (the dkms repair's programmatic resolution — the reference shape):
+# the failed `dkms autoinstall` is resolved, never a bare death.  The failure
+# is CLASSIFIED from the failing module's own make.log (the round-64
+# classifier + the round-69 `Highest compatible kernel version` bound), the
+# verdict NAMES the module + the kernel + the bound, and the per-kernel
+# remedies (the round-64/68/69 set — the prior-kernel install with the
+# round-72 next-boot default switch, the vendor-scoped module update, the
+# combined prior+monitor; the round-72 ruling REMOVED the module-removal
+# option from the menus) are SURFACED from the failure outcome through the
+# shared guarded remedy functions, each with its own evidence gating.  A
+# changed remedy re-runs the rebuild — the drill's SUCCEEDS leg.  $1 = the
+# failed autoinstall output, $2 = the target kernel the rebuild was pinned to.
+dkms_repair_failure_resolution()
+{
+    local output="$1" target_kver="$2" entry kver mod_ver bound class
+    local verdict_kver="" verdict_mod="" verdict_bound=""
+    local -a failures=()
+
+    mapfile -t failures < <(dkms_autoinstall_failure_modules "$output" 2>/dev/null || true)
+    # Round 70 (the production-path fix — the user's real-target finding: the
+    # round-69 transcript parse found NOTHING on the production transcript, so
+    # the bare fallback fired).  The parse is now a HINT; the AUTHORITATIVE
+    # evidence is the failing make.logs in the target's dkms tree.  Every
+    # module whose make.log classifies genuine is a positive verdict,
+    # whatever the dkms version's transcript shape.  The kernel resolves:
+    # the transcript > the make.log header (the round-69 evidence).  The
+    # make.log read bound is 1 MiB (the real zfs configure output pushes the
+    # declared-ceiling evidence past the old 256 KiB head).  Read-only and
+    # bounded (the dkms tree IS the module set).
+    local -a cand_modvers=() cand_kvers=()
+    local e modpart verpart logpath found_log log_kver logtext i
+    for e in "${failures[@]}"; do
+        kver="${e%%$'\t'*}"
+        mod_ver="${e#*$'\t'}"
+        modpart="${mod_ver%% *}"
+        verpart="${mod_ver#* }"
+        [[ -n "$kver" && -n "$modpart" ]] || continue
+        if [[ -n "$verpart" && "$verpart" != "-" ]]; then
+            logpath="$TARGET_ROOT/var/lib/dkms/$modpart/$verpart/build/make.log"
+            [[ -s "$logpath" ]] || logpath=""
+        else
+            # The version-less shape (the summary line): resolve the module's
+            # failing make.log from the dkms tree.
+            logpath="$(find "$TARGET_ROOT/var/lib/dkms/$modpart" -maxdepth 3 -type f -name make.log -path '*/build/make.log' 2>/dev/null | head -n1 || true)"
+            if [[ -n "$logpath" ]]; then
+                verpart="$(sed -nE 's|^.*/var/lib/dkms/'"$modpart"'/([^/]+)/build/make\.log$|\1|p' <<<"$logpath")"
+            fi
+        fi
+        if [[ -n "$logpath" && -s "$logpath" ]]; then
+            cand_modvers+=("$modpart/$verpart")
+            cand_kvers+=("$kver")
+        fi
+    done
+    # The authoritative tree scan: every failing make.log the transcript
+    # never named (a transcript naming nothing at all is covered here too).
+    while IFS= read -r found_log; do
+        [[ -n "$found_log" ]] || continue
+        modpart="$(sed -nE 's|^.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log$|\1|p' <<<"$found_log")"
+        verpart="$(sed -nE 's|^.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log$|\2|p' <<<"$found_log")"
+        [[ -n "$modpart" && -n "$verpart" ]] || continue
+        [[ " ${cand_modvers[*]} " == *" $modpart/$verpart "* ]] && continue
+        cand_modvers+=("$modpart/$verpart")
+        cand_kvers+=("")
+    done < <(find -L "$TARGET_ROOT/var/lib/dkms" -mindepth 4 -maxdepth 4 -type f -name make.log -path '*/build/make.log' 2>/dev/null | LC_ALL=C sort)
+
+    # Classify each candidate: the first genuine entry is the verdict.
+    for i in "${!cand_modvers[@]}"; do
+        logpath="$TARGET_ROOT/var/lib/dkms/${cand_modvers[$i]}/build/make.log"
+        [[ -s "$logpath" ]] || continue
+        logtext="$(head -c "$DKMS_MAKELOG_READ_BOUND" -- "$logpath" 2>/dev/null || true)"
+        class="$(dkms_build_failure_classification "$logtext" 2>/dev/null || true)"
+        [[ "$class" == genuine-incompatibility ]] || continue
+        verdict_kver="${cand_kvers[$i]}"
+        if [[ -z "$verdict_kver" ]]; then
+            verdict_kver="$(grep -Eo 'make\.log for [^ /]+/[^ ]+ for kernel [^ ]+' "$logpath" 2>/dev/null \
+                | head -n 1 | sed -E 's/.* for kernel ([^ ]+).*/\1/')"
+        fi
+        [[ -n "$verdict_kver" ]] || continue
+        verdict_mod="${cand_modvers[$i]//\// }"
+        verdict_bound="$(dkms_make_log_compat_bound "$logtext" 2>/dev/null || true)"
+        verdict_bound="${verdict_bound:-unknown}"
+        break
+    done
+    if [[ -z "$verdict_mod" ]]; then
+        # Round 70 (the last resort): the live positive-evidence collection
+        # (the diagnostic's collector — the dkms status-driven shapes the
+        # round-64 machinery proved on the real target).  Its first entry
+        # IS the verdict when the make.log scan above found nothing.
+        if ((${#KERNEL_MODULE_INCOMPAT_KVER[@]} == 0)); then
+            kernel_module_incompatibilities || true
+        fi
+        if ((${#KERNEL_MODULE_INCOMPAT[@]} > 0)); then
+            verdict_mod="${KERNEL_MODULE_INCOMPAT[0]}"
+            verdict_kver="${KERNEL_MODULE_INCOMPAT_KVER[0]}"
+            verdict_bound="$(dkms_incompat_bound_for_kernel "$verdict_kver" 2>/dev/null || true)"
+            verdict_bound="${verdict_bound:-unknown}"
+        fi
+    fi
+    if [[ -z "$verdict_mod" ]]; then
+        # Round 69: even without a positive classification the failure names
+        # what it can — never the bare death.  The unclassified failure keeps
+        # the round-60 honest wording + the kernel-repair direction.
+        local known=""
+        known="$(printf '%s\n' "${failures[@]}" | head -n1 || true)"
+        if [[ -n "$known" ]]; then
+            msg_log dkms-build-unclassified "${known%%$'\t'*}" "${known#*$'\t'}"
+            fail "DKMS module rebuild failed for kernel ${known%%$'\t'*} (module ${known#*$'\t'}); the make.log carries no recognizable error class. Review the build log; the kernel repair's per-kernel actions may still resolve it."
+        fi
+        fail "DKMS autoinstall failed after preflight/known correction."
+    fi
+
+    # The classified verdict: name the module + the kernel + the bound.
+    msg_log dkms-build-incompatible "$verdict_mod" "$verdict_kver" "$verdict_bound"
+
+    # The remedies consume the positive incompatibility evidence (the
+    # round-42 fail-closed pattern): collect it once so the guarded remedy
+    # functions' gates resolve.
+    if ((${#KERNEL_MODULE_INCOMPAT_KVER[@]} == 0)); then
+        kernel_module_incompatibilities || true
+    fi
+    local entry_found=""
+    entry_found="$(dkms_incompat_for_kernel "$verdict_kver" 2>/dev/null || true)"
+
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" != apt/dpkg ]] || [[ -z "$entry_found" ]] \
+        || ! shell_interactive_ready; then
+        # The remedies are apt/dpkg-only and gated on the positive evidence;
+        # without the channel or the evidence the failure names the verdict +
+        # the direction (the kernel repair's per-kernel rows) and stops.
+        if [[ -n "$verdict_bound" && "$verdict_bound" != unknown ]]; then
+            fail "The DKMS module $verdict_mod genuinely cannot build against kernel $verdict_kver (the module's own declared highest compatible kernel version is $verdict_bound). The kernel repair's per-kernel actions resolve it: install the prior repository kernel the module still supports (with the next-boot default switch) or update the module's package; then re-run the module rebuild."
+        fi
+        fail "The DKMS module $verdict_mod genuinely cannot build against kernel $verdict_kver. The kernel repair's per-kernel actions resolve it: install the prior repository kernel the module still supports (with the next-boot default switch) or update the module's package; then re-run the module rebuild."
+    fi
+
+    # The remedy menu: Round 75 (the user's ruling — the dkms repair must NOT
+    # replicate the kernel repair).  The failure outcome states the DIRECTION
+    # — run the Kernel repair to install the compatible kernel based on the
+    # evidence (the named candidate + the bound) — and the menu carries ONLY
+    # the module-scoped action (the module package update).  The kernel
+    # repair stays the single home of the per-kernel actions.
+    local prior_cand=""
+    prior_cand="$(dkms_incompat_prior_kernel_resolved "$verdict_kver" 2>/dev/null || true)"
+    # Round 71 (the no-op-loop finding): the update option carries its
+    # availability annotation (the probe memoizes the simulation per kernel),
+    # so the user never picks a provably-no-op update blind.
+    local update_avail="" update_short=""
+    update_avail="$(dkms_incompat_update_availability_cached "$verdict_kver" 2>/dev/null || true)"
+    case "${update_avail%%|*}" in
+        no-op) update_short=" — no newer version in the repositories" ;;
+        not-installable) update_short=" — the repository candidate is not installable" ;;
+    esac
+    local menu="" n=1
+    menu="The DKMS module $verdict_mod cannot build against kernel $verdict_kver (its declared highest compatible kernel version is ${verdict_bound:-unknown})."$'\n'
+    if [[ -n "$prior_cand" ]]; then
+        menu+="Run the Kernel repair to install the compatible kernel: its per-kernel actions install the prior compatible kernel $prior_cand (the newest the module still supports) and switch the next-boot default to it."$'\n'
+    else
+        menu+="Run the Kernel repair — its per-kernel actions resolve the kernel-related remedies from this evidence (the module's ceiling is ${verdict_bound:-unknown}); the repositories resolve no prior compatible candidate."$'\n'
+    fi
+    menu+="Choose the resolution:"$'\n'
+    local -a choices=()
+    menu+="$n) Update the module package $verdict_mod$update_short"; choices+=("update-module"); n=$((n + 1)); menu+=$'\n'
+    menu+="0) Keep the failure (run the Kernel repair for the kernel-related remedies)"
+    if ! helper_menu_prompt "$menu" "$MENU_ANSWER_WINDOW_SECONDS" MENU || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+        repair_change_status dkms "unchanged|$(reason module-build-incompatible "$verdict_mod" "$verdict_kver" "$verdict_bound")"
+        return 0
+    fi
+    local answer="$HELPER_MENU_ANSWER" choice=""
+    if [[ "$answer" == "0" ]]; then
+        repair_change_status dkms "unchanged|$(reason module-build-incompatible "$verdict_mod" "$verdict_kver" "$verdict_bound")"
+        return 0
+    fi
+    if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#choices[@]} )); then
+        choice="${choices[$((answer - 1))]}"
+    else
+        repair_change_status dkms "unchanged|$(reason module-build-incompatible "$verdict_mod" "$verdict_kver" "$verdict_bound")"
+        return 0
+    fi
+    # The remedy runs in a contained subshell (the kernel-menu containment
+    # pattern): a fail inside it is reported, the session does not die, and
+    # the cross-subshell change evidence rides the per-session status history
+    # file (written by repair_change_status).
+    [[ -n "${SESSION_DIR:-}" && -d "${SESSION_DIR:-}" ]] \
+        && : > "$SESSION_DIR/repair-status-history" 2>/dev/null || true
+    case "$choice" in
+        update-module) ( dkms_incompat_remedy_update_module "$verdict_kver" dkms ) || true ;;
+    esac
+    local remedy_changed=false
+    grep -q '^changed' "$SESSION_DIR/repair-status-history" 2>/dev/null && remedy_changed=true
+    # A proven change re-runs the rebuild — the drill's SUCCEEDS leg: after the
+    # module update the rebuild runs against the target kernel.
+    if [[ "$remedy_changed" == true ]]; then
+        run_dkms_autoinstall "$(msg retry-dkms-after-remedy)" "$target_kver"
+        if (( CHROOT_TRY_RC == 0 )); then
+            # The rebuild re-run succeeded: the remedy's own change verdict
+            # (module-updated) stands — never overwrite it with a bare
+            # changed.
+            msg_log dkms-pass
+            run_chroot_try "$(msg post-repair-dkms-status)" dkms status
+            return 0
+        fi
+        msg_log dkms-remedy-retry-still-failing
+        repair_change_status dkms "unchanged|$(reason module-build-incompatible "$verdict_mod" "$verdict_kver" "$verdict_bound")"
+        return 0
+    fi
+    # A decline/no-op/unavailable leg reported its own honest verdict.
+    return 0
+}
+
 adaptive_dkms_repair_backend()
 {
     local target_kver=""
@@ -13215,7 +14668,16 @@ adaptive_dkms_repair_backend()
             run_dkms_autoinstall "$(msg retry-dkms-autoinstall)" "$target_kver"
         fi
     fi
-    ((CHROOT_TRY_RC == 0)) || fail "DKMS autoinstall failed after preflight/known correction."
+    if ((CHROOT_TRY_RC != 0)); then
+        # Round 69 (the dkms repair's programmatic resolution): the failed
+        # rebuild is CLASSIFIED from the failing module's own make.log, the
+        # verdict names the module + the kernel + the declared compatibility
+        # bound, and the per-kernel remedies are surfaced from the failure
+        # outcome — never the bare exit death.  A changed remedy re-runs the
+        # rebuild (the removal leg: the module gone -> the rebuild succeeds).
+        dkms_repair_failure_resolution "$CHROOT_TRY_OUTPUT" "$target_kver"
+        return 0
+    fi
     msg_log dkms-pass
     run_chroot_try "$(msg post-repair-dkms-status)" dkms status
     # DKMS rebuilds cannot be proven byte-identical without hashing every
@@ -13264,6 +14726,53 @@ display_manager_label_for_service()
     esac
 }
 
+# Round 46 (the user's Ubuntu finding — the GDM/GDM3 aliasing): on the
+# Debian-family the gdm3.service unit IS the GDM (the gdm3 package's naming
+# — the unit's a SYMLINK to gdm.service, the round-193 documented shape).
+# The alias pair is ONE manager: this returns the CANONICAL service for the
+# pair (the REAL unit file's basename via the resolved symlink — the
+# evidence-derived rule, never a name-hardcode beyond the documented gdm3
+# family alias).  A non-pair service, or a pair whose unit resolution is
+# unavailable, fails (the caller keeps its own name).
+display_manager_gdm_canonical_service()
+{
+    local service="$1" unit_rel="" resolved=""
+    [[ "$service" == gdm.service || "$service" == gdm3.service ]] || return 1
+    unit_rel="$(display_manager_unit_rel "$service" 2>/dev/null || true)"
+    [[ -n "$unit_rel" ]] || return 1
+    resolved="$(readlink -f "$TARGET_ROOT$unit_rel" 2>/dev/null || true)"
+    [[ -n "$resolved" ]] || return 1
+    case "$(basename "$resolved" 2>/dev/null || true)" in
+        gdm.service) printf 'gdm.service\n' ;;
+        gdm3.service) printf 'gdm3.service\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 83c (FINDING 1 — the purge-deferral alias breach): the §15.6
+# GDM/GDM3 collapse as a NAME-PAIR comparison.  Two service names denote the
+# SAME manager when they are byte-equal OR both are members of the
+# documented gdm/gdm3 alias pair (the Debian-family shape where gdm3.service
+# is a symlink to gdm.service — the same daemon).  The alias/restore paths
+# collapse the pair through the resolved unit; this makes every
+# deferral/exclusion comparison collapse it too, so the daemon serving the
+# live session is ALWAYS deferred even when the loop carries its alias name
+# (the round-54 never-kill-the-live-session invariant — never a byte-level
+# name compare).  Returns 0 when $1 and $2 are the same manager.
+display_manager_services_same_manager()
+{
+    local a="$1" b="$2"
+    [[ "$a" == "$b" ]] && return 0
+    case "$a" in
+        gdm.service|gdm3.service) ;;
+        *) return 1 ;;
+    esac
+    case "$b" in
+        gdm.service|gdm3.service) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Round 199 (the cached vendor-default line): the reverse of
 # display_manager_label_for_service for the supported set — the walk-through
 # reconstructs the vendor-default SERVICE from the label captured in the
@@ -13296,7 +14805,7 @@ display_manager_unit_rel()
 
 trial_display_manager_headless()
 {
-    local verify_output="" exec_path="" unit_file="${TARGET_ROOT}${DISPLAY_MANAGER_UNIT_REL}"
+    local verify_output="" exec_path=""
     local -a verify_args=()
 
     # Starting a display manager in the repair chroot would attach it to the
@@ -13326,12 +14835,17 @@ trial_display_manager_headless()
     fi
 
     # Confirm the unit's primary executable exists inside the target.  Unit
-    # files may contain wrappers or specifiers, so this is advisory only.
-    exec_path="$(sed -n 's/^ExecStart=\([^[:space:];]*\).*/\1/p' "$unit_file" 2>/dev/null | head -n1 || true)"
-    if [[ -n "$exec_path" && "$exec_path" == /* && ! -x "$TARGET_ROOT$exec_path" ]]; then
-        msg_log dm-execstart-not-executable "$DISPLAY_MANAGER_SERVICE" "$exec_path"
-    elif [[ -n "$exec_path" ]]; then
-        msg_log dm-execstart-present "$DISPLAY_MANAGER_SERVICE" "$exec_path"
+    # files may contain wrappers or specifiers, so this is advisory only; the
+    # recognition is the shared display_manager_x11_execstart_path (the -/+
+    # reset prefixes and whitespace around `=` resolve to the plain path, and
+    # an unresolvable ExecStart — a specifier, an empty value, a non-path —
+    # emits no advisory rather than a guessed one).
+    if exec_path="$(display_manager_x11_execstart_path "$DISPLAY_MANAGER_UNIT_REL" 2>/dev/null)"; then
+        if [[ ! -x "$TARGET_ROOT$exec_path" ]]; then
+            msg_log dm-execstart-not-executable "$DISPLAY_MANAGER_SERVICE" "$exec_path"
+        else
+            msg_log dm-execstart-present "$DISPLAY_MANAGER_SERVICE" "$exec_path"
+        fi
     fi
 }
 
@@ -13565,6 +15079,19 @@ resolve_display_manager()
         DISPLAY_MANAGER_RESOLVE_REASON="No configured graphical login manager was found. Install and configure a supported display manager (SDDM, GDM, LightDM, greetd or ly) first."
         return 1
     fi
+    # Round 46 (the user's Ubuntu finding — the GDM/GDM3 aliasing): the
+    # Debian-family gdm3.service IS the GDM (the symlink to gdm.service).
+    # The decision resolves to the CANONICAL service so the diagnostic and
+    # the walk-through name the same manager and the alias never appears as
+    # a separate switch candidate or restore target.
+    if [[ "$service" == gdm.service || "$service" == gdm3.service ]]; then
+        local canonical_service=""
+        canonical_service="$(display_manager_gdm_canonical_service "$service" 2>/dev/null || true)"
+        if [[ -n "$canonical_service" ]]; then
+            service="$canonical_service"
+            unit="$(display_manager_unit_rel "$service" 2>/dev/null || true)"
+        fi
+    fi
     DISPLAY_MANAGER_SERVICE="$service"
     DISPLAY_MANAGER_UNIT_REL="${unit:-$(display_manager_unit_rel "$service" || true)}"
     DISPLAY_MANAGER_PACKAGE="$(display_manager_package_for_service "$service")"
@@ -13581,6 +15108,267 @@ resolve_display_manager()
 detect_display_manager()
 {
     resolve_display_manager || fail "$DISPLAY_MANAGER_RESOLVE_REASON"
+}
+
+# Round 39 (the user's Fedora finding): probe the conflicting display-manager
+# evidence — the ENABLED known DM units (the display-manager.service alias
+# target plus every is-enabled known service) vs the RUNNING DM daemon
+# processes (the running systemd host only; a repair target has no live
+# processes).  A DM counts as conflicting when it is not the RESOLVED
+# decision manager (the round-192 decision): an enabled stray unit or a
+# running stray daemon (the Fedora shape — lightdm enabled+configured while
+# bare `ly` processes hold the display TTYs and the login handoff hangs).
+# The gdm/gdm3 sibling pair counts once (the round-193 dedupe analog: the
+# decision's sibling binary is the same daemon).  Sets
+# DISPLAY_MANAGER_CONFLICT_LINE (empty = no conflict — the diagnostic emits
+# the `none` form) plus the two stray sets the walk-through's conflict
+# resolution consumes.  Emits nothing on the channel; read-only.
+display_manager_conflict_evidence()
+{
+    DISPLAY_MANAGER_CONFLICT_LINE=""
+    DISPLAY_MANAGER_TRANSITION_LINE=""
+    DISPLAY_MANAGER_CONFLICT_STRAY_UNITS=()
+    DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING=()
+    DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES=()
+    local -a known_services=(sddm.service gdm.service gdm3.service lightdm.service greetd.service ly.service)
+    local -a known_binaries=(sddm gdm gdm3 lightdm greetd ly)
+    local decision="${DISPLAY_MANAGER_SERVICE:-}"
+    local candidate enabled_state alias_target alias_base idx svc bin
+    local -a enabled=() bb_conflict_seen=()
+
+    [[ -n "$decision" ]] || { resolve_display_manager || return 0; decision="${DISPLAY_MANAGER_SERVICE:-}"; }
+    [[ -n "$decision" ]] || return 0
+
+    # The enabled set: the alias target (the template form collapses to its
+    # base service, the round-199 rule) plus every known is-enabled unit.
+    if [[ -L "$TARGET_ROOT/etc/systemd/system/display-manager.service" ]]; then
+        alias_target="$(basename "$(readlink "$TARGET_ROOT/etc/systemd/system/display-manager.service" 2>/dev/null || true)" 2>/dev/null || true)"
+        alias_base="${alias_target%@.service}.service"
+        case " ${known_services[*]} " in
+            *" $alias_base "*) enabled+=("$alias_base") ;;
+        esac
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        for candidate in "${known_services[@]}"; do
+            journal_cancel_requested && return 0
+            enabled_state="$(systemctl --root="$TARGET_ROOT" is-enabled "$candidate" 2>/dev/null || true)"
+            case "$enabled_state" in
+                enabled|enabled-runtime|indirect) enabled+=("$candidate") ;;
+            esac
+        done
+    fi
+    for candidate in "${enabled[@]}"; do
+        [[ " ${bb_conflict_seen[*]} " == *" $candidate "* ]] && continue
+        bb_conflict_seen+=("$candidate")
+        [[ "$candidate" == "$decision" ]] || DISPLAY_MANAGER_CONFLICT_STRAY_UNITS+=("$candidate")
+    done
+
+    # The running set (the running systemd host only): each known DM daemon
+    # binary with a live process, minus the decision manager's own daemon
+    # (it legitimately serves the session) and its gdm/gdm3 sibling (one
+    # daemon, two unit names — never two conflict sides).
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+        && command -v pgrep >/dev/null 2>&1; then
+        for idx in "${!known_binaries[@]}"; do
+            journal_cancel_requested && return 0
+            bin="${known_binaries[$idx]}"
+            svc="${known_services[$idx]}"
+            [[ "$svc" == "$decision" ]] && continue
+            if [[ "$decision" == gdm.service || "$decision" == gdm3.service ]] \
+                && [[ "$svc" == gdm.service || "$svc" == gdm3.service ]]; then
+                continue
+            fi
+            pgrep -x "$bin" >/dev/null 2>&1 \
+                && DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING+=("$svc")
+        done
+    fi
+
+    # Round 45 (the user's Fedora finding — the re-emerged conflict after
+    # the round-44 resolution): the TEMPLATE-INSTANTIATED DMs — the
+    # ly@tty1.service/ly@tty2.service class.  The enabled instance set (the
+    # target's wants symlinks, any scope) + the loaded instances (the
+    # running host's list-units) join the conflict evidence; the mechanism
+    # is the template-aware class (the known DMs' @-instance names), never
+    # a ly special case.
+    local stray_inst link link_base inst_base inst_re
+    local inst_re='^(sddm|gdm|gdm3|lightdm|greetd|ly)@[^.]+\.service$'
+    while IFS= read -r -d '' link; do
+        link_base="$(basename "$link" 2>/dev/null || true)"
+        [[ "$link_base" =~ $inst_re ]] || continue
+        inst_base="${BASH_REMATCH[1]}"
+        [[ "$inst_base.service" == "$decision" ]] && continue
+        if [[ "$decision" == gdm.service || "$decision" == gdm3.service ]] \
+            && [[ "$inst_base" == gdm || "$inst_base" == gdm3 ]]; then
+            continue
+        fi
+        [[ " ${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[*]} " == *" $link_base "* ]] \
+            || DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES+=("$link_base")
+    done < <(find "$TARGET_ROOT/etc/systemd/system" -mindepth 2 -maxdepth 2 \
+        -type l -name '*.service' -print0 2>/dev/null)
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+        && command -v systemctl >/dev/null 2>&1; then
+        while IFS= read -r stray_inst; do
+            [[ -n "$stray_inst" ]] || continue
+            [[ "$stray_inst" =~ $inst_re ]] || continue
+            inst_base="${BASH_REMATCH[1]}"
+            [[ "$inst_base.service" == "$decision" ]] && continue
+            if [[ "$decision" == gdm.service || "$decision" == gdm3.service ]] \
+                && [[ "$inst_base" == gdm || "$inst_base" == gdm3 ]]; then
+                continue
+            fi
+            [[ " ${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[*]} " == *" $stray_inst "* ]] \
+                || DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES+=("$stray_inst")
+        done < <(systemctl list-units --all --type=service --no-legend \
+            'ly@*' 'sddm@*' 'gdm@*' 'gdm3@*' 'lightdm@*' 'greetd@*' 2>/dev/null \
+            | awk '{print $1}')
+    fi
+
+    # The deterministic instance naming (the sorted order — the find/list
+    # order is filesystem-dependent and must never leak into the line).
+    if ((${#DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]} > 1)); then
+        mapfile -t DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES             < <(printf '%s\n' "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]}" | LC_ALL=C sort)
+    fi
+
+    # Round 52 (the deferred-transition evidence model): the tool's OWN
+    # staged state is the intentional transition, never a conflict — the
+    # suppression is SCOPED: the stray set must be exactly the transition
+    # pair (the new DM enabled-but-not-running — the override flips the
+    # decision to the ACTIVE deferred DM, so the new DM reads as an enabled
+    # stray — plus the running deferred DM; no instances, no other strays),
+    # so a genuine conflict is never masked.
+    local transition_pair="" trans_new="" trans_deferred="" trans_svc="" trans_clean=true
+    local trans_instances="" trans_inst_one="" trans_rest=""
+    transition_pair="$(display_manager_deferred_transition 2>/dev/null || true)"
+    if [[ -n "$transition_pair" ]]; then
+        trans_new="${transition_pair%%$'\t'*}"
+        trans_rest="${transition_pair#*$'\t'}"
+        trans_deferred="${trans_rest%%$'\t'*}"
+        trans_instances="${trans_rest#*$'\t'}"
+        [[ "$trans_instances" == "$trans_rest" ]] && trans_instances=""
+        trans_clean=true
+        # Round 54 (the switch-to-ly self-conflict): the tool's OWN
+        # template-instantiation enablement (the instance the landing
+        # recorded) is the staged shape — the stray instances must all be
+        # the recorded ones; a genuine third-party instance never masks.
+        for trans_inst_one in "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]}"; do
+            [[ -n "$trans_inst_one" ]] || continue
+            [[ ",$trans_instances," == *",$trans_inst_one,"* ]] && continue
+            trans_clean=false
+        done
+        for trans_svc in "${DISPLAY_MANAGER_CONFLICT_STRAY_UNITS[@]}"; do
+            [[ -n "$trans_svc" ]] || continue
+            [[ "$trans_svc" == "$trans_new" ]] && continue
+            trans_clean=false
+        done
+        for trans_svc in "${DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING[@]}"; do
+            [[ -n "$trans_svc" ]] || continue
+            [[ "$trans_svc" == "$trans_deferred" ]] && continue
+            trans_clean=false
+        done
+        if [[ "$trans_clean" == true ]]; then
+            DISPLAY_MANAGER_TRANSITION_LINE="$(display_manager_label_for_service "$trans_new") enabled — takes effect at the next login/reboot; $(display_manager_label_for_service "$trans_deferred") still serving the current session"
+            return 0
+        fi
+    fi
+
+    if ((${#DISPLAY_MANAGER_CONFLICT_STRAY_UNITS[@]} == 0 \
+        && ${#DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING[@]} == 0 \
+        && ${#DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]} == 0)); then
+        return 0
+    fi
+    local side_a="" side_b=""
+    # Round 48 (the user's Fedora re-test — the "ly vs ly" pairing bug): the
+    # stray evidence is GROUPED per DM base.  The same-base running +
+    # instance evidence MERGES into ONE side (the identical-manager pair can
+    # never form), and the active/decision manager is the other side
+    # whenever the stray set carries no enabled unit — the user's honest
+    # shape: "lightdm (active display manager) vs ly (running process(es),
+    # template instance ly@tty2.service)".
+    local -a stray_bases=() stray_has_unit=() stray_has_running=() stray_has_inst=()
+    local kind_entry="" stray_base="" inst_one="" inst_side_names=""
+    for kind_entry in "${DISPLAY_MANAGER_CONFLICT_STRAY_UNITS[@]}"; do
+        stray_base="${kind_entry%.service}"
+        [[ " ${stray_bases[*]} " == *" $stray_base "* ]] || stray_bases+=("$stray_base")
+        stray_has_unit+=("$stray_base")
+    done
+    for kind_entry in "${DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING[@]}"; do
+        stray_base="${kind_entry%.service}"
+        [[ " ${stray_bases[*]} " == *" $stray_base "* ]] || stray_bases+=("$stray_base")
+        stray_has_running+=("$stray_base")
+    done
+    for kind_entry in "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]}"; do
+        stray_base="${kind_entry%@*}"
+        [[ " ${stray_bases[*]} " == *" $stray_base "* ]] || stray_bases+=("$stray_base")
+        stray_has_inst+=("$stray_base")
+    done
+    ((${#stray_bases[@]} > 0)) || return 0
+    mapfile -t stray_bases < <(printf '%s\n' "${stray_bases[@]}" | LC_ALL=C sort -u)
+
+    # The merged per-base side name: "lightdm (enabled unit)" /
+    # "ly (running process(es), template instance ly@tty2.service)" — the
+    # kinds join inside ONE parenthesis; the instance LIST keeps the
+    # comma-without-space join (the round-45 line contract).
+    display_manager_conflict_side_name()
+    {
+        local base="$1" part names=""
+        local -a parts=()
+        [[ " ${stray_has_unit[*]} " == *" $base "* ]] && parts+=("enabled unit")
+        [[ " ${stray_has_running[*]} " == *" $base "* ]] && parts+=("running process(es)")
+        if [[ " ${stray_has_inst[*]} " == *" $base "* ]]; then
+            inst_side_names=""
+            for inst_one in "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]}"; do
+                [[ "${inst_one%@*}" == "$base" ]] || continue
+                inst_side_names="${inst_side_names:+$inst_side_names,}$inst_one"
+            done
+            if [[ "$inst_side_names" == *,* ]]; then
+                parts+=("template instances $inst_side_names")
+            else
+                parts+=("template instance $inst_side_names")
+            fi
+        fi
+        if ((${#parts[@]} > 0)); then
+            for part in "${parts[@]}"; do
+                names="${names:+$names, }$part"
+            done
+            printf '%s' "$base ($names)"
+        else
+            printf '%s' "$base"
+        fi
+    }
+
+    local -a unit_bases=()
+    local first_unit_base="" other_base="" merged_other=""
+    for stray_base in "${stray_bases[@]}"; do
+        [[ " ${stray_has_unit[*]} " == *" $stray_base "* ]] && unit_bases+=("$stray_base")
+    done
+    if ((${#unit_bases[@]} > 0)); then
+        side_a="$(display_manager_conflict_side_name "${unit_bases[0]}")"
+        if ((${#unit_bases[@]} >= 2)); then
+            side_b="$(display_manager_conflict_side_name "${unit_bases[1]}")"
+        else
+            other_base=""
+            for stray_base in "${stray_bases[@]}"; do
+                [[ "$stray_base" == "${unit_bases[0]}" ]] && continue
+                other_base="$stray_base"
+                break
+            done
+            if [[ -n "$other_base" ]]; then
+                side_b="$(display_manager_conflict_side_name "$other_base")"
+            else
+                side_b="${decision%.service} (active display manager)"
+            fi
+        fi
+    else
+        # No enabled stray unit: the active/decision manager is the other
+        # side against the MERGED stray evidence (every base, sorted).
+        side_a="${decision%.service} (active display manager)"
+        merged_other=""
+        for stray_base in "${stray_bases[@]}"; do
+            merged_other="${merged_other:+$merged_other, }$(display_manager_conflict_side_name "$stray_base")"
+        done
+        side_b="$merged_other"
+    fi
+    DISPLAY_MANAGER_CONFLICT_LINE="$side_a vs $side_b"
 }
 
 # Reconstruct the display-manager selection globals from the cached `display`
@@ -13613,6 +15401,7 @@ parse_cached_display_inventory()
     DISPLAY_MANAGER_CACHED_CANDIDATES=()
     DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT=""
     DISPLAY_MANAGER_CACHED_VENDOR_SERVICE=""
+    DISPLAY_MANAGER_CACHED_CONFLICT=""
 
     while IFS= read -r line; do
         line="${line%$'\r'}"
@@ -13687,6 +15476,21 @@ parse_cached_display_inventory()
         [[ -n "$DISPLAY_MANAGER_CACHED_VENDOR_SERVICE" ]] \
             || fail "The cached display baseline carries an unrecognised vendor default '$vendor_default_label'; run the display diagnostic again."
     fi
+    # Round 39 (the user's Fedora finding): the conflict line — the
+    # walk-through's conflict case renders from this cached payload (never a
+    # live re-probe in the menu).  A baseline without the line is an older
+    # diagnostic: fail closed (the round-199 contract).  The `none` form is
+    # the honest empty state.
+    local conflict_line=""
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        [[ "$line" == "Display manager conflict:"* ]] || continue
+        conflict_line="${line#Display manager conflict: }"
+        break
+    done <<<"$baseline"
+    [[ -n "$conflict_line" ]] \
+        || fail "The cached display baseline carries no conflict evidence; run the display diagnostic again."
+    [[ "$conflict_line" == none ]] || DISPLAY_MANAGER_CACHED_CONFLICT="$conflict_line"
     DISPLAY_MANAGER_CACHED_PARSED=1
 }
 
@@ -14569,6 +16373,25 @@ adaptive_display_manager_repair()
     if display_manager_already_correct; then
         links_after=true
     fi
+    # Round 58 (ITEM 3): the adaptive (individual-tool) landing mirrors the
+    # walk-through restore's tail — the single-primary purge + the
+    # session-serving deferral + the dm-staged-completion marker (the GUI's
+    # reboot popup fires on it).  The user's Fedora re-test: the individual
+    # "Restore detected graphical login manager" flow showed NO reboot popup
+    # while the Ubuntu walk-through flow did — the marker was missing here.
+    # The no-op restore (the links + the X11 registry proven unchanged) skips
+    # the purge exactly like the walk-through's already-configured
+    # short-circuit.
+    if [[ "$links_before" != true || "$links_after" != true \
+        || "$x11_stale_before" == true || "$DISPLAY_MANAGER_PACKAGE_WORK" == true ]]; then
+        display_manager_purge_others "$DISPLAY_MANAGER_SERVICE"
+        if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+            && [[ "$DISPLAY_MANAGER_SERVICE" != "$DISPLAY_MANAGER_SESSION_SERVING" ]]; then
+            msg_log dm-staged-completion \
+                "$(display_manager_label_for_service "$DISPLAY_MANAGER_SERVICE")" \
+                "$(display_manager_label_for_service "$DISPLAY_MANAGER_SESSION_SERVING")"
+        fi
+    fi
     # Only the offline links are proven unchanged; a preflight package install
     # is a system change even when the links happened to be correct already.
     if [[ "$links_before" == true && "$links_after" == true \
@@ -15301,7 +17124,22 @@ display_manager_vendor_default_installed_set()
 # Every tier is probe-based, cache-only/read-only, fail-closed — never a
 # hardcoded distro/desktop->DM mapping.  The T1 derived lines stay
 # byte-identical (the fallback tiers only run when T1 missed).
+# Round 46 (the GDM/GDM3 aliasing): the wrapper canonicalizes the derived
+# service through the alias pair (the gdm3 -> gdm symlink resolution) so
+# the vendor-default derivation and the restore target name the SAME
+# manager the decision names.
 display_manager_vendor_default()
+{
+    display_manager_vendor_default_derive
+    if [[ -n "$DISPLAY_MANAGER_VENDOR_DEFAULT_SERVICE" ]]; then
+        local canonical_default=""
+        canonical_default="$(display_manager_gdm_canonical_service "$DISPLAY_MANAGER_VENDOR_DEFAULT_SERVICE" 2>/dev/null || true)"
+        [[ -n "$canonical_default" ]]             && DISPLAY_MANAGER_VENDOR_DEFAULT_SERVICE="$canonical_default"
+    fi
+    return 0
+}
+
+display_manager_vendor_default_derive()
 {
     DISPLAY_MANAGER_VENDOR_DEFAULT_SOURCE=""
     DISPLAY_MANAGER_VENDOR_DEFAULT_SERVICE=""
@@ -15643,12 +17481,18 @@ display_manager_repo_availability()
                     verdict='probe-unavailable (no dnf in the scope)'
                     break
                 fi
+                # Round 58 (ITEM 2): the cache-only -C form — a non-`-C`
+                # repoquery re-refreshes the metadata on the network (the
+                # user's Fedora minutes: the degraded-slirp refresh at 120%
+                # CPU per candidate).  The -C probe never touches the
+                # network: a stale/missing cache reports the honest
+                # probe-unavailable instead of stalling the diagnostic.
                 set +e
                 output="$(
                     run_selected_chroot /usr/bin/env \
                         HOME=/root LC_ALL=C \
                         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                        "${RPM_DNF_TOOL:-dnf5}" repoquery --available "$pkg" 2>/dev/null
+                        "${RPM_DNF_TOOL:-dnf5}" -C repoquery --available "$pkg" 2>/dev/null
                 )"
                 rc=$?
                 set -e
@@ -15740,7 +17584,7 @@ display_manager_repo_file_list()
                     run_selected_chroot_bounded "${DISPLAY_MANAGER_UNIT_PROOF_TIMEOUT_SECONDS:-60}" /usr/bin/env \
                         HOME=/root LC_ALL=C \
                         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                        "${RPM_DNF_TOOL:-dnf5}" repoquery --available -l "$pkg" 2>/dev/null
+                        "${RPM_DNF_TOOL:-dnf5}" -C repoquery --available -l "$pkg" 2>/dev/null
                 )"
                 rc=$?
                 set -e
@@ -15897,6 +17741,32 @@ greetd_greeter_is_agreety_shell()
     return 1
 }
 
+# Round 83c (FINDING 3 — the pre-fix residue heal): the pre-round-83b broken
+# write landed a BARE greeter client — `command = "wlgreet"` with no
+# compositor and no --config (the tail-flush residue; the Debian rig's live
+# shape).  That command CANNOT serve a login screen: the wlgreet client
+# renders on a Wayland compositor, and a bare client panics without one (the
+# rig proof: `XdgRuntimeDirNotSet` — the greeter crash-looped with NO login
+# screen).  The already-configured read must detect that residue as BROKEN
+# so the landing rewrites it through the single-path write.  Probe-derived
+# from the configured command's own shape (never a per-distribution claim):
+# the first token names the wlgreet greeter CLIENT and the command carries
+# no compositor-context token.  Returns 0 for the bare-client residue.
+greetd_greeter_is_bare_wlgreet()
+{
+    local command="$1" token=""
+    local -a tokens=()
+    [[ -n "$command" ]] || return 1
+    read -r -a tokens <<<"$command"
+    [[ "${tokens[0]##*/}" == wlgreet || "${tokens[0]##*/}" == greetd-wlgreet ]] || return 1
+    for token in "${tokens[@]:1}"; do
+        case "${token##*/}" in
+            sway|labwc|cage|weston|wayfire|gamescope|niri|river|hyprland) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 # Round 207 (the greeter gap): the honest greetd row annotation for the
 # display diagnostic's installed-DM list (the same honest note the greetd
 # switch CONFIRM names).  Probe-derived: only a greetd row whose
@@ -15905,16 +17775,49 @@ greetd_greeter_is_agreety_shell()
 # ever annotated.  Round 208 (the Fedora reality): a configured greeter that
 # is the stock agreety-running-a-shell shape (a login lookalike that cannot
 # accept credentials) is annotated too — the honest consequence, probe-derived
-# from the command line.  Prints the note (leading " — ") or nothing.
+# from the command line.  Round 83b (ITEM 4): the post-login session command
+# shape is annotated too — a wlgreet.toml whose top-level command is NOT the
+# detected desktop session shell lands the login in a bare compositor (the
+# Ubuntu black-session class), and a scope with NO desktop session shell
+# lands the login nowhere.  Round 83c (FINDINGS 3/4): the bare-wlgreet
+# residue greeter and the GNOME-Wayland session class are annotated too.
+# Read-only probes only.  Prints the note (leading
+# " — ") or nothing.
 display_manager_greetd_greeter_note()
 {
-    local service="$1" greeter=""
+    local service="$1" greeter="" session_shell="" post_cmd=""
     [[ "$service" == greetd.service ]] || return 0
     greeter="$(greetd_configured_greeter || true)"
     if [[ -z "$greeter" ]]; then
         printf '%s\n' " — WARNING: no greeter is configured (/etc/greetd/config.toml carries no greeter command); greetd falls back to the console login. Install/configure a greeter (e.g. wlgreet) to show a graphical login screen."
+        return 0
     elif greetd_greeter_is_agreety_shell "$greeter"; then
         printf '%s\n' " — WARNING: the configured greeter is the bundled agreety running a plain shell ($greeter) — not a login screen: no credentials can be accepted. Install/configure a graphical greeter (e.g. wlgreet) to show a graphical login screen."
+        return 0
+    elif greetd_greeter_is_bare_wlgreet "$greeter"; then
+        # Round 83c (FINDING 3): the pre-fix tail-flush residue — a bare
+        # wlgreet client with no compositor cannot show a login screen.
+        printf '%s\n' " — WARNING: the configured greeter command is a bare wlgreet client with no compositor ($greeter) — it cannot show a login screen (the greeter crash-loops). Run the graphical-login repair to reconfigure the greeter."
+        return 0
+    fi
+    post_cmd="$(display_manager_greetd_post_login_command || true)"
+    session_shell="$(display_manager_greetd_session_shell || true)"
+    if [[ -z "$session_shell" ]]; then
+        if [[ -n "$post_cmd" ]] && display_manager_greetd_command_resolvable "$post_cmd"; then
+            return 0
+        fi
+        printf '%s\n' " — WARNING: no installed desktop session was found (no session entries under /usr/share/wayland-sessions or /usr/share/xsessions); a greetd login has no desktop shell to start. Install a desktop session or run the graphical-login repair."
+        return 0
+    fi
+    # Round 83c (FINDING 4): the GNOME-Wayland-under-greetd annotation — the
+    # detected shell cannot run under greetd's session worker (the login
+    # bounces); named read-only, the same class the landing refuses.
+    if display_manager_greetd_shell_is_gnome_wayland "$session_shell"; then
+        printf '%s\n' " — WARNING: the detected desktop session ($session_shell) is the GNOME Wayland session, which cannot run under greetd (greetd's session worker does not provide the logind session registration GNOME's Wayland session requires): the login will fail to start the desktop. Run the graphical-login repair for the honest handling."
+        return 0
+    fi
+    if [[ -n "$post_cmd" ]] && [[ "$post_cmd" != "$session_shell" ]]; then
+        printf '%s\n' " — WARNING: the greetd post-login session command ($post_cmd) does not launch the detected desktop session ($session_shell): a successful login lands in a bare compositor with no desktop. Run the graphical-login repair to reconfigure the session command."
     fi
     return 0
 }
@@ -15999,6 +17902,10 @@ display_manager_template_enable_instance()
         fi
         msg_log dm-static-unit "$instance"
     fi
+    # Round 54: the tool's own template-instantiation enablement joins the
+    # staged record — the conflict evidence recognizes it as the staged
+    # shape, never a conflict.
+    display_manager_record_staged_instance "$instance"
 }
 
 # Round 198 (the switchable-unit truth rule): derive whether a candidate
@@ -16111,6 +18018,15 @@ display_manager_bearing_switchable()
 diagnostic_display_manager_switch_candidates()
 {
     local current="$1" service pkg state resolved seen_dm_units="" found_unit="" verdict="" bearing
+    # Round 46 (the GDM/GDM3 aliasing): the current manager's RESOLVED unit
+    # joins the dedupe set — the gdm3.service -> gdm.service symlink pair is
+    # the SAME real unit, so the alias member must never appear as a
+    # separate switch candidate.
+    if display_manager_unit_rel "$current" >/dev/null 2>&1; then
+        local current_unit_rel=""
+        current_unit_rel="$(display_manager_unit_rel "$current")"
+        seen_dm_units="|$(readlink -f "$TARGET_ROOT$current_unit_rel" 2>/dev/null || true)|"
+    fi
     local -a tokens=()
     while IFS= read -r service; do
         journal_cancel_requested && break
@@ -16187,7 +18103,7 @@ diagnostic_display_manager_switch_candidates()
 display_manager_switch_candidates()
 {
     local current="$1" restore_target="${2:-$1}" service label state token
-    local -a out=()
+    local -a cand_rows=()
     if (( DISPLAY_MANAGER_CACHED_PARSED == 1 )); then
         for token in "${DISPLAY_MANAGER_CACHED_CANDIDATES[@]}"; do
             service="${token%%:*}"
@@ -16196,23 +18112,40 @@ display_manager_switch_candidates()
                 || [[ -n "$service" && "$state" == installable ]] \
                 || [[ -n "$service" && "$state" == installable-template ]] \
                 || continue
-            [[ "$service" == "$current" ]] && continue
+            # Round 83c (FINDING 5): the exclusions collapse the gdm/gdm3
+            # alias pair through the §15.6 comparison — the alias member of
+            # the current manager or the restore target is never a separate
+            # candidate (never a byte-level name compare).
+            display_manager_services_same_manager "$service" "$current" && continue
             # Round 206: the restore target (the option-1 default) is never a
             # switch candidate either — the default is reachable only through
             # the restore option.
-            [[ "$service" == "$restore_target" ]] && continue
+            display_manager_services_same_manager "$service" "$restore_target" && continue
             label="$(display_manager_label_for_service "$service")"
-            out+=("$service|$label|$state")
+            cand_rows+=("$service|$label|$state")
         done
-        ((${#out[@]} > 0)) || return 0
-        printf '%s\n' "${out[@]}"
+        ((${#cand_rows[@]} > 0)) || return 0
+        printf '%s\n' "${cand_rows[@]}"
         return 0
     fi
     local pkg resolved seen_dm_units="" found_unit="" bearing
+    # Round 46 (the GDM/GDM3 aliasing): the current manager's RESOLVED unit
+    # joins the dedupe set — the gdm3.service -> gdm.service symlink pair is
+    # the SAME real unit, so the alias member must never appear as a
+    # separate switch candidate.
+    if display_manager_unit_rel "$current" >/dev/null 2>&1; then
+        local current_unit_rel=""
+        current_unit_rel="$(display_manager_unit_rel "$current")"
+        seen_dm_units="|$(readlink -f "$TARGET_ROOT$current_unit_rel" 2>/dev/null || true)|"
+    fi
     while IFS= read -r service; do
         [[ -n "$service" ]] || continue
-        [[ "$service" == "$current" ]] && continue
-        [[ "$service" == "$restore_target" ]] && continue
+        # Round 83c (FINDING 5): the live branch applies the same §15.6
+        # alias-pair collapse to BOTH exclusions (the current manager and
+        # the restore target) — the gdm3 alias member never appears as a
+        # separate candidate next to its own manager.
+        display_manager_services_same_manager "$service" "$current" && continue
+        display_manager_services_same_manager "$service" "$restore_target" && continue
         pkg="$(display_manager_package_for_service "$service")"
         [[ -n "$pkg" ]] || continue
         # Dedupe the same-real-unit family.
@@ -16251,10 +18184,10 @@ display_manager_switch_candidates()
             continue
         fi
         label="$(display_manager_label_for_service "$service")"
-        out+=("$service|$label|$state")
+        cand_rows+=("$service|$label|$state")
     done < <(display_manager_known_services)
-    ((${#out[@]} > 0)) || return 0
-    printf '%s\n' "${out[@]}"
+    ((${#cand_rows[@]} > 0)) || return 0
+    printf '%s\n' "${cand_rows[@]}"
 }
 
 # Terminal CONFIRM (the 120 s window) naming the from->to switch.
@@ -16303,11 +18236,54 @@ confirm_display_manager_switch()
     # greeter, and the consequence is the same recoverable class as the
     # missing-greeter warning.
     if [[ "$to_service" == greetd.service ]]; then
-        prompt_text+=" greetd needs a configured greeter to show a login screen; the package alone falls back to the console login — install/configure a greeter (e.g. wlgreet) afterwards."
+        # Round 58 (ITEM 1 — the §15.8 requirement): the greeter install +
+        # the config write are PART of the switch, and the CONFIRM names both
+        # (the honest refusal naming the reason when the greeter cannot be
+        # installed — never a silent TTY landing).  Round 83b (ITEM 1/2):
+        # the CONFIRM also names the post-login session-command write (the
+        # login lands in the detected desktop shell — never a bare
+        # compositor) and the no-session-shell refusal possibility.
         greeter_cmd="$(greetd_configured_greeter || true)"
-        if [[ -n "$greeter_cmd" ]] && greetd_greeter_is_agreety_shell "$greeter_cmd"; then
-            prompt_text+=" The target's current /etc/greetd/config.toml configures the bundled agreety greeter running a plain shell — not a login screen, so credentials cannot be accepted; install/configure a graphical greeter (e.g. wlgreet) afterwards."
+        # Round 83c (FINDING 3): a BARE greeter client (the pre-fix residue)
+        # is not "already configured" — the CONFIRM names the install/config
+        # as part of the switch instead of claiming a working greeter.
+        if [[ -n "$greeter_cmd" ]] && ! greetd_greeter_is_agreety_shell "$greeter_cmd" \
+            && ! greetd_greeter_is_bare_wlgreet "$greeter_cmd"; then
+            prompt_text+=" greetd keeps its already-configured graphical greeter ($(basename -- "$greeter_cmd" 2>/dev/null || printf '%s' "$greeter_cmd"))."
+        else
+            local greeter_avail=""
+            greeter_avail="$(display_manager_repo_availability wlgreet)"
+            case "$greeter_avail" in
+                available*)
+                    prompt_text+=" This switch installs the wlgreet graphical greeter and configures it as part of the switch: the guarded install runs first, then /etc/greetd/config.toml's greeter command is set to the wlgreet compositor (the documented sway --config /etc/greetd/sway-config setup) and the greeter user joins the device-access groups it needs (offline — the greeter runs at the next login/reboot, never here). greetd alone would otherwise fall back to the console text login."
+                    ;;
+                *)
+                    prompt_text+=" greetd alone falls back to the console text login, and the wlgreet graphical greeter is not installable in this scope's repositories ($greeter_avail) — accepting this switch refuses with that reason (no text login is left behind)."
+                    ;;
+            esac
         fi
+        local greetd_session_shell=""
+        greetd_session_shell="$(display_manager_greetd_session_shell || true)"
+        # Round 83c (FINDING 4): the GNOME-Wayland class is named in the
+        # CONFIRM BEFORE the switch — the landing refuses that session (the
+        # round-207 warn-before pattern: the user learns the refusal reason
+        # before accepting).
+        if [[ -n "$greetd_session_shell" ]] \
+            && ! display_manager_greetd_shell_is_gnome_wayland "$greetd_session_shell"; then
+            prompt_text+=" The post-login session command is set to the detected desktop session ($(basename -- "$(printf '%s\n' "$greetd_session_shell" | awk '{print $1}')" 2>/dev/null || printf '%s' "$greetd_session_shell")) so the login lands in the desktop shell (offline — applies at the next login; a greetd landing alone would otherwise start a bare compositor)."
+        elif [[ -n "$greetd_session_shell" ]]; then
+            prompt_text+=" The detected desktop session is the GNOME Wayland session, which cannot run under greetd (greetd's session worker does not provide the logind session registration GNOME's Wayland session requires — the login would fail to start the desktop); accepting this switch refuses with that reason (no unusable session is left behind)."
+        else
+            prompt_text+=" No installed desktop session was found in this scope — accepting this switch refuses with that reason (a greetd login would have no desktop shell to start)."
+        fi
+    fi
+    # Round 48 (the single-primary rule): the CONFIRM names the purge set —
+    # the OTHER installed DMs with live evidence, disabled + stopped as part
+    # of this switch (services, never packages).
+    local purge_set=""
+    purge_set="$(display_manager_purge_summary "$to_service" 2>/dev/null || true)"
+    if [[ -n "$purge_set" ]]; then
+        prompt_text+=" The single-primary rule: the other installed display manager(s) ($purge_set) are disabled and stopped as part of this switch (services only — no packages are removed), leaving ${to_label} the only primary."
     fi
     prompt_text+=$'\n'
     prompt_text+="Answer: type y or yes to proceed with the switch; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip it and leave the current manager unchanged."
@@ -16363,8 +18339,22 @@ package_manager_interrupted_reason()
     local backend="$1"
     case "$backend" in
         apt/dpkg)
-            dpkg_configuration_pending \
-                && printf '%s\n' "The target's package manager has an interrupted package configuration (dpkg --configure -a is required). Run the Fix Broken Packages repair first, then retry."
+            if dpkg_configuration_pending; then
+                # Round 69 (the universal unblocker): when the pending
+                # configuration IS the module-vs-kernel blocker (the
+                # half-configured postinsts' DKMS build failure), the upfront
+                # refusal names the module + the kernel + the declared bound +
+                # the direction — the user sees the real blocker, never the
+                # generic interrupted state (which the Fix Broken Packages
+                # repair alone cannot fix).
+                local blocker_note=""
+                blocker_note="$(dkms_incompat_blocker_note 2>/dev/null || true)"
+                if [[ -n "$blocker_note" ]]; then
+                    printf '%s\n' "The target's package manager has an interrupted package configuration: $blocker_note Run the Fix Broken Packages repair (or the kernel repair's per-kernel remedy) first, then retry."
+                else
+                    printf '%s\n' "The target's package manager has an interrupted package configuration (dpkg --configure -a is required). Run the Fix Broken Packages repair first, then retry."
+                fi
+            fi
             ;;
         pacman)
             [[ -e "$TARGET_ROOT/var/lib/pacman/db.lck" ]] \
@@ -16523,7 +18513,53 @@ display_manager_autologin_user()
 # /etc/sddm.conf [Autologin] section when the file exists (a conf.d-only write
 # is silently ignored there — the round-192 Sparky trap), else a new
 # /etc/sddm.conf.d/autologin.conf.  Returns 0 on success, 1 when the shape is
-# unknown (greetd/ly — the caller reports the honest note).
+# unknown (greetd/ly — the caller reports the honest note) or when the SDDM
+# Session= entry cannot be derived (the round-58 no-partial-write rule: the
+# complete config or nothing, never the User-only half-write that boots with
+# "Unable to find autologin session entry" + "Autologin failed!").
+# Round 58 (ITEM 4): derive the SDDM autologin Session= value (the .desktop
+# base name) from (1) the active logind session's Desktop property — the
+# session being migrated carries its own desktop — mapped onto the target's
+# installed session files (case-insensitive), (2) the target's exactly-one
+# installed session file.  Anything else (multiple sessions with no desktop
+# match) derives NOTHING — no autologin is written at all.
+sddm_autologin_session()
+{
+    local sess_id="" desktop="" name="" base=""
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+        && command -v loginctl >/dev/null 2>&1; then
+        while IFS= read -r sess_id; do
+            [[ -n "$sess_id" ]] || continue
+            desktop="$(loginctl show-session "$sess_id" -p Desktop --value 2>/dev/null || true)"
+            [[ -n "$desktop" ]] || continue
+            # The logind Desktop property carries the colon-joined multi-
+            # desktop form ("GNOME-Classic:GNOME:") — the first value names
+            # the session's desktop; the match is case-insensitive (the
+            # legacy-safe grep -Fix, never the bash-4 lowercase expansion).
+            desktop="${desktop%%:*}"
+            [[ -n "$desktop" ]] || continue
+            for name in "$TARGET_ROOT"/usr/share/wayland-sessions/*.desktop \
+                        "$TARGET_ROOT"/usr/share/xsessions/*.desktop; do
+                [[ -f "$name" ]] || continue
+                base="$(basename "$name" .desktop)"
+                if printf '%s\n' "$base" | grep -Fixq -- "$desktop"; then
+                    printf '%s\n' "$(basename "$name")"
+                    return 0
+                fi
+            done
+        done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}')
+    fi
+    local -a found=()
+    for name in "$TARGET_ROOT"/usr/share/wayland-sessions/*.desktop \
+                "$TARGET_ROOT"/usr/share/xsessions/*.desktop; do
+        [[ -f "$name" ]] || continue
+        [[ " ${found[*]} " == *" $(basename "$name") "* ]] && continue
+        found+=("$(basename "$name")")
+    done
+    (( ${#found[@]} == 1 )) && { printf '%s\n' "${found[0]}"; return 0; }
+    return 0
+}
+
 display_manager_write_autologin()
 {
     local service="$1" user="$2" conf="" tmp="" before="" after=""
@@ -16563,6 +18599,25 @@ display_manager_write_autologin()
             fi
             ;;
         sddm.service)
+            # Round 58 (ITEM 4): SDDM requires BOTH the User and the Session
+            # entries.  A Session that cannot be derived honestly means NO
+            # autologin write at all (the caller reports the honest
+            # migration-unknown note) — never the partial half-write that
+            # boots with "Unable to find autologin session entry" +
+            # "Autologin failed!".
+            local session_entry=""
+            session_entry="$(sddm_autologin_session || true)"
+            if [[ -z "$session_entry" ]]; then
+                # The no-partial-write rule covers the EXISTING partial too: a
+                # pre-round-58 landing's User-only [Autologin] section (or a
+                # user-made one) is the provably-broken shape — SDDM can never
+                # use it — so the landing removes the User line(s) from any
+                # [Autologin] section that carries no Session= line (the
+                # guarded write), leaving the autologin ABSENT instead of
+                # broken.  The complete-or-absent state, never the half-write.
+                display_manager_sddm_remove_partial_autologin
+                return 1
+            fi
             if [[ -f "$TARGET_ROOT/etc/sddm.conf" ]]; then
                 conf="$TARGET_ROOT/etc/sddm.conf"
                 cp -a -- "$conf" "$SESSION_DIR/sddm-autologin.conf.bak"
@@ -16573,15 +18628,20 @@ display_manager_write_autologin()
                     else
                         sed -i -E "s|^([[:space:]]*\[Autologin\][[:space:]]*)$|\1\nUser=$user|" "$conf"
                     fi
+                    if grep -Eq '^[[:space:]]*Session[[:space:]]*=' "$conf"; then
+                        sed -i -E "s|^([[:space:]]*Session[[:space:]]*=).*|\1$session_entry|" "$conf"
+                    else
+                        sed -i -E "s|^([[:space:]]*User[[:space:]]*=.*)$|\1\nSession=$session_entry|" "$conf"
+                    fi
                 else
-                    printf '[Autologin]\nUser=%s\n' "$user" >> "$conf"
+                    printf '[Autologin]\nUser=%s\nSession=%s\n' "$user" "$session_entry" >> "$conf"
                 fi
             else
                 conf="$TARGET_ROOT/etc/sddm.conf.d/boot-bitch-autologin.conf"
                 mkdir -p -- "$(dirname -- "$conf")"
                 before="$(repair_file_fingerprint "$conf")"
                 tmp="$conf.boot-bitch-tmp"
-                printf '[Autologin]\nUser=%s\n' "$user" > "$tmp"
+                printf '[Autologin]\nUser=%s\nSession=%s\n' "$user" "$session_entry" > "$tmp"
                 install -m 0644 "$tmp" "$conf"
                 rm -f -- "$tmp"
             fi
@@ -16635,12 +18695,23 @@ display_manager_walkthrough_scoped_regen()
     # section that fails to re-run is honestly absent from the block: the
     # GUI's commit skips empty sections and the end-of-walk-through status
     # still invalidates the scoped set, so the next diagnostic regenerates it.
-    diagnostic_repair_capabilities || true
-    echo
-    run_one_diagnostic backend "$scope_label" || true
-    run_one_diagnostic package "$scope_label" || true
-    run_one_diagnostic display "$scope_label" || true
-    run_one_diagnostic usage "$scope_label" || true
+    # Round 52 (the refined scoped set — the user's perf requirement): the
+    # services-only landings (the purge never touches packages) regenerate
+    # `display` ONLY — the instant refresh; the package-installing path (the
+    # ly installable-template flow, DISPLAY_MANAGER_PACKAGE_WORK=true) keeps
+    # the round-195 package-touching set.  The map row stays the MAXIMAL set;
+    # the helper picks the actual-mutation subset (the round-42
+    # evidence-aware delta pattern).
+    if [[ "${DISPLAY_MANAGER_PACKAGE_WORK:-false}" == true ]]; then
+        diagnostic_repair_capabilities || true
+        echo
+        run_one_diagnostic backend "$scope_label" || true
+        run_one_diagnostic package "$scope_label" || true
+        run_one_diagnostic display "$scope_label" || true
+        run_one_diagnostic usage "$scope_label" || true
+    else
+        run_one_diagnostic display "$scope_label" || true
+    fi
     REPORT_SHARED_PREAMBLE="$saved_preamble"
     msg_log dm-scoped-regen-end
 }
@@ -16696,17 +18767,39 @@ interactive_menu_scoped_regen()
 #
 # Derive the canonical X11 default-display-manager path from one manager
 # unit's ExecStart= line — the FIRST token (the path), never a hardcoded DM
-# map.  A template unit's ExecStart may carry a specifier (%i): only a plain
-# absolute path without specifiers is usable.  Prints the path (0) or
-# nothing (1) when it cannot be resolved.
+# map.  The systemd `-`/`+` reset prefixes (ExecStart=-/usr/bin/x) and
+# whitespace around `=` (ExecStart= /usr/bin/x) are recognized and stripped
+# so such a unit reconciles instead of refusing; the plain-path behavior is
+# unchanged.  A template unit's ExecStart may carry a specifier (%i): only a
+# token without specifiers is usable.
+#
+# Round 233 (the TUXEDO full-repair finding): a BARE command name (no `/` —
+# systemd resolves it via the PATH; the Debian-family greetd unit ships
+# `ExecStart=greetd`) resolves read-only against the standard systemd
+# executable directories INSIDE the target (/usr/local/sbin /usr/local/bin
+# /usr/sbin /usr/bin /sbin /bin, the PATH order), the first existing
+# executable wins; none refuses like the specifier/empty/relative shapes
+# (a directory hit never counts — the token names a command).  The
+# absolute-path branch stays the exact round-232 behavior.  Prints the
+# path (0) or nothing (1) when it cannot be resolved.
 display_manager_x11_execstart_path()
 {
-    local unit_rel="$1" unit_file="$TARGET_ROOT$1" exec_path=""
+    local unit_rel="$1" unit_file="$TARGET_ROOT$1" exec_path="" dir
     [[ -n "$unit_rel" && -f "$unit_file" ]] || return 1
-    exec_path="$(sed -n 's/^ExecStart=\([^[:space:];]*\).*/\1/p' "$unit_file" 2>/dev/null | head -n1 || true)"
-    [[ -n "$exec_path" && "$exec_path" == /* && "$exec_path" != *%* ]] || return 1
-    printf '%s\n' "$exec_path"
-    return 0
+    exec_path="$(sed -n 's/^ExecStart=[[:space:]]*[+-]*\([^[:space:];]*\).*/\1/p' "$unit_file" 2>/dev/null | head -n1 || true)"
+    [[ -n "$exec_path" && "$exec_path" != *%* ]] || return 1
+    if [[ "$exec_path" == /* ]]; then
+        printf '%s\n' "$exec_path"
+        return 0
+    fi
+    [[ "$exec_path" == */* ]] && return 1
+    for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+        if [[ -x "$TARGET_ROOT$dir/$exec_path" && ! -d "$TARGET_ROOT$dir/$exec_path" ]]; then
+            printf '%s\n' "$dir/$exec_path"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Round 232 (ITEM 2): the already-configured no-op's staleness probe — true
@@ -16842,6 +18935,21 @@ display_manager_switch()
     if ! target_package_installed "$(display_manager_package_for_service "$to_service")"; then
         preflight_package_manager_not_interrupted "$(gpu_install_backend || true)"
     fi
+    # Round 78 (cycle plan §13.7): the greetd landing's READ-ONLY refusal
+    # preflight runs BEFORE the pre-apply change evidence — a switch that
+    # refuses (the wlgreet graphical greeter not installable in this scope)
+    # publishes the truthful unchanged status and never prints a dangling
+    # `display-switch: changed` (the round-195 refusal shape).
+    if [[ "$to_service" == greetd.service ]]; then
+        local greetd_preflight_rc=0
+        display_manager_greetd_landing_preflight || greetd_preflight_rc=$?
+        if (( greetd_preflight_rc == GREETD_LANDING_REFUSAL_RC )); then
+            display_manager_greetd_emit_refusal_status
+            return "$GREETD_LANDING_REFUSAL_RC"
+        elif (( greetd_preflight_rc != 0 )); then
+            fail "The greetd landing preflight failed (exit code $greetd_preflight_rc)."
+        fi
+    fi
     # Round 195 (task 2): publish the switch's change evidence BEFORE the dance
     # (the round-194 pre-apply pattern) — the map's `display-switch` row carries
     # the scoped set `package backend usage capabilities display` (usage
@@ -16850,6 +18958,27 @@ display_manager_switch()
     # carries the status in the transcript for the GUI's scoped invalidation.
     repair_change_status_force display-switch changed
     display_manager_install_service "$to_service"
+    # Round 58 (ITEM 1 — the §15.8 requirement): the greetd landing brings
+    # the GRAPHICAL greeter — the wlgreet install + the config write are part
+    # of the switch, never a follow-up (the honest refusal names the reason
+    # when the greeter cannot be installed).  Round 78: the post-install
+    # refusal is propagated as the non-fatal outcome — the truthful unchanged
+    # status, while the pre-apply evidence stays (the guarded install was
+    # attempted — the round-195 mid-dance shape).
+    if [[ "$to_service" == greetd.service ]]; then
+        local greetd_landing_rc=0
+        display_manager_greetd_landing || greetd_landing_rc=$?
+        if (( greetd_landing_rc == GREETD_LANDING_REFUSAL_RC )); then
+            display_manager_greetd_emit_refusal_status
+            return "$GREETD_LANDING_REFUSAL_RC"
+        elif (( greetd_landing_rc != 0 )); then
+            fail "The greetd landing failed (exit code $greetd_landing_rc)."
+        fi
+    fi
+    # Round 54: the landing owns the staged-marker reset — the deferred and
+    # the template-instance records below are THIS landing's shape (a stale
+    # earlier marker never leaks into the next transition).
+    : > "${STATE_ROOT:-/run/boot-bitch}/dm-deferred-state" 2>/dev/null || true
 
     # Round 198 (the fail-closed-fast unit check): resolve BOTH units up
     # front — each a single bounded file test — so no step below can ever
@@ -16924,7 +19053,11 @@ display_manager_switch()
     # must never cost the walk-through its session.
     local autologin_user=""
     autologin_user="$(display_manager_autologin_user "$from_service" || true)"
-    if [[ -n "$autologin_user" ]]; then
+    if [[ -n "$autologin_user" ]] \
+        && [[ "$to_service" != gdm.service && "$to_service" != gdm3.service ]]; then
+        # Round 50: the carry-over never writes the autologin into the GDM
+        # (the rig-proven broken registration class — the stale automatic
+        # login bounces the login screen); the GDM landing disables it.
         if display_manager_write_autologin "$to_service" "$autologin_user"; then
             msg_log dm-autologin-preserved "$autologin_user" "$to_label"
         else
@@ -17012,6 +19145,20 @@ display_manager_switch()
     # ExecStart, never a DM map); a target that never had the file is left
     # alone.  An unresolvable ExecStart fails the switch closed.
     display_manager_x11_registry_reconcile "$unit" "$to_label"
+    # Round 50: the landing normalizes the to-DM's autologin (the GDM class
+    # disabled — the rig-proven broken session registration).
+    display_manager_landing_normalize_autologin "$to_service"
+    # Round 48 (the single-primary rule): after the chosen manager landed,
+    # every OTHER installed DM is purged (disabled + stopped — services,
+    # never packages).
+    display_manager_purge_others "$to_service"
+    # Round 52 (the staged completion): when the purge deferred the
+    # session-serving DM, the outcome names the completion point honestly —
+    # the switch takes effect at the next login/reboot.
+    if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+        && [[ "$to_service" != "$DISPLAY_MANAGER_SESSION_SERVING" ]]; then
+        msg_log dm-staged-completion "$to_label" "$(display_manager_label_for_service "$DISPLAY_MANAGER_SESSION_SERVING")"
+    fi
     msg_log dm-switch-complete "$from_label" "$to_label"
     msg_log dm-link-pass "$link"
     repair_change_status display changed
@@ -17026,11 +19173,1410 @@ display_manager_switch()
     DISPLAY_MANAGER_CACHED_CANDIDATES=()
     DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT=""
     DISPLAY_MANAGER_CACHED_VENDOR_SERVICE=""
+    DISPLAY_MANAGER_CACHED_CONFLICT=""
     # Round 200 (ITEM 3): the per-switch success marker re-emits the scoped
     # diagnostic sections from the fresh post-mutation state — the GUI
     # commits them while the walk-through stays open and the menu loop
     # returns to the next prompt afterwards (the re-run never ends it).
     display_manager_walkthrough_scoped_regen
+}
+
+# Round 58 (ITEM 4): the existing-partial cleanup — remove the User= line(s)
+# from every [Autologin] section that carries no Session= line (the
+# provably-broken half-write shape: SDDM can never use it).  Guarded: the
+# backup + the fingerprint + the sed rewrite + the post-write verification.
+# A complete [Autologin] section (User AND Session) is left untouched.
+display_manager_sddm_remove_partial_autologin()
+{
+    local conf="$TARGET_ROOT/etc/sddm.conf"
+    local tmp="" before="" after="" section="" removed=false
+    [[ -f "$conf" ]] || return 0
+    cp -a -- "$conf" "$SESSION_DIR/sddm-autologin-remove.bak" 2>/dev/null || true
+    before="$(repair_file_fingerprint "$conf")"
+    tmp="$(mktemp "$conf.tmp.XXXXXX" 2>/dev/null || true)"
+    [[ -n "$tmp" ]] || return 0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            '['*']')
+                section="${line#\[}"
+                section="${section%%\]*}"
+                printf '%s\n' "$line" >> "$tmp"
+                continue
+                ;;
+        esac
+        if [[ "$section" == Autologin ]] \
+            && [[ "$line" =~ ^[[:space:]]*User[[:space:]]*= ]] \
+            && ! grep -Eq '^[[:space:]]*Session[[:space:]]*=' "$conf"; then
+            removed=true
+            continue
+        fi
+        printf '%s\n' "$line" >> "$tmp"
+    done < "$conf"
+    [[ "$removed" == true ]] || { rm -f -- "$tmp"; return 0; }
+    chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$conf"
+    after="$(repair_file_fingerprint "$conf")"
+    [[ "$before" != "$after" ]] \
+        || fail "The SDDM autologin half-write removal did not change the configuration."
+    msg_log dm-autologin-partial-removed "SDDM"
+    return 0
+}
+
+# Round 58 (ITEM 1 — the §15.8 requirement): a greetd landing brings a
+# GRAPHICAL login screen — the greeter install + the config write are PART of
+# the switch/restore, never a follow-up.  When the target's greetd runs the
+# bundled agreety (the text login) or no greeter at all, the wlgreet package
+# (the documented graphical greetd greeter) is installed through the guarded
+# backends and /etc/greetd/config.toml's [default_session] command is
+# rewritten to wlgreet (the user line added when the section lacks one — the
+# documented `greeter` user).  The never-start rule stays absolute: the
+# offline configure only, the greeter runs at the next login/reboot.  A
+# greeter that cannot be installed fails closed with the named reason —
+# never a silent TTY landing.
+#
+# Round 78 (cycle plan §13.7 — the greetd-refusal re-prompt): the refusal is
+# COMPONENT-LEVEL — greetd itself is often installable (and installed); what
+# fails is the GRAPHICAL COMPONENT (the wlgreet greeter).  The landing
+# therefore no longer hard-fails on a refusal: it records the exact refusal
+# evidence (reason key + detail + the human sentence) and returns the
+# distinguished exit code below.  The interactive switch propagates that
+# refusal as a NON-fatal outcome (the truthful `unchanged|reason:…` status,
+# never a dangling pre-apply `changed`) and the walk-through re-displays the
+# candidate menu; the non-interactive restore converts the refusal back into
+# an honest stage failure with the same wording.
+GREETD_LANDING_REFUSAL_RC=42
+DISPLAY_MANAGER_GREETD_REFUSAL_REASON=""
+DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+DISPLAY_MANAGER_GREETD_REFUSAL_TEXT=""
+
+# Publish the truthful display outcome for a recorded greetd-landing refusal
+# (the round-78 refusal shape — the display configuration was not changed;
+# the walk-through keeps running and the menu re-prompts).
+display_manager_greetd_emit_refusal_status()
+{
+    case "${DISPLAY_MANAGER_GREETD_REFUSAL_REASON:-}" in
+        greetd-wlgreet-not-installable)
+            repair_change_status display "unchanged|$(reason greetd-wlgreet-not-installable "${DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL:-unknown}")"
+            ;;
+        greetd-wlgreet-not-installed)
+            repair_change_status display "unchanged|$(reason greetd-wlgreet-not-installed)"
+            ;;
+        greetd-no-session-shell)
+            repair_change_status display "unchanged|$(reason greetd-no-session-shell)"
+            ;;
+        greetd-config-missing)
+            repair_change_status display "unchanged|$(reason greetd-config-missing)"
+            ;;
+        greetd-config-write-failed)
+            repair_change_status display "unchanged|$(reason greetd-config-write-failed)"
+            ;;
+        greetd-config-write-verify-failed)
+            repair_change_status display "unchanged|$(reason greetd-config-write-verify-failed)"
+            ;;
+        greetd-gnome-wayland-unsupported)
+            repair_change_status display "unchanged|$(reason greetd-gnome-wayland-unsupported "${DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL:-unknown}")"
+            ;;
+        *)
+            repair_change_status display "unchanged|$(reason greetd-wlgreet-not-installable unknown)"
+            ;;
+    esac
+}
+
+display_manager_greetd_landing()
+{
+    local greeter="" avail=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_REASON=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_TEXT=""
+    greeter="$(greetd_configured_greeter || true)"
+    # Round 83c (FINDING 3): the already-configured read ALSO refuses to
+    # trust a BARE greeter client — the pre-fix tail-flush residue
+    # (`command = "wlgreet"`, no compositor) is broken and falls through to
+    # the single-path write like any missing greeter.
+    if [[ -n "$greeter" ]] && ! greetd_greeter_is_agreety_shell "$greeter" \
+        && ! greetd_greeter_is_bare_wlgreet "$greeter"; then
+        msg_log dm-greetd-greeter-already-configured "$greeter"
+    else
+        if [[ -n "$greeter" ]] && greetd_greeter_is_bare_wlgreet "$greeter"; then
+            msg_log dm-greetd-greeter-residue-heal "$greeter"
+        fi
+        avail="$(display_manager_repo_availability wlgreet)"
+        case "$avail" in
+            available*)
+                ;;
+            *)
+                DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-wlgreet-not-installable"
+                DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL="$avail"
+                DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The switch to greetd requires the wlgreet graphical greeter, but wlgreet is not installable in this scope (${avail}); refusing the greetd landing (the bundled agreety is a text login, not a graphical login screen)."
+                return "$GREETD_LANDING_REFUSAL_RC"
+                ;;
+        esac
+        if ! target_package_installed wlgreet; then
+            msg_log dm-greetd-greeter-install-plan
+            repair_change_status_force install-target-package changed
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg)
+                    safe_apt_install_packages "$(msg install-missing-greetd-greeter)" "Install the wlgreet graphical greeter" no wlgreet
+                    ;;
+                rpm)
+                    guarded_rpm_install_packages wlgreet \
+                        || fail "The guarded rpm install of wlgreet failed."
+                    ;;
+                pacman)
+                    guarded_pacman_install_packages wlgreet \
+                        || fail "The guarded pacman install of wlgreet failed."
+                    ;;
+                apk)
+                    guarded_apk_install_packages wlgreet \
+                        || fail "The guarded apk install of wlgreet failed."
+                    ;;
+                *)
+                    fail "No guarded package-manager backend can install wlgreet (detected: ${TARGET_PACKAGE_MANAGERS[*]:-none})."
+                    ;;
+            esac
+            DISPLAY_MANAGER_PACKAGE_WORK=true
+        fi
+        target_package_installed wlgreet || {
+            DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-wlgreet-not-installed"
+            DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+            DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="wlgreet is not installed after the guarded install; refusing the greetd landing."
+            return "$GREETD_LANDING_REFUSAL_RC"
+        }
+        display_manager_greetd_write_config || return $?
+        display_manager_greetd_greeter_groups "$(display_manager_greetd_user)"
+        msg_log dm-greetd-greeter-configured
+    fi
+    # Round 83b (ITEM 1 — the Ubuntu black session): the post-login session
+    # command write runs on EVERY landing path (the already-configured
+    # greeter included — the round-83b Ubuntu shape had the greeter
+    # configured but the stock wlgreet.toml `command = "sway"` still landed
+    # the login in a bare compositor).  A refusal here follows the round-78
+    # component-level shape (the distinguished code + the truthful unchanged
+    # status, never a stage ERROR).
+    display_manager_greetd_write_session_command || return $?
+    return 0
+}
+
+# Round 78 (cycle plan §13.7): the read-only refusal preflight for a greetd
+# landing — the same component-level decision the landing's head makes, with
+# NO mutation and NO log noise, so the interactive switch can decide the
+# refusal BEFORE the pre-apply change evidence is published (the round-195
+# refusal shape: a switch that refuses before mutating never prints
+# `display-switch: changed`).  Returns 0 when the landing can proceed (a
+# graphical greeter is already configured, or wlgreet is installable); on the
+# wlgreet-unavailable refusal it records the refusal evidence and returns the
+# distinguished refusal code.  greetd itself is never claimed unavailable
+# here — the failing COMPONENT is the wlgreet graphical greeter, with its
+# availability state.
+display_manager_greetd_landing_preflight()
+{
+    local greeter="" avail="" session_shell="" existing_cmd=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_REASON=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+    DISPLAY_MANAGER_GREETD_REFUSAL_TEXT=""
+    greeter="$(greetd_configured_greeter || true)"
+    if [[ -z "$greeter" ]] || greetd_greeter_is_agreety_shell "$greeter"; then
+        avail="$(display_manager_repo_availability wlgreet)"
+        case "$avail" in
+            available*) ;;
+            *)
+                DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-wlgreet-not-installable"
+                DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL="$avail"
+                DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The switch to greetd requires the wlgreet graphical greeter, but wlgreet is not installable in this scope (${avail}); refusing the greetd landing (the bundled agreety is a text login, not a graphical login screen)."
+                return "$GREETD_LANDING_REFUSAL_RC"
+                ;;
+        esac
+    fi
+    # Round 83b (ITEM 1/2): the no-session-shell refusal preflight — a greetd
+    # landing whose scope has no installed desktop session AND no existing
+    # resolvable post-login command refuses UP FRONT (the landing would leave
+    # a login that leads nowhere — the user's "otherwise not too useful"
+    # ruling).  The probe pair is read-only and mirrors the landing's
+    # decision exactly (never a per-distribution claim).
+    session_shell="$(display_manager_greetd_session_shell || true)"
+    existing_cmd="$(display_manager_greetd_post_login_command || true)"
+    if [[ -z "$session_shell" ]] && ! display_manager_greetd_command_resolvable "$existing_cmd"; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-no-session-shell"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="No installed desktop session was found in this scope (no session entries under /usr/share/wayland-sessions or /usr/share/xsessions); refusing the greetd landing (there would be no desktop shell to start after login)."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    # Round 83c (FINDING 4): the GNOME-Wayland-under-greetd refusal — the
+    # detected shell is the GNOME Wayland session, which cannot run under
+    # greetd's session worker (the login authenticates then bounces); refuse
+    # UP FRONT before any pre-apply evidence (the user's "otherwise not too
+    # useful" ruling — never a landing that leads to a session that cannot
+    # start).
+    if [[ -n "$session_shell" ]] && display_manager_greetd_shell_is_gnome_wayland "$session_shell"; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-gnome-wayland-unsupported"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL="$session_shell"
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The detected desktop session ($session_shell) is the GNOME Wayland session, which cannot run under greetd (greetd's session worker does not provide the logind session registration GNOME's Wayland session requires); refusing the greetd landing (a greetd login would lead to a session that fails to start)."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    return 0
+}
+
+# The greeter user the configured [default_session] names (the documented
+# wlgreet recipe runs the compositor as this user).  Prints the user value
+# from the config.toml's [default_session] section, or the documented
+# `greeter` fallback.
+display_manager_greetd_user()
+{
+    local conf="$TARGET_ROOT/etc/greetd/config.toml" section="" line="" value=""
+    [[ -f "$conf" ]] || { printf '%s\n' greeter; return 0; }
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            '['*']')
+                section="${line#\[}"
+                section="${section%%\]*}"
+                continue
+                ;;
+        esac
+        [[ "$section" == default_session ]] || continue
+        [[ "$line" =~ ^[[:space:]]*user[[:space:]]*= ]] || continue
+        value="${line#*=}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%${value##*[![:space:]]}}"
+        value="${value#\"}"
+        value="${value%\"}"
+        [[ -n "$value" ]] && { printf '%s\n' "$value"; return 0; }
+    done < "$conf"
+    printf '%s\n' greeter
+    return 0
+}
+
+# Round 58 (ITEM 1, the rig-proven recipe): the wlgreet compositor needs the
+# device-access groups on the greeter user (video for the DRM, input for the
+# libinput devices, render for the render nodes) — the Ubuntu wlgreet package
+# does NOT add them, and the greeter crashed without them ("greeter exited
+# without creating a session").  The host-mode landing adds them through the
+# guarded usermod; the target-mode landing edits the target's own /etc/group
+# (the guarded write, the member append).  A user already carrying a group is
+# left untouched.
+display_manager_greetd_greeter_groups()
+{
+    local greeter_user="$1" grp="" line="" tmp="" before="" after="" changed=false
+    [[ -n "$greeter_user" ]] || return 0
+    if (( RUNNING_HOST_MODE == 1 )); then
+        command -v usermod >/dev/null 2>&1 || return 0
+        for grp in video input render; do
+            if id -nG "$greeter_user" 2>/dev/null | tr ' ' '\n' | grep -Fxq "$grp"; then
+                continue
+            fi
+            if usermod -aG "$grp" "$greeter_user" 2>/dev/null; then
+                changed=true
+            fi
+        done
+        [[ "$changed" == true ]] && msg_log dm-greetd-greeter-groups "$greeter_user"
+        return 0
+    fi
+    local conf="$TARGET_ROOT/etc/group"
+    [[ -f "$conf" ]] || return 0
+    cp -a -- "$conf" "$SESSION_DIR/greetd-group.bak" 2>/dev/null || true
+    before="$(repair_file_fingerprint "$conf")"
+    tmp="$(mktemp "$conf.tmp.XXXXXX" 2>/dev/null || true)"
+    [[ -n "$tmp" ]] || return 0
+    awk -F: -v OFS=: -v u="$greeter_user" '
+        /^video:/ || /^input:/ || /^render:/ {
+            if ($NF != "" && ("," $NF ",") !~ "," u ",") {
+                $NF = $NF "," u
+            } else if ($NF == "") {
+                $NF = u
+            }
+        }
+        { print }
+    ' "$conf" > "$tmp"
+    chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$conf"
+    after="$(repair_file_fingerprint "$conf")"
+    [[ "$before" == "$after" ]] || msg_log dm-greetd-greeter-groups "$greeter_user"
+    return 0
+}
+
+# Rewrite the greetd greeter configuration: the [default_session] command is
+# set to the wlgreet compositor (the documented sway --config setup) and the
+# user line is added when the section lacks one (the documented `greeter`
+# user).  Guarded: the backup + the fingerprint + the atomic temp+mv write +
+# the post-write verification.  Round 83b (ITEM 3): the rewrite is ONE
+# single-path pass — the pre-round-83b shape had TWO section-flush branches
+# that DISAGREED (the mid-file flush wrote the sway compositor shape, the
+# EOF/tail flush wrote a bare `command = "wlgreet"`), so a config.toml whose
+# [default_session] is the LAST section (the Debian-family stock shape)
+# landed the wrong command, the post-write verify (which greps the compositor
+# shape) failed AFTER the file was already replaced, and the next run's
+# preflight then read that landed-but-wrong `wlgreet` line as an
+# already-configured greeter.  Every failure now routes through the round-78
+# refusal code (the distinguished exit + the truthful unchanged status) —
+# never the stage ERROR.
+display_manager_greetd_write_config()
+{
+    local conf="$TARGET_ROOT/etc/greetd/config.toml"
+    local tmp="" before="" after="" line="" section="" saw_cmd=false saw_usr=false
+    local -a out=()
+    if [[ ! -f "$conf" ]]; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-missing"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The greetd configuration /etc/greetd/config.toml is missing from the target; refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    cp -a -- "$conf" "$SESSION_DIR/greetd-config.toml.bak" 2>/dev/null || true
+    before="$(repair_file_fingerprint "$conf")"
+    tmp="$(mktemp "$conf.tmp.XXXXXX" 2>/dev/null || true)"
+    if [[ -z "$tmp" ]]; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="Unable to create a temporary file beside the greetd configuration; it was not changed, refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            '['*']')
+                # The section ends here: ensure the user line exists BEFORE
+                # the next header (the single-path rule — never duplicated).
+                if [[ "$section" == default_session && "$saw_usr" == false ]]; then
+                    out+=('user = "greeter"')
+                fi
+                section="${line#\[}"
+                section="${section%%\]*}"
+                saw_cmd=false; saw_usr=false
+                out+=("$line")
+                continue
+                ;;
+        esac
+        if [[ "$section" == default_session ]]; then
+            if [[ "$line" =~ ^[[:space:]]*command[[:space:]]*= ]] && [[ "$saw_cmd" == false ]]; then
+                out+=('command = "sway --config /etc/greetd/sway-config"')
+                saw_cmd=true
+            else
+                out+=("$line")
+                [[ "$line" =~ ^[[:space:]]*user[[:space:]]*= ]] && saw_usr=true
+            fi
+        else
+            out+=("$line")
+        fi
+    done < "$conf"
+    if [[ "$section" == default_session ]]; then
+        [[ "$saw_cmd" == false ]] && out+=('command = "sway --config /etc/greetd/sway-config"')
+        [[ "$saw_usr" == false ]] && out+=('user = "greeter"')
+    fi
+    printf '%s\n' "${out[@]}" > "$tmp"
+    chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$conf"
+    after="$(repair_file_fingerprint "$conf")"
+    if [[ "$before" == "$after" ]]; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The greetd configuration did not change after the greeter rewrite; refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    if ! grep -Eq '^[[:space:]]*command[[:space:]]*=[[:space:]]*"sway --config /etc/greetd/sway-config"' "$conf"; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-verify-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The greetd configuration does not carry the wlgreet greeter command after the write; refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    return 0
+}
+
+# Round 83b (ITEM 1): the detected desktop session shell for the greetd
+# post-login command — the Exec of the session the login should land in,
+# derived from the scope's own installed session entries
+# (/usr/share/wayland-sessions + /usr/share/xsessions), never a hardcoded
+# map.  The selection ladder: (1) the entry whose stem/Name/Exec matches the
+# single-source installed-desktop-environment fact (the round-202 detection
+# — case-insensitive, either direction), (2) the scope's exactly-one entry.
+# Anything else (multiple entries with no desktop match) derives NOTHING —
+# the honest 0-for-no-result contract — and the caller keeps the wlgreet
+# session picker.  An entry whose Exec does not resolve inside the scope is
+# skipped (the honest usable-shell rule).  Prints the Exec or nothing;
+# always returns 0.
+display_manager_greetd_session_shell()
+{
+    local f="" stem="" name_line="" exec_line="" exec_cmd="" token="" fact_token="" first=""
+    local -a entries=() facts=()
+    for f in "$TARGET_ROOT"/usr/share/wayland-sessions/*.desktop \
+                "$TARGET_ROOT"/usr/share/xsessions/*.desktop; do
+        [[ -f "$f" ]] || continue
+        stem="$(basename "$f" .desktop)"
+        [[ " ${entries[*]} " == *" $stem "* ]] && continue
+        entries+=("$stem")
+    done
+    ((${#entries[@]} > 0)) || return 0
+    installed_desktop_environment >/dev/null 2>&1 || true
+    if [[ -n "${INSTALLED_DESKTOP_FACT:-}" ]]; then
+        while IFS= read -r token; do
+            [[ -n "$token" ]] || continue
+            token="${token%% (*}"
+            token="${token#"${token%%[![:space:]]*}"}"
+            token="${token%${token##*[![:space:]]}}"
+            token="${token//,/}"
+            ((${#token} >= 3)) && facts+=("$token")
+        done < <(printf '%s\n' "${INSTALLED_DESKTOP_FACT}" | tr ',' '\n')
+    fi
+    for stem in "${entries[@]}"; do
+        f="$TARGET_ROOT/usr/share/wayland-sessions/$stem.desktop"
+        [[ -f "$f" ]] || f="$TARGET_ROOT/usr/share/xsessions/$stem.desktop"
+        [[ -f "$f" ]] || continue
+        name_line="$(grep -m1 '^[[:space:]]*Name[[:space:]]*=' "$f" 2>/dev/null | sed 's/^[[:space:]]*Name[[:space:]]*=//' | tr -d '\r' || true)"
+        exec_line="$(grep -m1 '^[[:space:]]*Exec[[:space:]]*=' "$f" 2>/dev/null | sed 's/^[[:space:]]*Exec[[:space:]]*=//' | tr -d '\r' || true)"
+        exec_cmd="$exec_line"
+        while [[ "$exec_cmd" == *" %"* ]]; do
+            exec_cmd="${exec_cmd% %*}"
+        done
+        [[ -n "$exec_cmd" ]] || continue
+        # The match: any desktop-fact token appears in the stem/Name/Exec, or
+        # the stem appears in the fact (case-insensitive, the legacy-safe
+        # grep -iF — never the bash-4 lowercase expansion).
+        local matched=false
+        for fact_token in "${facts[@]:-}"; do
+            if printf '%s\n' "$stem $name_line $exec_cmd" | grep -qiF -- "$fact_token" \
+                || printf '%s\n' "${INSTALLED_DESKTOP_FACT}" | grep -qiF -- "$stem"; then
+                matched=true
+                break
+            fi
+        done
+        if [[ "$matched" == false && ${#entries[@]} -ne 1 ]]; then
+            continue
+        fi
+        read -r -a _greetd_tokens <<<"$exec_cmd"
+        first="${_greetd_tokens[0]:-}"
+        [[ -n "$first" ]] || continue
+        if [[ "$first" != /* ]]; then
+            local dir="" resolved=false
+            for dir in /usr/bin /usr/local/bin /bin /usr/sbin /sbin; do
+                if target_has_path "$dir/$first"; then
+                    resolved=true
+                    break
+                fi
+            done
+            [[ "$resolved" == true ]] || continue
+        elif ! target_has_path "$first"; then
+            continue
+        fi
+        printf '%s\n' "$exec_cmd"
+        return 0
+    done
+    return 0
+}
+
+# Round 83c (FINDING 4 — the GNOME-under-greetd honest handling): is the
+# DETECTED session shell the GNOME Wayland session?  Evidence-driven from
+# the scope's own session entries: the shell (the Exec
+# display_manager_greetd_session_shell resolved) matches a wayland-sessions
+# entry whose Exec's first token is gnome-session (or whose DesktopNames
+# names the GNOME family).  GNOME's Wayland session cannot run under
+# greetd's session worker (the Ubuntu rig proof: gnome-shell/mutter "Failed
+# to find any matching session" — greetd's worker does not provide the
+# logind/pam_systemd session registration gnome-shell's Wayland backend
+# requires; the login authenticates then bounces back to the greeter).  A
+# shell resolved from an xsessions entry is the X11 class and never matches.
+# Read-only; returns 0/1.
+display_manager_greetd_shell_is_gnome_wayland()
+{
+    local shell="$1" f="" exec_line="" names_line="" first=""
+    [[ -n "$shell" ]] || return 1
+    for f in "$TARGET_ROOT"/usr/share/wayland-sessions/*.desktop; do
+        [[ -f "$f" ]] || continue
+        exec_line="$(grep -m1 '^[[:space:]]*Exec[[:space:]]*=' "$f" 2>/dev/null \
+            | sed 's/^[[:space:]]*Exec[[:space:]]*=//' | tr -d '\r' || true)"
+        while [[ "$exec_line" == *" %"* ]]; do
+            exec_line="${exec_line% %*}"
+        done
+        [[ -n "$exec_line" && "$exec_line" == "$shell" ]] || continue
+        names_line="$(grep -m1 '^[[:space:]]*DesktopNames[[:space:]]*=' "$f" 2>/dev/null \
+            | sed 's/^[[:space:]]*DesktopNames[[:space:]]*=//' | tr -d '\r' || true)"
+        read -r -a _greetd_tokens <<<"$exec_line"
+        first="${_greetd_tokens[0]:-}"
+        [[ "${first##*/}" == gnome-session ]] && return 0
+        [[ "$names_line" == *GNOME* || "$names_line" == *gnome* ]] && return 0
+        return 1
+    done
+    return 1
+}
+
+# Round 83b (ITEM 1): the existing wlgreet post-login command — the
+# TOP-LEVEL `command` key of /etc/greetd/wlgreet.toml (the session command
+# wlgreet runs after a successful login; the Ubuntu black-session evidence:
+# the stock Debian-family file ships `command = "sway"`).  Prints the
+# trimmed unquoted value or nothing; always returns 0.
+display_manager_greetd_post_login_command()
+{
+    local conf="$TARGET_ROOT/etc/greetd/wlgreet.toml" line="" value=""
+    [[ -f "$conf" ]] || return 0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        [[ "$line" == '['*']' ]] && return 0
+        [[ "$line" =~ ^[[:space:]]*command[[:space:]]*= ]] || continue
+        value="${line#*=}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%${value##*[![:space:]]}}"
+        value="${value#\"}"
+        value="${value%\"}"
+        value="${value#\'}"
+        value="${value%\'}"
+        [[ -n "$value" ]] && printf '%s\n' "$value"
+        return 0
+    done < "$conf"
+    return 0
+}
+
+# Round 83b (ITEM 1): does a post-login command resolve inside the scope?
+# The first token must be an existing binary in the target (the same
+# usable-shell honesty as the session-shell probe).  Returns 0/1.
+display_manager_greetd_command_resolvable()
+{
+    local cmd="$1" first="" dir=""
+    [[ -n "$cmd" ]] || return 1
+    read -r -a _greetd_tokens <<<"$cmd"
+    first="${_greetd_tokens[0]:-}"
+    [[ -n "$first" ]] || return 1
+    if [[ "$first" == /* ]]; then
+        target_has_path "$first" && return 0
+        return 1
+    fi
+    for dir in /usr/bin /usr/local/bin /bin /usr/sbin /sbin; do
+        target_has_path "$dir/$first" && return 0
+    done
+    return 1
+}
+
+# Round 83b (ITEM 1/2): the post-login session command write.  The landing's
+# second half: the login must land in the DETECTED desktop shell — never a
+# bare compositor (the Ubuntu black session: the greeter side was configured
+# but the stock wlgreet.toml `command = "sway"` started a bare sway).  The
+# guarded write rewrites wlgreet.toml's top-level command to the detected
+# shell when one exists; a missing file or a missing command key keeps the
+# wlgreet session picker (already useful); no installed session shell AND no
+# resolvable existing command refuses with the component-level reason (the
+# user's "otherwise not too useful" ruling — never a login that leads
+# nowhere).  Offline-only: no service is ever started or stopped here (the
+# never-start rule; the write applies at the next login).
+display_manager_greetd_write_session_command()
+{
+    local conf="$TARGET_ROOT/etc/greetd/wlgreet.toml"
+    local session_shell="" existing="" tmp="" before="" after="" line=""
+    local saw_cmd=false
+    local -a out=()
+    session_shell="$(display_manager_greetd_session_shell || true)"
+    existing="$(display_manager_greetd_post_login_command || true)"
+    if [[ -z "$session_shell" ]]; then
+        if [[ -n "$existing" ]] && display_manager_greetd_command_resolvable "$existing"; then
+            msg_log dm-greetd-session-custom-kept "$existing"
+            return 0
+        fi
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-no-session-shell"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="No installed desktop session was found in this scope (no session entries under /usr/share/wayland-sessions or /usr/share/xsessions); refusing the greetd landing (there would be no desktop shell to start after login)."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    # Round 83c (FINDING 4): the landing enforces the same GNOME-Wayland
+    # refusal as the preflight — a session command that cannot start is
+    # never written (the "otherwise not too useful" ruling; the existing
+    # wlgreet.toml line is left unchanged with the honest reason).
+    if display_manager_greetd_shell_is_gnome_wayland "$session_shell"; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-gnome-wayland-unsupported"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL="$session_shell"
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The detected desktop session ($session_shell) is the GNOME Wayland session, which cannot run under greetd (greetd's session worker does not provide the logind session registration GNOME's Wayland session requires); refusing the greetd landing (a greetd login would lead to a session that fails to start)."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    if [[ ! -f "$conf" ]] || [[ -z "$existing" ]]; then
+        msg_log dm-greetd-session-picker
+        return 0
+    fi
+    if [[ "$existing" == "$session_shell" ]]; then
+        msg_log dm-greetd-session-already "$session_shell"
+        return 0
+    fi
+    cp -a -- "$conf" "$SESSION_DIR/greetd-wlgreet.toml.bak" 2>/dev/null || true
+    before="$(repair_file_fingerprint "$conf")"
+    tmp="$(mktemp "$conf.tmp.XXXXXX" 2>/dev/null || true)"
+    if [[ -z "$tmp" ]]; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="Unable to create a temporary file beside the wlgreet configuration; it was not changed, refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [[ "$line" == '['*']' ]]; then
+            out+=("$line")
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*command[[:space:]]*= ]] && [[ "$saw_cmd" == false ]]; then
+            out+=("command = \"$session_shell\"")
+            saw_cmd=true
+        else
+            out+=("$line")
+        fi
+    done < "$conf"
+    if [[ "$saw_cmd" == false ]]; then
+        rm -f -- "$tmp"
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The wlgreet configuration carries no top-level command line to rewrite; it was not changed, refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    printf '%s\n' "${out[@]}" > "$tmp"
+    chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$conf"
+    after="$(repair_file_fingerprint "$conf")"
+    if [[ "$before" == "$after" ]]; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The wlgreet configuration did not change after the session-command rewrite; refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    if ! grep -Fq "command = \"$session_shell\"" "$conf"; then
+        DISPLAY_MANAGER_GREETD_REFUSAL_REASON="greetd-config-write-verify-failed"
+        DISPLAY_MANAGER_GREETD_REFUSAL_DETAIL=""
+        DISPLAY_MANAGER_GREETD_REFUSAL_TEXT="The wlgreet configuration does not carry the desktop session command after the write; refusing the greetd landing."
+        return "$GREETD_LANDING_REFUSAL_RC"
+    fi
+    msg_log dm-greetd-session-configured "$session_shell"
+    return 0
+}
+
+# Round 39 (the user's Fedora finding): resolve the display-manager CONFLICT
+# (the conflicting-DM evidence) — the walk-through's conflict case.  The
+# resolution target is the vendor-derived default when one was derived
+# ($1), else the configured decision manager (the restore's own honest
+# fallback).  The stray set is RE-PROBED at the mutation time (the live
+# action set — the menu renders the cached line, the actions run on the
+# fresh state, the round-196 re-derivation pattern).  One terminal CONFIRM
+# (120 s) names the from→to pair and the exact actions; a decline reports
+# unchanged|reason:user-declined and returns 1 so the level-1 menu
+# re-prompts.  The guarded dance on accept:
+#   1. disable each stray ENABLED unit that is not the target (offline,
+#      systemctl --root, the round-192 order — the disables BEFORE the
+#      target's enable; the static-unit exception mirrors the switch);
+#   2. stop each stray RUNNING daemon that is not the target (the running
+#      host only): its template instances first (the ly class), then the
+#      exact-name pkill fallback for a stray started without a unit.  The
+#      decision manager's own daemon — the one serving the session — is
+#      never stopped here: the never-start rule stays absolute and the
+#      session survives until the next graphical restart;
+#   3. restore_display_manager_to "$target" — the existing guarded dance
+#      (the graphical.target default, the enable, the alias repoint, the
+#      post-verify, the autologin preservation, the X11 registry);
+#   4. the change status + the outcome message + the at-marker scoped
+#      regeneration (the round-200 contract).
+display_manager_resolve_conflict()
+{
+    local target_service="${1:-}" current_label="${2:-}"
+    local target_label="" target_source="" stray_unit stray_svc stray_bin
+    local stray_inst="" inst_base=""
+    local from_names="" prompt_text="" answer="" any_stray=false
+
+    [[ -n "$target_service" ]] || target_service="${DISPLAY_MANAGER_SERVICE:-}"
+    [[ -n "$target_service" ]] || fail "No display manager was resolved to restore the conflict."
+    # Round 50 (the user's re-test + the marker addition): the target comes
+    # from the evidence ladder — the last-successful-login DM, then the
+    # configured/in-use DM (the diagnostic's decision evidence), then the
+    # vendor default — each fallback named honestly in the CONFIRM.  The
+    # caller's argument is only the final fallback when the ladder fails.
+    local ladder_target="" ladder_source=""
+    if IFS=$'\t' read -r ladder_target ladder_source < <(display_manager_resolution_target 2>/dev/null); then
+        if [[ -n "$ladder_target" ]]; then
+            target_service="$ladder_target"
+            target_source="$ladder_source"
+        fi
+    fi
+    [[ -n "$target_source" ]] \
+        || target_source="the configured and currently used display manager (the diagnostic's decision evidence)"
+    target_label="$(display_manager_label_for_service "$target_service")"
+
+    # The live action set (the cached line is the rendered evidence; the
+    # actions run on the fresh state).  A clean re-probe means the conflict
+    # resolved itself between the diagnostic and the repair: fall back to
+    # the plain restore (never a fake conflict mutation).
+    display_manager_conflict_evidence
+    if [[ -z "$DISPLAY_MANAGER_CONFLICT_LINE" ]]; then
+        msg_log dm-conflict-gone
+        display_manager_restore_default
+        return 0
+    fi
+
+    from_names="$(display_manager_conflict_from_names "$target_service")"
+    # Round 50: the live-session-serving DM (the never-kill rule) — probed
+    # once, consumed by the stray-stop loop below.
+    DISPLAY_MANAGER_SESSION_SERVING="$(display_manager_session_serving_service 2>/dev/null || true)"
+
+    prompt_text="Resolve the display manager conflict from ${from_names} to ${target_label}?"$'\n'
+    prompt_text+="Found: $DISPLAY_MANAGER_CONFLICT_LINE."$'\n'
+    prompt_text+="Plan: disable the conflicting unit(s), stop the stray display-manager process(es), enable ${target_label} (${target_source}) and repoint display-manager.service — offline; no display manager is started here."$'\n'
+    prompt_text+="The single-primary rule: every other installed display manager is then disabled and stopped (services only — no packages are removed), leaving ${target_label} the only primary."$'\n'
+    prompt_text+="Answer: type y or yes to proceed; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to decline and leave the current state unchanged."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        repair_change_status display "unchanged|$(reason user-declined)"
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) ;;
+        *)
+            repair_change_status display "unchanged|$(reason user-declined)"
+            return 1 ;;
+    esac
+
+    # 1. The stray ENABLED units (never the target): the guarded offline
+    # disable, the round-192 order (the disables before the target's enable).
+    for stray_unit in "${DISPLAY_MANAGER_CONFLICT_STRAY_UNITS[@]}"; do
+        [[ -n "$stray_unit" && "$stray_unit" != "$target_service" ]] || continue
+        mutating_cancel_checkpoint
+        local stray_unit_rel=""
+        stray_unit_rel="$(display_manager_unit_rel "$stray_unit" 2>/dev/null || true)"
+        msg_log dm-conflict-disable "$(display_manager_label_for_service "$stray_unit")"
+        if ! systemctl --root="$TARGET_ROOT" disable "$stray_unit" 2>&1 | tee -a "$SESSION_LOG" >/dev/null; then
+            if [[ -n "$stray_unit_rel" ]] && grep -Eq '^\[Install\][[:space:]]*$' "$TARGET_ROOT$stray_unit_rel"; then
+                fail "Unable to disable the conflicting display-manager unit $stray_unit."
+            fi
+            msg_log dm-static-unit "$stray_unit"
+        fi
+        any_stray=true
+    done
+
+    # 1a. Round 45 (the user's Fedora finding): the stray TEMPLATE
+    # INSTANCES (the ly@tty1/ly@tty2 class the round-44 resolution left
+    # enabled + running) — the template-aware disable (the per-instance
+    # names, never the bare template) + the stop on the running host.  The
+    # reversion contract mirrors it: a revert re-enables the instances the
+    # pre-state had enabled.
+    for stray_inst in "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]}"; do
+        [[ -n "$stray_inst" ]] || continue
+        inst_base="${stray_inst%@*}"
+        [[ "$inst_base.service" == "$target_service" ]] && continue
+        mutating_cancel_checkpoint
+        msg_log dm-conflict-instance-disable "$stray_inst"
+        if ! systemctl --root="$TARGET_ROOT" disable "$stray_inst" 2>&1 | tee -a "$SESSION_LOG" >/dev/null; then
+            fail "Unable to disable the conflicting display-manager template instance $stray_inst."
+        fi
+        if (( RUNNING_HOST_MODE == 1 )); then
+            systemctl stop "$stray_inst" 2>/dev/null || true
+            msg_log dm-conflict-instance-stopped "$stray_inst"
+        fi
+        any_stray=true
+    done
+
+    # 2. The stray RUNNING daemons (the running host only, never the
+    # target): the template instances first (the ly class — a TUI manager
+    # started through ly@<tty>), then the exact-name pkill fallback (the
+    # user's Fedora shape: bare ly processes with no unit at all).  The
+    # decision manager's own daemon was already excluded by the probe.
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for stray_svc in "${DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING[@]}"; do
+            [[ -n "$stray_svc" && "$stray_svc" != "$target_service" ]] || continue
+            mutating_cancel_checkpoint
+            stray_bin="${stray_svc%.service}"
+            # Round 50 (the never-kill-your-own-session rule): a stray whose
+            # daemon serves the LIVE logind session is never stopped — the
+            # offline disable stands, the stop is deferred to the reboot.
+            # Round 83c (FINDING 1): the same §15.6 alias-pair collapse as
+            # the purge — the session-serving daemon is deferred under its
+            # alias name too (never a byte-level compare).
+            if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+                && display_manager_services_same_manager "$stray_svc" "$DISPLAY_MANAGER_SESSION_SERVING"; then
+                msg_log dm-conflict-session-deferred "$(display_manager_label_for_service "$stray_svc")"
+                any_stray=true
+                continue
+            fi
+            # Round 48: BOTH shapes are stopped — the instance glob AND the
+            # bare daemon (a non-matching glob exits 0 and must never skip
+            # the pkill; the either-or form left the bare daemons alive).
+            local conflict_stopped=false
+            systemctl stop "${stray_bin}@*.service" 2>/dev/null && conflict_stopped=true || true
+            if command -v pkill >/dev/null 2>&1 && pkill -x -- "$stray_bin" 2>/dev/null; then
+                conflict_stopped=true
+            fi
+            if [[ "$conflict_stopped" == true ]]; then
+                msg_log dm-conflict-stopped "$stray_bin"
+            else
+                msg_log dm-conflict-stop-note "$stray_bin"
+            fi
+            any_stray=true
+        done
+    fi
+
+    # The pre-apply change evidence for the stray mutations themselves (a
+    # cancel/failure mid-dance still carries display-switch: changed — the
+    # round-195 pattern; the restore body below contributes its own
+    # evidence when it mutates).
+    [[ "$any_stray" == true ]] && repair_change_status_force display-switch changed
+
+    # 3. The restore-to-target dance (the enable + the alias + the
+    # post-verify + the autologin preservation + the X11 registry).
+    restore_display_manager_to "$target_service"
+    # Round 48 (the single-primary rule): every OTHER installed DM is
+    # purged — the enabled units, the template instances and the running
+    # daemons (services, never packages).
+    display_manager_purge_others "$target_service"
+    # Round 52 (the staged completion): the resolution's outcome names the
+    # completion point when the session-serving DM was deferred.
+    if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]]         && [[ "$target_service" != "$DISPLAY_MANAGER_SESSION_SERVING" ]]; then
+        msg_log dm-staged-completion "$target_label" "$(display_manager_label_for_service "$DISPLAY_MANAGER_SESSION_SERVING")"
+    fi
+
+    # 4. The outcome + the at-marker scoped regeneration (the changed-restore
+    # pattern; the round-196 cache-drop so the re-displayed Found block
+    # re-derives from the fresh state).
+    repair_change_status display changed
+    msg_log dm-conflict-resolved "$target_label"
+    DISPLAY_MANAGER_CACHED_PARSED=0
+    DISPLAY_MANAGER_CACHED_CANDIDATES=()
+    DISPLAY_MANAGER_CACHED_VENDOR_DEFAULT=""
+    DISPLAY_MANAGER_CACHED_VENDOR_SERVICE=""
+    DISPLAY_MANAGER_CACHED_CONFLICT=""
+    display_manager_walkthrough_scoped_regen
+    return 0
+}
+
+# Round 39: the human from-side names for the conflict CONFIRM — the stray
+# enabled units and the stray running daemons joined with "and" (the Fedora
+# shape: "LightDM (enabled unit) and the running ly process(es)").
+display_manager_conflict_from_names()
+{
+    local target_service="$1" stray names=""
+    for stray in "${DISPLAY_MANAGER_CONFLICT_STRAY_UNITS[@]}"; do
+        [[ -n "$stray" && "$stray" != "$target_service" ]] || continue
+        names="${names:+$names and }$(display_manager_label_for_service "$stray") (enabled unit)"
+    done
+    for stray in "${DISPLAY_MANAGER_CONFLICT_STRAY_RUNNING[@]}"; do
+        [[ -n "$stray" && "$stray" != "$target_service" ]] || continue
+        names="${names:+$names and }the running ${stray%.service} process(es)"
+    done
+    # Round 45: the stray template instances (the ly@tty1/ly@tty2 class).
+    if ((${#DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[@]} > 0)); then
+        local inst_names=""
+        inst_names="$(IFS=', '; printf '%s' "${DISPLAY_MANAGER_CONFLICT_STRAY_INSTANCES[*]}")"
+        names="${names:+$names and }the template instance(s) $inst_names"
+    fi
+    [[ -n "$names" ]] || names="the conflicting display manager"
+    printf '%s\n' "$names"
+}
+
+# Round 48 (the user's Fedora re-test — the single-primary rule): after a
+# walk-through action lands a chosen display manager, EVERY other installed
+# DM is purged — SERVICES, never packages (no package removal): the enabled
+# units and template instances are disabled (offline), the running
+# daemons/instances are stopped (the running host only — the never-start
+# rule stays absolute; nothing is started in the chroot), and the
+# socket-activated shape is disabled too.  The chosen DM stays enabled; its
+# gdm/gdm3 alias sibling is ONE manager and is never a purge target (the
+# round-46 canonicalization).  The pre-state is recorded under the session
+# dir so the reversion contract mirrors it (a reverse walk-through
+# re-enables what the pre-state had enabled).
+display_manager_purge_others()
+{
+    local chosen="$1" chosen_base="${1%.service}"
+    local svc bin enabled_state
+    local inst_link inst_link_base inst_re=""
+    local purge_unit_rel=""
+    local -a purge_units=() purge_instances=() purge_running=() purge_sockets=()
+    local purge_state_file="${SESSION_DIR:-/run/boot-bitch}/dm-purge-state"
+
+    [[ -n "$chosen" ]] || return 0
+    # Round 50: the live-session-serving DM (the never-kill rule) — probed
+    # once per purge, consumed by the running-stop loop below.
+    DISPLAY_MANAGER_SESSION_SERVING="$(display_manager_session_serving_service 2>/dev/null || true)"
+    for svc in sddm.service gdm.service gdm3.service lightdm.service greetd.service ly.service; do
+        [[ "$svc" == "$chosen" ]] && continue
+        if [[ "$chosen" == gdm.service || "$chosen" == gdm3.service ]] \
+            && [[ "$svc" == gdm.service || "$svc" == gdm3.service ]]; then
+            continue
+        fi
+        enabled_state="$(systemctl --root="$TARGET_ROOT" is-enabled "$svc" 2>/dev/null || true)"
+        case "$enabled_state" in
+            enabled|enabled-runtime|indirect) purge_units+=("$svc") ;;
+        esac
+        enabled_state="$(systemctl --root="$TARGET_ROOT" is-enabled "${svc%.service}.socket" 2>/dev/null || true)"
+        case "$enabled_state" in
+            enabled|enabled-runtime|indirect) purge_sockets+=("${svc%.service}.socket") ;;
+        esac
+        if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+            && systemctl is-active --quiet "${svc%.service}.socket" 2>/dev/null; then
+            [[ " ${purge_sockets[*]} " == *" ${svc%.service}.socket "* ]] \
+                || purge_sockets+=("${svc%.service}.socket")
+        fi
+        if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+            && command -v pgrep >/dev/null 2>&1; then
+            bin="${svc%.service}"
+            pgrep -x "$bin" >/dev/null 2>&1 && purge_running+=("$svc")
+        fi
+    done
+    # The enabled template instances (the wants-symlink find — any scope) of
+    # every non-chosen base, plus the running host's loaded instances.
+    inst_re='^(sddm|gdm|gdm3|lightdm|greetd|ly)@[^.]+\.service$'
+    while IFS= read -r -d '' inst_link; do
+        inst_link_base="$(basename "$inst_link" 2>/dev/null || true)"
+        [[ "$inst_link_base" =~ $inst_re ]] || continue
+        [[ "$inst_link_base" == "${chosen_base}@"* ]] && continue
+        if [[ "$chosen" == gdm.service || "$chosen" == gdm3.service ]] \
+            && [[ "$inst_link_base" == gdm@* || "$inst_link_base" == gdm3@* ]]; then
+            continue
+        fi
+        [[ " ${purge_instances[*]} " == *" $inst_link_base "* ]] \
+            || purge_instances+=("$inst_link_base")
+    done < <(find "$TARGET_ROOT/etc/systemd/system" -mindepth 2 -maxdepth 2 \
+        -type l -name '*.service' -print0 2>/dev/null)
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+        && command -v systemctl >/dev/null 2>&1; then
+        local loaded_inst=""
+        while IFS= read -r loaded_inst; do
+            [[ -n "$loaded_inst" && "$loaded_inst" =~ $inst_re ]] || continue
+            [[ "$loaded_inst" == "${chosen_base}@"* ]] && continue
+            if [[ "$chosen" == gdm.service || "$chosen" == gdm3.service ]] \
+                && [[ "$loaded_inst" == gdm@* || "$loaded_inst" == gdm3@* ]]; then
+                continue
+            fi
+            [[ " ${purge_instances[*]} " == *" $loaded_inst "* ]] \
+                || purge_instances+=("$loaded_inst")
+        done < <(systemctl list-units --all --type=service --no-legend \
+            'sddm@*' 'gdm@*' 'gdm3@*' 'lightdm@*' 'greetd@*' 'ly@*' 2>/dev/null \
+            | awk '{print $1}')
+    fi
+    if ((${#purge_units[@]} == 0 && ${#purge_instances[@]} == 0 \
+        && ${#purge_running[@]} == 0 && ${#purge_sockets[@]} == 0)); then
+        return 0
+    fi
+    # The reversion contract: record the pre-state the purge acts on (a
+    # reverse walk-through re-enables what the pre-state had enabled).
+    if [[ -n "${SESSION_DIR:-}" ]]; then
+        mkdir -p "$SESSION_DIR" 2>/dev/null || true
+        : > "$purge_state_file" 2>/dev/null || true
+        # The reversion contract: record the pre-state the purge acts on (a
+        # reverse walk-through re-enables what the pre-state had enabled).
+        for svc in "${purge_units[@]}"; do
+            printf 'unit %s\n' "$svc" >> "$purge_state_file" 2>/dev/null || true
+        done
+        for inst_link_base in "${purge_instances[@]}"; do
+            printf 'instance %s\n' "$inst_link_base" >> "$purge_state_file" 2>/dev/null || true
+        done
+        for svc in "${purge_running[@]}"; do
+            printf 'running %s\n' "$svc" >> "$purge_state_file" 2>/dev/null || true
+        done
+        for svc in "${purge_sockets[@]}"; do
+            printf 'socket %s\n' "$svc" >> "$purge_state_file" 2>/dev/null || true
+        done
+        # Round 52 (the deferred-transition evidence model): the
+        # session-serving DM whose stop is DEFERRED is recorded with its own
+        # marker — the conflict evidence's suppression discriminator (the
+        # tool's own staged state, never a heuristic).  The marker lives at
+        # the PERSISTENT state root (the session dir is deleted at the
+        # helper's exit — the later diagnostic must still see the deferral).
+        if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+            && [[ "$chosen" != "$DISPLAY_MANAGER_SESSION_SERVING" ]]; then
+            # The append joins the landing's earlier staged-instance record
+            # (the round-54 template-shape) — the landing's own truncate at
+            # its mutation start owns the marker's reset.
+            printf 'deferred %s\n' "$DISPLAY_MANAGER_SESSION_SERVING" \
+                >> "${STATE_ROOT:-/run/boot-bitch}/dm-deferred-state" 2>/dev/null || true
+        fi
+    fi
+    # Round 48 (the socket-respawn shape): the sockets are stopped AND
+    # disabled FIRST — a killed daemon respawns from its socket (the Fedora
+    # greetd/sddm shape: the pkill'd greeter came right back until the
+    # socket was gone), so the socket must die before the daemons.
+    for svc in "${purge_sockets[@]}"; do
+        mutating_cancel_checkpoint
+        msg_log dm-purge-socket-disable "$svc"
+        if (( RUNNING_HOST_MODE == 1 )); then
+            systemctl stop "$svc" 2>/dev/null || true
+        fi
+        if ! systemctl --root="$TARGET_ROOT" disable "$svc" 2>&1 | tee -a "$SESSION_LOG" >/dev/null; then
+            msg_log dm-static-unit "$svc"
+        fi
+    done
+    for svc in "${purge_units[@]}"; do
+        mutating_cancel_checkpoint
+        msg_log dm-purge-disable "$(display_manager_label_for_service "$svc")"
+        purge_unit_rel="$(display_manager_unit_rel "$svc" 2>/dev/null || true)"
+        if ! systemctl --root="$TARGET_ROOT" disable "$svc" 2>&1 | tee -a "$SESSION_LOG" >/dev/null; then
+            if [[ -n "$purge_unit_rel" ]] && grep -Eq '^\[Install\][[:space:]]*$' "$TARGET_ROOT$purge_unit_rel"; then
+                fail "Unable to disable $svc for the single-primary display-manager state."
+            fi
+            msg_log dm-static-unit "$svc"
+        fi
+    done
+    for inst_link_base in "${purge_instances[@]}"; do
+        mutating_cancel_checkpoint
+        msg_log dm-purge-instance-disable "$inst_link_base"
+        if ! systemctl --root="$TARGET_ROOT" disable "$inst_link_base" 2>&1 | tee -a "$SESSION_LOG" >/dev/null; then
+            fail "Unable to disable the display-manager template instance $inst_link_base."
+        fi
+        if (( RUNNING_HOST_MODE == 1 )); then
+            systemctl stop "$inst_link_base" 2>/dev/null || true
+            msg_log dm-purge-instance-stopped "$inst_link_base"
+        fi
+    done
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for svc in "${purge_running[@]}"; do
+            mutating_cancel_checkpoint
+            bin="${svc%.service}"
+            # Round 50 (the never-kill-your-own-session rule): the DM
+            # serving the LIVE logind session is never stopped here — its
+            # offline disable + the alias repoint stand, the stop is
+            # deferred to the reboot, and the session survives the repair.
+            # Round 83c (FINDING 1): the comparison collapses the gdm/gdm3
+            # alias pair (§15.6) — the session-serving daemon is deferred
+            # even when this loop carries its alias name (the round-83c
+            # Ubuntu breach: `gdm3.service` vs the canonical `gdm.service`
+            # byte-compare missed and the live GNOME session was killed).
+            if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+                && display_manager_services_same_manager "$svc" "$DISPLAY_MANAGER_SESSION_SERVING"; then
+                msg_log dm-purge-session-deferred "$(display_manager_label_for_service "$svc")"
+                continue
+            fi
+            # Round 48: the SERVICE unit stop first (the reliable systemd
+            # kill — a bare pkill's TERM lets a socket respawn the daemon),
+            # then the instance glob, then the pkill last for a stray
+            # started without any unit.
+            local purge_stopped=false
+            systemctl stop "$svc" 2>/dev/null && purge_stopped=true || true
+            systemctl stop "${bin}@*.service" 2>/dev/null && purge_stopped=true || true
+            if command -v pkill >/dev/null 2>&1 && pkill -x -- "$bin" 2>/dev/null; then
+                purge_stopped=true
+            fi
+            if [[ "$purge_stopped" == true ]]; then
+                msg_log dm-purge-stopped "$bin"
+            else
+                msg_log dm-purge-stop-note "$bin"
+            fi
+        done
+    fi
+    msg_log dm-purge-complete "$(display_manager_label_for_service "$chosen")"
+}
+
+# Round 54 (the switch-to-ly self-conflict): the tool's own
+# template-instantiation enablement is the staged shape, never a conflict —
+# the landing records the instance it enabled in the same persistent marker
+# the deferred DM lives in (the discriminator stays the tool's own record,
+# never a heuristic that could mask a genuine third-party instance).
+display_manager_record_staged_instance()
+{
+    local inst="$1"
+    [[ -n "$inst" ]] || return 0
+    printf 'instance %s\n' "$inst" \
+        >> "${STATE_ROOT:-/run/boot-bitch}/dm-deferred-state" 2>/dev/null || true
+    return 0
+}
+
+# Round 50 (the never-kill-your-own-session rule): the display manager
+# serving the LIVE logind session (the repair's own session — the user's
+# re-test: the resolution purged the lightdm serving the running session and
+# killed the app).  The probe reads the active logind session's Service
+# field (the gdm-password/gdm-autologin/lightdm/... class) and maps it to
+# the known DM service; prints nothing when no live session is served by a
+# known DM.
+display_manager_session_serving_service()
+{
+    [[ -d /run/systemd/system ]] || return 0
+    command -v loginctl >/dev/null 2>&1 || return 0
+    local sess_id="" sess_service="" sess_active=""
+    while IFS= read -r sess_id; do
+        [[ -n "$sess_id" ]] || continue
+        sess_active="$(loginctl show-session "$sess_id" -p Active --value 2>/dev/null || true)"
+        sess_service="$(loginctl show-session "$sess_id" -p Service --value 2>/dev/null || true)"
+        # Round 52: the greeter sessions (the launch-environment/greeter
+        # class — the login screen's own session) serve the DM regardless of
+        # the logind Active bit, which churns on the greeter class; a user
+        # session still requires the Active=yes proof.
+        if [[ "$sess_active" != yes ]] \
+            && [[ "$sess_service" != *-launch-environment* && "$sess_service" != *-greeter* ]]; then
+            continue
+        fi
+        case "$sess_service" in
+            lightdm|lightdm-autologin|lightdm-greeter|lightdm-*) printf 'lightdm.service\n'; return 0 ;;
+            gdm-password|gdm-autologin|gdm-launch-environment|gdm-greeter) printf 'gdm.service\n'; return 0 ;;
+            sddm|sddm-helper|sddm-autologin|sddm-greeter|sddm-*) printf 'sddm.service\n'; return 0 ;;
+            greetd|greetd-*) printf 'greetd.service\n'; return 0 ;;
+            ly|ly-*) printf 'ly.service\n'; return 0 ;;
+        esac
+    done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}')
+    return 0
+}
+
+# Round 50 (the reported rig login loop): the DM landing must never leave a
+# STALE BROKEN autologin.  The rig evidence (2026-11-22): the GDM's
+# automatic login (the rig's provisioning custom.conf pair, dormant while
+# the lightdm was the DM, resurrected by the landing) opens its session, the
+# gnome-shell falls to the public X11 display and the session never
+# registers with the GDM — "Session never registered, failing" — the login
+# screen bounces on every attempt.  The A/B proof: the autologin OFF -> the
+# clean registered greeter; the autologin ON -> the failure.  The landing
+# therefore DISABLES the GDM's automatic login (the guarded offline write:
+# AutomaticLoginEnable=False + the AutomaticLogin line removed) — the
+# round-44 historical success predates the current stack's regression, and
+# the lightdm's autologin (the working class) stays untouched.  The
+# carry-over preservation below never writes the autologin into the GDM.
+display_manager_disable_autologin()
+{
+    local service="$1" conf="" before="" after="" changed=false
+    case "$service" in
+        gdm.service|gdm3.service) ;;
+        *) return 0 ;;
+    esac
+    # Round 83c (FINDING 2): the probe list covers BOTH Debian-family GDM
+    # config layouts — /etc/gdm/custom.conf (Fedora/RHEL), /etc/gdm3/
+    # daemon.conf (the older Debian shape) AND /etc/gdm3/custom.conf (the
+    # Ubuntu 26.04 shape — the previous round's rig carried its autologin
+    # there, untouched by the GDM landing).
+    conf="$TARGET_ROOT/etc/gdm/custom.conf"
+    [[ -f "$conf" ]] || conf="$TARGET_ROOT/etc/gdm3/daemon.conf"
+    [[ -f "$conf" ]] || conf="$TARGET_ROOT/etc/gdm3/custom.conf"
+    [[ -f "$conf" ]] || return 0
+    if ! grep -Eq '^[[:space:]]*(AutomaticLoginEnable|AutomaticLogin)[[:space:]]*=' "$conf"; then
+        return 0
+    fi
+    [[ -n "${SESSION_DIR:-}" ]] && mkdir -p "$SESSION_DIR" 2>/dev/null
+    [[ -n "${SESSION_DIR:-}" ]] && cp -a -- "$conf" "$SESSION_DIR/gdm-autologin-disabled.conf.bak" 2>/dev/null || true
+    before="$(repair_file_fingerprint "$conf")"
+    sed -i -E 's|^([[:space:]]*AutomaticLoginEnable[[:space:]]*=).*|\1False|' "$conf"
+    sed -i -E '/^[[:space:]]*AutomaticLogin[[:space:]]*=/d' "$conf"
+    after="$(repair_file_fingerprint "$conf")"
+    [[ "$before" != "$after" ]] && changed=true
+    if [[ "$changed" == true ]]; then
+        msg_log dm-autologin-disabled "GDM"
+    fi
+    return 0
+}
+
+# The round-50 landing hook: normalize the to-DM's autologin (the GDM class
+# disabled — the rig-proven broken shape); the non-GDM landings keep their
+# autologin (the lightdm class stays working).
+display_manager_landing_normalize_autologin()
+{
+    local service="$1"
+    display_manager_disable_autologin "$service"
+}
+
+# Round 50 (the last-successful-login marker — the user's requirement): the
+# journal-derived evidence naming the display manager of the LAST SUCCESSFUL
+# login, never the config.  A successful login = the DM session worker's pam
+# session OPENED and STAYED OPEN — the round-50 broken-GDM-attempt class
+# opens and closes within seconds ("Session never registered"), so the
+# worker's LAST open AFTER its LAST close (or with no close at all) in a
+# boot is the success.  Scans the current + the bounded previous boots (the
+# persistent journal; the round-49 vacuum discipline — the bounded lookback),
+# newest boot first; the FIRST successful worker names the DM.  Absent or
+# ambiguous history prints nothing (the honest undecidable form).
+display_manager_last_successful_login()
+{
+    local -a journal_root=()
+    local scan_boot=0 records="" line="" worker="" kind="" ts=""
+    local -a workers=() worker_opens=() worker_closes=()
+    local widx=0 i=0 success_worker=""
+    if (( RUNNING_HOST_MODE == 1 )); then
+        command -v journalctl >/dev/null 2>&1 || return 0
+        journal_root=(journalctl)
+    else
+        target_journal_evidence_present || return 0
+        command -v journalctl >/dev/null 2>&1 || return 0
+        journal_root=(journalctl --root="$TARGET_ROOT")
+    fi
+    for scan_boot in 0 -1 -2 -3 -4; do
+        # Round 52 (the targeted-fast pass): the _COMM server-side filters
+        # narrow each boot's scan to the DM session workers (never a
+        # full-journal walk — the rig's multi-GB journal is the stress case).
+        records="$("${journal_root[@]}" -b "$scan_boot" --no-pager -o short-iso \
+            _COMM=gdm-password _COMM=gdm-autologin _COMM=lightdm _COMM=ly _COMM=greetd _COMM=sddm-helper 2>/dev/null \
+            | grep -E 'pam_unix\((gdm-password|gdm-autologin|lightdm|lightdm-autologin|ly|greetd|sddm-helper|sddm-autologin):session\): session (opened|closed) for user ' \
+            || true)"
+        [[ -n "$records" ]] || continue
+        # The registration verdict for this boot (the GDM's broken-class
+        # marker — a session that never registered is a failed attempt even
+        # when the rig was destroyed before the pam close).  The _COMM=gdm
+        # indexed filter + the local fixed-string grep keep it targeted (the
+        # round-52 fast pass: a -g message scan walks the whole boot — the
+        # 2-17s-per-boot shape the timing probe caught); the capture drains
+        # fully so no live-stream SIGPIPE hits the pipefail trap.
+        local registration_failed=false verdict_text=""
+        verdict_text="$("${journal_root[@]}" -b "$scan_boot" --no-pager _COMM=gdm 2>/dev/null \
+            | grep -F 'Session never registered' || true)"
+        [[ "$verdict_text" == *"Session never registered"* ]] && registration_failed=true
+        workers=(); worker_opens=(); worker_closes=()
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            worker="$(printf '%s\n' "$line" | sed -E 's/.*pam_unix\(([^:]+):session\): session (opened|closed) for user .*/\1/')"
+            kind="$(printf '%s\n' "$line" | sed -E 's/.*pam_unix\(([^:]+):session\): session (opened|closed) for user .*/\2/')"
+            ts="$(printf '%s\n' "$line" | awk '{print $1}')"
+            [[ -n "$worker" && -n "$kind" && -n "$ts" ]] || continue
+            widx=-1
+            for i in "${!workers[@]}"; do
+                [[ "${workers[$i]}" == "$worker" ]] && widx=$i && break
+            done
+            if (( widx < 0 )); then
+                workers+=("$worker")
+                worker_opens+=("")
+                worker_closes+=("")
+                widx=$(( ${#workers[@]} - 1 ))
+            fi
+            if [[ "$kind" == opened ]]; then
+                worker_opens[$widx]="$ts"
+            else
+                worker_closes[$widx]="$ts"
+            fi
+        done <<<"$records"
+        # The newest boot with a SUCCESSFUL user session wins.  The honest
+        # three-way rule: the close more than the short window after the
+        # open = the real session (the round-50 broken class closes within
+        # seconds); the close within the window = the failed attempt; no
+        # close at all = the AMBIGUOUS (the destroyed-boot shape — never a
+        # guess) — except where the boot's registration verdict marks the
+        # GDM class failed (the verdict also overrides a late close, the
+        # repair's own stop closing the broken session minutes later).
+        local open_epoch=0 close_epoch=0
+        for i in "${!workers[@]}"; do
+            open_epoch="$(date -d "${worker_opens[$i]}" +%s 2>/dev/null || true)"
+            [[ -n "$open_epoch" ]] || continue
+            if [[ -n "${worker_closes[$i]:-}" ]]; then
+                close_epoch="$(date -d "${worker_closes[$i]}" +%s 2>/dev/null || true)"
+                if [[ -n "$close_epoch" ]] && (( close_epoch - open_epoch > 30 )); then
+                    if [[ "${workers[$i]}" == gdm-password || "${workers[$i]}" == gdm-autologin ]] \
+                        && [[ "$registration_failed" == true ]]; then
+                        continue
+                    fi
+                    success_worker="${workers[$i]}"
+                    break 2
+                fi
+                continue
+            fi
+            if [[ "${workers[$i]}" == gdm-password || "${workers[$i]}" == gdm-autologin ]] \
+                && [[ "$registration_failed" == true ]]; then
+                continue
+            fi
+            continue
+        done
+    done
+    [[ -n "$success_worker" ]] || return 0
+    case "$success_worker" in
+        gdm-password|gdm-autologin) printf 'gdm.service\n' ;;
+        lightdm|lightdm-autologin) printf 'lightdm.service\n' ;;
+        sddm-helper|sddm-autologin) printf 'sddm.service\n' ;;
+        ly) printf 'ly.service\n' ;;
+        greetd) printf 'greetd.service\n' ;;
+        *) return 0 ;;
+    esac
+    return 0
+}
+
+# Round 50 (the evidence-driven resolution ladder): the conflict resolution's
+# target derivation — (1) the last-successful-login DM (when it is an
+# installed DM with a unit/template in the scope), (2) the configured/in-use
+# DM (the diagnostic's decision evidence), (3) the vendor default.  Prints
+# "<service><TAB><source label>"; each fallback is named honestly.
+display_manager_resolution_target()
+{
+    local last_login=""
+    last_login="$(display_manager_last_successful_login 2>/dev/null || true)"
+    if [[ -n "$last_login" ]] \
+        && ( display_manager_unit_rel "$last_login" >/dev/null 2>&1 \
+            || display_manager_template_unit "$last_login" >/dev/null 2>&1 ); then
+        printf '%s\t%s\n' "$last_login" "the display manager of the last successful login"
+        return 0
+    fi
+    if [[ -n "${DISPLAY_MANAGER_SERVICE:-}" && "$DISPLAY_MANAGER_SERVICE" != none ]]; then
+        printf '%s\t%s\n' "$DISPLAY_MANAGER_SERVICE" "the configured and currently used display manager (the diagnostic's decision evidence)"
+        return 0
+    fi
+    local default_service=""
+    default_service="$(display_manager_vendor_default)"
+    if [[ -n "$default_service" ]]; then
+        printf '%s\t%s\n' "$default_service" "the derived vendor default"
+        return 0
+    fi
+    return 1
+}
+
+# Round 52 (the deferred-transition evidence model): the tool's OWN staged
+# state — the session record's deferred DM (the dm-purge-state 'deferred'
+# entries from the current + the latest prior sessions) that is still
+# running while a DIFFERENT DM is enabled and the alias points there = the
+# intentional transition, never a conflict.  Prints
+# "<new_service><TAB><deferred_service>" for the matching shape; nothing
+# otherwise — the suppression is scoped to the deferral the tool itself
+# performed, so a genuine conflict is never masked.
+display_manager_deferred_transition()
+{
+    local state_root="${STATE_ROOT:-/run/boot-bitch}"
+    local state_file="" kind="" svc="" deferred_svc=""
+    local alias_target="" alias_service=""
+    local -a deferred=() staged_instances=()
+    [[ -d "$state_root" ]] || return 0
+    # The PERSISTENT deferred marker (the session dirs are deleted at the
+    # helper's exit) plus the live session's file (the same-run re-display).
+    for state_file in "$state_root/dm-deferred-state"         $(ls -t "$state_root"/session.*/dm-purge-state 2>/dev/null | head -2); do
+        [[ -f "$state_file" ]] || continue
+        while IFS=' ' read -r kind svc; do
+            [[ -n "$svc" ]] || continue
+            if [[ "$kind" == deferred ]]; then
+                deferred+=("$svc")
+            elif [[ "$kind" == instance ]]; then
+                staged_instances+=("$svc")
+            fi
+        done < "$state_file"
+    done
+    ((${#deferred[@]} > 0)) || return 0
+    [[ -L "$TARGET_ROOT/etc/systemd/system/display-manager.service" ]] || return 0
+    alias_target="$(basename "$(readlink "$TARGET_ROOT/etc/systemd/system/display-manager.service" 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$alias_target" ]] || return 0
+    if [[ "$alias_target" == *@.service ]]; then
+        # The template-shaped alias (<base>@.service) collapses to its base
+        # service; a plain alias keeps its name as-is.
+        alias_service="${alias_target%@.service}.service"
+    else
+        alias_service="$alias_target"
+    fi
+    for deferred_svc in "${deferred[@]}"; do
+        [[ -n "$deferred_svc" && "$deferred_svc" != "$alias_service" ]] || continue
+        if [[ "$deferred_svc" == gdm.service || "$deferred_svc" == gdm3.service ]] \
+            && [[ "$alias_service" == gdm.service || "$alias_service" == gdm3.service ]]; then
+            continue
+        fi
+        # The deferred DM must still be serving (running) — the staged shape.
+        if (( RUNNING_HOST_MODE == 1 )) && [[ -d /run/systemd/system ]] \
+            && command -v systemctl >/dev/null 2>&1; then
+            systemctl is-active --quiet "$deferred_svc" 2>/dev/null || continue
+        fi
+        local staged_inst_list=""
+        if ((${#staged_instances[@]} > 0)); then
+            local staged_one=""
+            for staged_one in "${staged_instances[@]}"; do
+                staged_inst_list="${staged_inst_list:+$staged_inst_list,}$staged_one"
+            done
+        fi
+        printf '%s\t%s\t%s\n' "$alias_service" "$deferred_svc" "$staged_inst_list"
+        return 0
+    done
+    return 0
+}
+
+# The purge-set summary for the CONFIRM texts (the same probe as the purge):
+# the human labels of the OTHER DMs with any live evidence, comma-joined.
+display_manager_purge_summary()
+{
+    local chosen="$1" svc enabled_state summary="" bin
+    local -a others=()
+    for svc in sddm.service gdm.service gdm3.service lightdm.service greetd.service ly.service; do
+        [[ "$svc" == "$chosen" ]] && continue
+        if [[ "$chosen" == gdm.service || "$chosen" == gdm3.service ]] \
+            && [[ "$svc" == gdm.service || "$svc" == gdm3.service ]]; then
+            continue
+        fi
+        enabled_state="$(systemctl --root="$TARGET_ROOT" is-enabled "$svc" 2>/dev/null || true)"
+        case "$enabled_state" in
+            enabled|enabled-runtime|indirect) others+=("$(display_manager_label_for_service "$svc")") ; continue ;;
+        esac
+        if (( RUNNING_HOST_MODE == 1 )) && command -v pgrep >/dev/null 2>&1; then
+            bin="${svc%.service}"
+            pgrep -x "$bin" >/dev/null 2>&1 && { others+=("$(display_manager_label_for_service "$svc")"); continue; }
+        fi
+    done
+    ((${#others[@]} > 0)) || return 0
+    for svc in "${others[@]}"; do
+        summary="${summary:+$summary, }$svc"
+    done
+    printf '%s\n' "$summary"
 }
 
 # Restore the default graphical login manager: the vendor-derived default
@@ -17070,9 +20616,38 @@ display_manager_restore_default()
             repair_change_status display "unchanged|$(reason display-already-configured)"
             return 0
         fi
+        # Round 50 (the user's Fedora re-test): the vendor-default restore
+        # is the explicit separate choice and its CONFIRM warns it REPLACES
+        # the configured/in-use display manager — the old routing purged the
+        # DM serving the live session and killed the repair mid-flight.
+        if [[ "$default_service" != "$DISPLAY_MANAGER_SERVICE" ]]; then
+            local default_label=""
+            default_label="$(display_manager_label_for_service "$default_service")"
+            local restore_prompt=""
+            restore_prompt="Restore the vendor default graphical login manager (${default_label})?"$'\n'
+            restore_prompt+="This REPLACES the configured and currently used display manager (${current_label}): its unit is disabled offline, ${default_label} is enabled and repointed, and every other installed display manager is purged (services only — no packages are removed). The display manager serving this live session is never stopped here; the next boot runs ${default_label} as the only primary."$'\n'
+            restore_prompt+="Answer: type y or yes to proceed; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to decline and leave the current manager unchanged."
+            if ! helper_menu_prompt "$restore_prompt" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+                repair_change_status display "unchanged|$(reason user-declined)"
+                return 1
+            fi
+            case "$HELPER_MENU_ANSWER" in
+                y|Y|yes) ;;
+                *)
+                    repair_change_status display "unchanged|$(reason user-declined)"
+                    return 1 ;;
+            esac
+        fi
         # restore_display_manager_to re-points the restore globals at the
         # DERIVED default service before the shared body runs.
         restore_display_manager_to "$default_service"
+        # Round 48 (the single-primary rule): every OTHER installed DM is
+        # purged (disabled + stopped — services, never packages).
+        display_manager_purge_others "$default_service"
+        if [[ -n "${DISPLAY_MANAGER_SESSION_SERVING:-}" ]] \
+            && [[ "$default_service" != "$DISPLAY_MANAGER_SESSION_SERVING" ]]; then
+            msg_log dm-staged-completion "$(display_manager_label_for_service "$default_service")" "$(display_manager_label_for_service "$DISPLAY_MANAGER_SESSION_SERVING")"
+        fi
         repair_change_status display changed
         # Round 201: the explicit per-action outcome — the user reads the
         # restore result in THIS terminal at the marker, never from the
@@ -17102,6 +20677,9 @@ display_manager_restore_default()
             return 0
         fi
         restore_display_manager_to "$DISPLAY_MANAGER_SERVICE"
+        # Round 48 (the single-primary rule): every OTHER installed DM is
+        # purged (disabled + stopped — services, never packages).
+        display_manager_purge_others "$DISPLAY_MANAGER_SERVICE"
         repair_change_status display changed
         # Round 201: the explicit per-action outcome for the configured-
         # manager fallback restore too (the result stated, never implied).
@@ -17189,7 +20767,24 @@ display_manager_interactive_menu()
         DISPLAY_BASELINE_B64=""
         current_label="$DISPLAY_MANAGER_LABEL"
 
-        # Round 199 (gap 7): the vendor default renders from the CACHED
+        # Round 54 (the cancel-at-the-menu finding): the menu abort drops the
+# collected display statuses — the earlier actions' changes were already
+# consumed by their per-action scoped regenerations, so the terminal replay
+# must not carry them into a pure abort's transcript (the GUI's
+# conditional-on-changed invalidation would re-run the diagnostics for a
+# cancel that mutated nothing new).
+display_manager_abort_drop_collected_display()
+{
+    local -a kept=()
+    local entry=""
+    for entry in "${REPAIR_CHANGE_STATUS_COLLECTED[@]}"; do
+        [[ "$entry" == display$'\t'* ]] || kept+=("$entry")
+    done
+    REPAIR_CHANGE_STATUS_COLLECTED=("${kept[@]}")
+    return 0
+}
+
+# Round 199 (gap 7): the vendor default renders from the CACHED
         # section (the diagnostic's `Vendor default display manager:` line) —
         # never re-derived live in the menu; the live fallback stays only for
         # a baseline-less direct CLI walk-through and the post-mutation
@@ -17205,6 +20800,18 @@ display_manager_interactive_menu()
         default_label=""
         if [[ -n "$default_service" ]]; then
             default_label="$(display_manager_label_for_service "$default_service")"
+        fi
+        # Round 39 (the user's Fedora finding): the conflict line renders
+        # from the CACHED diagnostic section (the single-source evidence;
+        # the `none` form is the honest empty state); the live probe stays
+        # only for a baseline-less direct CLI run and the post-mutation
+        # re-display (the round-196 cache-drop pattern).
+        local conflict_line=""
+        if (( DISPLAY_MANAGER_CACHED_PARSED == 1 )); then
+            conflict_line="${DISPLAY_MANAGER_CACHED_CONFLICT:-}"
+        else
+            display_manager_conflict_evidence
+            conflict_line="$DISPLAY_MANAGER_CONFLICT_LINE"
         fi
 
         labels=()
@@ -17224,11 +20831,13 @@ display_manager_interactive_menu()
 
         # The consistent terminal: the current manager IS the derived default,
         # the configuration is already correct and no switch candidate exists
-        # -> report once, never prompt.
+        # -> report once, never prompt.  Round 39: a CONFLICTED scope never
+        # takes the short-circuit — the conflict resolution must be offered
+        # even when the configured manager already matches the default.
         local already_correct=false
         if [[ -n "$default_service" && "$default_service" == "$DISPLAY_MANAGER_SERVICE" ]] \
             && display_manager_already_correct \
-            && ((${#candidates[@]} == 0)); then
+            && ((${#candidates[@]} == 0)) && [[ -z "$conflict_line" ]]; then
             already_correct=true
         fi
         if [[ "$already_correct" == true ]]; then
@@ -17254,6 +20863,11 @@ display_manager_interactive_menu()
             found_lines+="vendor default display manager: $vendor_default_line (restore falls back to the configured manager: $current_label)"$'\n'
         fi
         found_lines+="current display manager: $current_label ($DISPLAY_MANAGER_SERVICE)"$'\n'
+        # Round 39: the conflict evidence joins the Found block so the user
+        # sees the exact conflicting pair before choosing the resolution.
+        if [[ -n "$conflict_line" ]]; then
+            found_lines+="display manager conflict: $conflict_line"$'\n'
+        fi
         if ((${#candidates[@]} > 0)); then
             local cand_summary=""
             for candidate_line in "${candidates[@]}"; do
@@ -17265,12 +20879,41 @@ display_manager_interactive_menu()
         fi
         menu+="$found_lines"$'\n'
         menu+="Graphical login manager walk-through:"$'\n'
-        if [[ -n "$default_service" ]]; then
+        # Round 50 (the user's Fedora re-test): a conflicted scope's option 1
+        # is the conflict resolution KEEPING the evidence-ladder target (the
+        # last-successful-login DM, else the configured/in-use DM, else the
+        # vendor default) as the primary; the vendor-default restore is the
+        # explicit separate option (its CONFIRM warns it replaces the in-use
+        # DM).  Round 52 (the menu dedupe + the label truth): when the
+        # ladder target IS the vendor default, the resolve and the restore
+        # are the SAME action — ONE option (the restore auto-resolves); the
+        # resolve label names the ACTUAL ladder target, never a stale
+        # current-label guess.
+        if [[ -n "$conflict_line" ]]; then
+            local resolve_target_svc="" resolve_target_label=""
+            if IFS=$'\t' read -r resolve_target_svc _ < <(display_manager_resolution_target 2>/dev/null); then
+                resolve_target_label="$(display_manager_label_for_service "$resolve_target_svc" 2>/dev/null || true)"
+            fi
+            [[ -n "$resolve_target_svc" ]] || resolve_target_svc="${DISPLAY_MANAGER_SERVICE:-}"
+            [[ -n "$resolve_target_label" ]] || resolve_target_label="$current_label"
+            if [[ -n "$default_service" && "$resolve_target_svc" == "$default_service" ]]; then
+                labels+=("Restore the vendor default graphical login manager ($default_label)")
+                stages+=("restore-default")
+            else
+                labels+=("Resolve the display manager conflict (keep $resolve_target_label as the primary)")
+                stages+=("resolve-conflict")
+                if [[ -n "$default_service" ]]; then
+                    labels+=("Restore the vendor default graphical login manager ($default_label)")
+                    stages+=("restore-default")
+                fi
+            fi
+        elif [[ -n "$default_service" ]]; then
             labels+=("Restore the default graphical login manager ($default_label)")
+            stages+=("restore-default")
         else
             labels+=("Restore the configured graphical login manager ($current_label)")
+            stages+=("restore-default")
         fi
-        stages+=("restore-default")
         if ((${#candidates[@]} > 0)); then
             labels+=("Switch the graphical login manager")
             stages+=("switch")
@@ -17281,12 +20924,19 @@ display_manager_interactive_menu()
         menu+="0) Abort"
 
         if ! helper_menu_prompt "$menu" "$MENU_ANSWER_WINDOW_SECONDS" MENU || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+            # Round 54 (the cancel-at-the-menu finding): the menu abort
+            # carries NO changed status — the collected display entries
+            # (the earlier actions' statuses the scoped regens already
+            # consumed) are dropped so the terminal replay can never make a
+            # pure abort look like a mid-dance cancel to the GUI.
+            display_manager_abort_drop_collected_display
             repair_change_status display "unchanged|$(reason display-aborted)"
             unlock_console_display_final_status
             return 0
         fi
         answer="$HELPER_MENU_ANSWER"
         if [[ "$answer" == "0" ]]; then
+            display_manager_abort_drop_collected_display
             repair_change_status display "unchanged|$(reason display-aborted)"
             unlock_console_display_final_status
             return 0
@@ -17298,7 +20948,17 @@ display_manager_interactive_menu()
         fi
 
         case "$choice" in
+            resolve-conflict)
+                # Round 50: the conflict resolution KEEPS the
+                # configured/in-use display manager (the decision evidence)
+                # as the primary and purges everything else.
+                display_manager_resolve_conflict "$DISPLAY_MANAGER_SERVICE" "$current_label"
+                ;;
             restore-default)
+                # Round 50: the vendor-default restore is the explicit
+                # separate choice; its CONFIRM warns it replaces the in-use
+                # display manager (the user's re-test: the old routing
+                # purged the DM serving the live session).
                 display_manager_restore_default
                 ;;
             switch)
@@ -17349,7 +21009,19 @@ display_manager_interactive_menu()
                         repair_change_status display "unchanged|$(reason user-declined)"
                         continue
                     fi
-                    display_manager_switch "$DISPLAY_MANAGER_SERVICE" "$cand_service"
+                    # Round 78 (cycle plan §13.7): a greetd-landing refusal is
+                    # a NON-fatal outcome — print the refusal line and
+                    # re-display the candidate menu (the loop continues; the
+                    # Found block re-derives from the fresh state) so the user
+                    # can pick GDM/SDDM or abort.  Never a stage ERROR.
+                    local switch_rc=0
+                    display_manager_switch "$DISPLAY_MANAGER_SERVICE" "$cand_service" || switch_rc=$?
+                    if (( switch_rc == GREETD_LANDING_REFUSAL_RC )); then
+                        msg_log dm-greetd-landing-refused "${DISPLAY_MANAGER_GREETD_REFUSAL_TEXT:-the greetd landing was refused.}"
+                        continue
+                    fi
+                    (( switch_rc == 0 )) \
+                        || fail "The display manager switch failed (exit code $switch_rc)."
                 fi
                 ;;
         esac
@@ -17363,7 +21035,7 @@ display_manager_interactive_menu()
 # mapper-path failure is retried once after compatibility alias correction.
 preflight_initramfs()
 {
-    local kver sim_path
+    local kver sim_path trial_hint
     local -a kernels=()
 
     [[ -x "$TARGET_ROOT/usr/sbin/update-initramfs" ]] \
@@ -17391,7 +21063,19 @@ preflight_initramfs()
                     mkinitramfs -o "$sim_path" "$kver"
             fi
         fi
-        ((CHROOT_TRY_RC == 0)) || fail "Trial initramfs build failed for $kver; target initramfs files were not changed."
+        ((CHROOT_TRY_RC == 0)) || {
+            # Round 64 (Finding 1): the honest failure naming — the trial
+            # build breaks on the module-vs-kernel incompatibility class
+            # (the zfs-hook shape) exactly like the real build would; name
+            # the module + the kernel + the user actions instead of the
+            # bare "trial build failed".
+            local trial_hint=""
+            trial_hint="$(initramfs_failure_incompat_hint "$kver" || true)"
+            if [[ -n "$trial_hint" ]]; then
+                fail "Trial initramfs build failed for $kver: $trial_hint"
+            fi
+            fail "Trial initramfs build failed for $kver; target initramfs files were not changed."
+        }
         [[ -s "$TARGET_ROOT$sim_path" ]] || fail "Trial initramfs build for $kver produced no image."
         rm -f -- "$TARGET_ROOT$sim_path"
         msg_log initramfs-trial-pass "$kver"
@@ -17917,7 +21601,7 @@ adaptive_initramfs_repair()
     elif [[ "$TARGET_INITRAMFS_BACKEND" == dracut ]]; then
         adaptive_dracut_initramfs_repair
     elif [[ "$TARGET_INITRAMFS_BACKEND" == initramfs-tools ]]; then
-        local kver mode
+        local kver mode incompat_hint
         local -a kernels=()
 
         preflight_initramfs
@@ -17955,6 +21639,16 @@ adaptive_initramfs_repair()
                 if [[ -n "$hook_failure" ]] && initramfs_image_readable "$kver"; then
                     printf '%s\n' "WARNING: the initramfs image for $kver was built and verified, but a post-build hook failed afterwards: ${hook_failure%%|*} (run-parts exit code ${hook_failure#*|}). The image is usable; the broken hook belongs to the target's own configuration and is reported, not modified."
                     continue
+                fi
+                # Round 64 (Finding 1): the honest failure naming — when the
+                # rebuild breaks on the module-vs-kernel incompatibility class
+                # (the zfs-hook shape: the generation needs a module the DKMS
+                # build could not produce for this kernel), the failure names
+                # the module + the kernel + the user actions instead of the
+                # bare "generation failed".
+                incompat_hint="$(initramfs_failure_incompat_hint "$kver" || true)"
+                if [[ -n "$incompat_hint" ]]; then
+                    fail "initramfs generation failed for $kver: $incompat_hint"
                 fi
                 fail "initramfs generation failed for $kver after known corrections."
             fi
@@ -18481,6 +22175,12 @@ adaptive_grub_repair()
         run_chroot_try "$(msg verify-installed-grub-config)" grub-script-check "$config_path"
         ((CHROOT_TRY_RC == 0)) || fail "Installed GRUB configuration failed grub-script-check after regeneration."
     fi
+    # Round 79 (plan-boot-menu-reorder §3.2): the tool-managed user order
+    # survives the tool's own regeneration — re-apply the saved depth-0 order
+    # after the entry-preservation guard and the syntax check (the reorder
+    # preserves every byte except the block sequence, so it never regresses
+    # the guard; the verified commit + rollback protect the live config).
+    grub_reorder_reapply_after_regeneration
     msg_log grub-regenerated
     if [[ -z "$grub_before" ]]; then
         repair_change_status grub changed
@@ -20078,6 +23778,7 @@ diagnostic_title()
         luks)        printf '%s\n' "LUKS / crypttab" ;;
         input)       printf '%s\n' "Input devices / keyboard" ;;
         network)     printf '%s\n' "Network / connectivity" ;;
+        numlock)     printf '%s\n' "Num Lock at early boot stages" ;;
         *)           printf '%s\n' "$1" ;;
     esac
 }
@@ -20855,6 +24556,17 @@ efi_unavailable_reason()
         reason missing-tuxedo-uki-builder
         return 1
     fi
+    # Round 66 (Finding 1): a TUXEDO layout whose /boot carries NO tuxedo-family
+    # kernel image cannot rebuild the UKI.  Report the honest capability reason
+    # so the Full Repair plan never schedules an EFI stage whose mandatory
+    # preflight must then die (the bare preflight death that blocked the user's
+    # whole full repair); the kernel diagnostic names the installed kernels and
+    # the initramfs repair stays the recovery direction.
+    if [[ "$TARGET_OS_ID" == tuxedo ]] && tuxedo_uki_builder_present \
+        && [[ -z "$(newest_tuxedo_kernel)" ]]; then
+        reason no-tuxedo-kernel
+        return 1
+    fi
     if ! grub_generator_tool >/dev/null; then
         if grub2_layout_detected; then
             reason missing-grub2-mkconfig
@@ -21064,6 +24776,25 @@ dkms_unavailable_reason()
         return 0
     fi
     return 0
+}
+
+# Round 23 (the Num Lock early-boot repair — phase 2): the capability gate.
+# Available when the detected initramfs family has a documented integration
+# path (the phase-4 mechanisms cover initramfs-tools, dracut, mkinitfs and
+# mkinitcpio); unavailable with the named reason otherwise. Never derived
+# from the display-manager state (a missing DM knob is a per-stage
+# not-applicable verdict, not an unavailability).
+numlock_unavailable_reason()
+{
+    local reason
+    if [[ -z "$TARGET_INITRAMFS_BACKEND" || "$TARGET_INITRAMFS_BACKEND" == "unknown" ]]; then
+        reason no-initramfs-integration-path
+        return 1
+    fi
+    case "$TARGET_INITRAMFS_BACKEND" in
+        initramfs-tools|dracut|mkinitfs|mkinitcpio) return 0 ;;
+        *) reason no-initramfs-integration-path; return 1 ;;
+    esac
 }
 
 bootstack_unavailable_reason()
@@ -22976,7 +26707,7 @@ diagnostic_repair_capabilities()
 {
     local key reason
     profile_target_backends
-    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock)
     local -A reasons=()
 
     for key in "${keys[@]}"; do
@@ -23006,6 +26737,12 @@ diagnostic_repair_capabilities()
     if reason="$(extlinux_unavailable_reason)"; then reasons[extlinux]="available"; else reasons[extlinux]="$reason"; fi
     if reason="$(bootstack_unavailable_reason)"; then reasons[bootstack]="available"; else reasons[bootstack]="$reason"; fi
     if reason="$(kernels_unavailable_reason)"; then reasons[kernels]="available"; else reasons[kernels]="$reason"; fi
+    # Round 23 (the Num Lock early-boot repair — phase 2): the capability
+    # row reflects the repair's fail-closed gate — the detected initramfs
+    # family must have a documented integration path (all four families do
+    # in the phase-4 mechanisms); a missing DM knob is NEVER an
+    # unavailability (the stage reports not-applicable for that).
+    if reason="$(numlock_unavailable_reason)"; then reasons[numlock]="available"; else reasons[numlock]="$reason"; fi
 
     # File system repair is backend-independent: the selected scope's root,
     # /boot, ESP and /home filesystems are inspected with the host's
@@ -24745,6 +28482,56 @@ diagnostic_boot_evidence()
     return "$evidence_rc"
 }
 
+# Round 66 (Finding 2): the single-source pairing decision — true when the
+# kernel version has ANY matching initramfs image.  apt/rpm keys the pairing by
+# version (initrd.img-<v>, the dracut initramfs-<v>[.img|fallback] shapes);
+# apk and pacman key it by the FLAVOUR (mkinitfs initramfs-<flavor> on apk, the
+# module tree's pkgbase-named initramfs-<pkgbase>[.img|fallback] on pacman —
+# never a version-string guess, the same derivations the verify's vmlinuz
+# checks use).  The diagnostic's pairing loop, the kernel inventory's
+# `Kernel initramfs missing:` state line and the verify's incompleteness
+# verdict all consume THIS probe (never re-derive the shapes).
+kernel_initramfs_present()
+{
+    local v="$1" flavor="" pkgbase="" pkgbase_file=""
+    [[ -n "$v" ]] || return 1
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apk ]]; then
+        # The caller may pass the FILE-derived token (the diagnostic's
+        # vmlinuz-lts basename — "lts") or the INVENTORY version; accept the
+        # raw token as the flavor first, then derive the flavor the same way
+        # the verify's vmlinuz check does.
+        [[ -f "$TARGET_ROOT/boot/initramfs-$v" || -f "$TARGET_ROOT/boot/initramfs-$v.img" ]] && return 0
+        flavor="$(alpine_kernel_flavor "$v" 2>/dev/null || true)"
+        [[ -n "$flavor" && "$flavor" != "$v" ]] \
+            && { [[ -f "$TARGET_ROOT/boot/initramfs-$flavor" || -f "$TARGET_ROOT/boot/initramfs-$flavor.img" ]] && return 0; }
+        return 1
+    fi
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == pacman ]]; then
+        # Round 78 (cycle plan §13.6): the diagnostic passes the FILE-derived
+        # FLAVOUR token ("linux" from vmlinuz-linux) — accept the
+        # flavour-named pair FIRST.  The verify callers' VERSION tokens simply
+        # do not match the direct check and fall through to the pkgbase
+        # resolution below, byte-identical in behavior.
+        [[ -f "$TARGET_ROOT/boot/initramfs-$v.img" || -f "$TARGET_ROOT/boot/initramfs-$v-fallback.img" ]] && return 0
+        for pkgbase_file in "$TARGET_ROOT/usr/lib/modules/$v/pkgbase" \
+                            "$TARGET_ROOT/lib/modules/$v/pkgbase"; do
+            [[ -r "$pkgbase_file" ]] || continue
+            pkgbase="$(tr -d '[:space:]' < "$pkgbase_file" 2>/dev/null | head -c 64 || true)"
+            [[ -n "$pkgbase" ]] && break
+        done
+        [[ -n "$pkgbase" ]] || return 1
+        [[ -f "$TARGET_ROOT/boot/initramfs-$pkgbase.img" || -f "$TARGET_ROOT/boot/initramfs-$pkgbase-fallback.img" ]] && return 0
+        return 1
+    fi
+    [[ -f "$TARGET_ROOT/boot/initrd.img-$v" ]] && return 0
+    [[ -f "$TARGET_ROOT/boot/initramfs-$v.img" || -f "$TARGET_ROOT/boot/initramfs-$v-fallback.img" ]] && return 0
+    [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs && -f "$TARGET_ROOT/boot/initramfs-$v" ]] && return 0
+    [[ "$v" == linux || "$v" == linux-lts ]] \
+        && compgen -G "$TARGET_ROOT/boot/initramfs-${v}*.img" >/dev/null \
+        && return 0
+    return 1
+}
+
 diagnostic_kernel()
 {
     local kernel kernel_name version initrd rc=0 scope_label="target"
@@ -24791,15 +28578,16 @@ diagnostic_kernel()
         else
             version="$kernel_name"
         fi
-        if [[ -f "$TARGET_ROOT/boot/initrd.img-$version" ]]; then
-            echo "PASS: $kernel_name has matching initramfs initrd.img-$version."
-        elif [[ -f "$TARGET_ROOT/boot/initramfs-$version.img" || -f "$TARGET_ROOT/boot/initramfs-$version-fallback.img" ]]; then
-            echo "PASS: $kernel_name has matching initramfs initramfs-$version*.img."
-        elif [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs && -f "$TARGET_ROOT/boot/initramfs-$version" ]]; then
-            echo "PASS: $kernel_name has matching mkinitfs initramfs initramfs-$version."
-        elif [[ "$version" == linux || "$version" == linux-lts ]] \
-            && compgen -G "$TARGET_ROOT/boot/initramfs-${version}*.img" >/dev/null; then
-            echo "PASS: $kernel_name has matching named-kernel initramfs."
+        if kernel_initramfs_present "$version"; then
+            if [[ -f "$TARGET_ROOT/boot/initrd.img-$version" ]]; then
+                echo "PASS: $kernel_name has matching initramfs initrd.img-$version."
+            elif [[ -f "$TARGET_ROOT/boot/initramfs-$version.img" || -f "$TARGET_ROOT/boot/initramfs-$version-fallback.img" ]]; then
+                echo "PASS: $kernel_name has matching initramfs initramfs-$version*.img."
+            elif [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs && -f "$TARGET_ROOT/boot/initramfs-$version" ]]; then
+                echo "PASS: $kernel_name has matching mkinitfs initramfs initramfs-$version."
+            else
+                echo "PASS: $kernel_name has matching named-kernel initramfs."
+            fi
         else
             echo "FAIL: $kernel_name has no matching initramfs."
             rc=1
@@ -24876,6 +28664,13 @@ diagnostic_kernel_inventory()
         [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] && role="${role:+$role,}older"
         [[ -n "$KERNEL_REPO_LATEST" && "$v" == "$KERNEL_REPO_LATEST" ]] && role="${role:+$role,}repo-latest"
         echo "Kernel installed: $v size=${KERNEL_INVENTORY_SIZES[$i]:-0} pkgs=${KERNEL_INVENTORY_PKGS[$i]:-} role=${role:-none}"
+    done
+    # Round 66 (Finding 2): the missing-initramfs flag rides the cached kernel
+    # state (the parse round-trips it into KERNEL_NO_INITRD) so the menu
+    # annotation and the verify verdict see the incompleteness — the verify
+    # must never say "working" while an initrd is absent.
+    for v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+        kernel_initramfs_present "$v" || echo "Kernel initramfs missing: $v"
     done
     for v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
         role=""
@@ -24957,6 +28752,13 @@ diagnostic_kernel_inventory()
     if (( ${#KERNEL_PARTIAL[@]} > 0 )); then
         for v in "${KERNEL_PARTIAL[@]}"; do
             echo "Kernel incomplete: $v"
+        done
+    fi
+    # Round 64 (Finding 2): the module-vs-kernel incompatibility evidence —
+    # the kernel menu's per-kernel remedy actions gate on it.
+    if (( ${#KERNEL_MODULE_INCOMPAT[@]} > 0 )); then
+        for i in "${!KERNEL_MODULE_INCOMPAT[@]}"; do
+            echo "Kernel module build incompatibility: ${KERNEL_MODULE_INCOMPAT[$i]} kernel=${KERNEL_MODULE_INCOMPAT_KVER[$i]} packages=${KERNEL_MODULE_INCOMPAT_PKGS[$i]}"
         done
     fi
 }
@@ -25767,7 +29569,7 @@ diagnostic_display_initramfs_switch_evidence()
 # console= tokens — never other command-line content.
 diagnostic_display_unlock_console_routing()
 {
-    local line="" kind="" path="" cmdline="" tokens="" last="" rc=0
+    local line="" kind="" path="" cmdline="" routing_tokens="" last="" rc=0
     echo
     echo "Unlock prompt visibility / console routing (read-only):"
     case "$UNLOCK_CONSOLE_VERDICT" in
@@ -25790,8 +29592,8 @@ diagnostic_display_unlock_console_routing()
     if [[ -s "$UNLOCK_CONSOLE_SOURCES_FILE" ]]; then
         while IFS=$'\t' read -r kind path cmdline; do
             [[ -n "$kind" ]] || continue
-            tokens="$(unlock_console_tokens_of_cmdline "$cmdline" | paste -sd' ' -)"
-            printf 'Console routing (%s %s): %s\n' "$kind" "${path#$TARGET_ROOT}" "${tokens:-<no console= parameter>}"
+            routing_tokens="$(unlock_console_tokens_of_cmdline "$cmdline" | paste -sd' ' -)"
+            printf 'Console routing (%s %s): %s\n' "$kind" "${path#$TARGET_ROOT}" "${routing_tokens:-<no console= parameter>}"
             if [[ "$kind" == "$UNLOCK_CONSOLE_EFFECTIVE_KIND" ]]; then
                 last=""
                 last="$(unlock_console_layout_of_cmdline "$cmdline" 2>/dev/null)" && rc=0 || rc=$?
@@ -25870,6 +29672,10 @@ diagnostic_display_openrc()
     # time so the cached-section contract stays uniform across the backends
     # (on OpenRC/apk the derivation is the honest not-derivable form).
     echo "Vendor default display manager: $(display_manager_vendor_default_line)"
+    # Round 39: the conflict line's `none` form — the conflict probe is the
+    # systemd-shape evidence; the OpenRC/SysV branches report the honest
+    # none so the cached-section contract stays uniform.
+    echo "Display manager conflict: none"
 
     echo
     # Surface the shared boot classification so a user inspecting the
@@ -25963,9 +29769,59 @@ diagnostic_display_openrc()
     fi
 }
 
+# Round 232 (the boot-time DM failure-class evidence line): when the latest
+# boot's journal shows the CONFIGURED display-manager unit failing with the
+# start-limit-hit class — "Failed with result 'exit-code'" followed by the
+# terminal "Start request repeated too quickly" refusal (the Ubuntu SDDM
+# shape, which reads as a frozen boot at the last printed service) — name the
+# failure in one honest line instead of leaving only the raw journal lines.
+# The classifier consumes ONLY the bounded evidence stream the display
+# diagnostic already collected (the cached window-1200 slice through the
+# section's unit/exclusion filters; never a new journalctl run).  A healthy,
+# rotated or empty stream emits nothing, and a NON-configured unit's failures
+# never fire it.  $1 = the configured unit (sddm.service; empty/none disables
+# the classifier), $2 = the evidence stream.  Prints the line or nothing.
+display_manager_boot_failure_line()
+{
+    local unit="$1" stream="$2"
+    local unit_re="" failed_hit="" limit_hit="" counter_max="" plural=""
+    [[ -n "$unit" && "$unit" != "none" && -n "$stream" ]] || return 0
+    unit_re="(^|[[:space:]])${unit//./\\.}:"
+    # Both markers of the class must be present: the unit failed with
+    # exit-code AND systemd then refused further starts.
+    failed_hit="$(printf '%s\n' "$stream" \
+        | grep -E "$unit_re.*Failed with result 'exit-code'" | head -n 1 || true)"
+    limit_hit="$(printf '%s\n' "$stream" \
+        | grep -E "$unit_re.*Start request repeated too quickly" | head -n 1 || true)"
+    [[ -n "$failed_hit" && -n "$limit_hit" ]] || return 0
+    # The journal's own restart counter ("Scheduled restart job, restart
+    # counter is at N") is the failure count: counters are monotonic per
+    # boot and the bounded stream keeps the tail, so the highest visible
+    # counter is the last restart before the limit.
+    counter_max="$(printf '%s\n' "$stream" \
+        | grep -E "$unit_re" \
+        | awk '/Scheduled restart job, restart counter is at/ {
+                for (i = 1; i <= NF; i++)
+                    if ($i == "at") n = 0 + $(i + 1)
+                if (n > max) max = n
+            }
+            END { print max + 0 }' || true)"
+    if [[ "$counter_max" != "0" ]]; then
+        plural="s"
+        [[ "$counter_max" == "1" ]] && plural=""
+        printf 'Display manager boot failure: %s failed to start at the latest boot (start-limit-hit after %s restart%s) — the graphical login did not come up from the configured manager.\n' \
+            "$unit" "$counter_max" "$plural"
+    else
+        printf 'Display manager boot failure: %s failed to start at the latest boot (start-limit-hit after repeated failed starts) — the graphical login did not come up from the configured manager.\n' \
+            "$unit"
+    fi
+    return 0
+}
+
 diagnostic_display()
 {
-    local display_link pkg service unit status configured_manager="none" scope_label="target"
+    local display_link pkg service unit status configured_manager="none" scope_label="target" \
+        dm_boot_classifier_stream="" dm_boot_failure_line=""
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     local -a services=(sddm.service gdm.service gdm3.service lightdm.service greetd.service ly.service)
 
@@ -26028,6 +29884,9 @@ diagnostic_display()
         # backends (a SysV-init scope carries the honest not-derivable form —
         # the derivation requires a present systemd unit).
         echo "Vendor default display manager: $(display_manager_vendor_default_line)"
+        # Round 39: the conflict line's `none` form (the systemd-shape probe
+        # does not apply to a SysV-init scope).
+        echo "Display manager conflict: none"
         echo "No systemd graphical.target or display-manager.service is involved on this target."
         return 0
     fi
@@ -26087,6 +29946,52 @@ diagnostic_display()
     # mandatory packages; the not-derivable form is the honest verdict for
     # pacman/apk and for an undecidable/absent evidence set.
     echo "Vendor default display manager: $(display_manager_vendor_default_line)"
+
+    # Round 39 (the user's Fedora finding): the conflicting-DM evidence — a
+    # machine-stable line the walk-through's conflict case parses from the
+    # cached section (the `none` form keeps the cached contract uniform; an
+    # absent line in an older cache simply does not offer the conflict
+    # case).  The capability verdict is untouched: the conflict is
+    # repairable, so the display repair stays available.
+    display_manager_conflict_evidence
+    # Round 52 (the deferred-transition model): the staged-state line —
+    # the tool's own switch/resolve left the old DM deferred until the
+    # next login/reboot; the diagnostic names the transition honestly.
+    if [[ -n "${DISPLAY_MANAGER_TRANSITION_LINE:-}" ]]; then
+        echo "Display manager transition: $DISPLAY_MANAGER_TRANSITION_LINE"
+    fi
+    echo "Display manager conflict: ${DISPLAY_MANAGER_CONFLICT_LINE:-none}"
+
+    # Round 50 (the user's marker requirement): the last-successful-login
+    # evidence — the journal-derived DM of the last SUCCESSFUL login (the
+    # attempted-vs-successful distinction: a session that opened and stayed
+    # open), never the config.  The undecidable form is the honest empty
+    # state (no login history in the bounded lookback / the rotated journal).
+    local last_login_evidence=""
+    last_login_evidence="$(display_manager_last_successful_login 2>/dev/null || true)"
+    if [[ -n "$last_login_evidence" ]]; then
+        echo "Display manager last successful login: $last_login_evidence"
+    else
+        echo "Display manager last successful login: undecidable|no-login-history"
+    fi
+
+    # Round 50 (the reported rig login loop): the autologin evidence — the
+    # configured DM's automatic-login shape surfaces here with the honest
+    # hazard note.  The rig-proven class: the GDM's automatic login breaks
+    # the session registration on the current Fedora stack (the
+    # "Session never registered, failing" loop); the repair disables it on
+    # the GDM landing.  The lightdm's autologin is the working class and is
+    # reported without the hazard.
+    if [[ -n "$DISPLAY_MANAGER_SERVICE" && "$DISPLAY_MANAGER_SERVICE" != none ]]; then
+        local autologin_evidence=""
+        autologin_evidence="$(display_manager_autologin_user "$DISPLAY_MANAGER_SERVICE" 2>/dev/null || true)"
+        if [[ -n "$autologin_evidence" ]]; then
+            echo "Display manager autologin: $autologin_evidence ($(display_manager_label_for_service "$DISPLAY_MANAGER_SERVICE"))"
+            if [[ "$DISPLAY_MANAGER_SERVICE" == gdm.service || "$DISPLAY_MANAGER_SERVICE" == gdm3.service ]]; then
+                echo "Display manager autologin hazard: the GDM automatic login breaks the session registration on this machine (the 'Session never registered' class — the login screen bounces); the display repair disables it when GDM is landed."
+            fi
+        fi
+    fi
 
     echo
     # Surface the shared boot classification so a user inspecting the
@@ -26233,18 +30138,33 @@ diagnostic_display()
     echo
     echo "Recent ${scope_label} display-manager boot evidence (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && target_journal_evidence_present; then
-        # Keep the complete boot stream through the boot-relevant and shutdown
-        # filters so the systemd-logind reboot marker remains visible (it is a
-        # system unit, so the relevance filter retains it).  A unit-scoped
-        # journalctl query omits that marker and would misclassify orderly
-        # Display-manager teardown (SIGTERM/auth-helper exit) as a boot failure.
-        evidence_journal_filtered window-1200 \
-            | journal_current_boot_actionable \
+        # Round 52 (the boot-scoped targeted pass): the latest-boot evidence
+        # reads the CURRENT boot's DM-relevant lines through the server-side
+        # _COMM filters.  The round-232 cached-window reuse scrolled the
+        # boot's early DM lines past the window's tail on a long-running
+        # boot, so the honest failure evidence went missing; the verdict and
+        # the raw stream now share ONE bounded boot-scoped capture.  The
+        # systemd-logind comm joins the capture so the orderly-teardown
+        # reboot marker stays visible to the classifier (the round-232
+        # requirement — a unit-scoped query omits it and would misclassify
+        # an orderly teardown as a boot failure).
+        local dm_boot_journal_args=(journalctl)
+        (( RUNNING_HOST_MODE == 1 )) || dm_boot_journal_args=(journalctl --root="$TARGET_ROOT")
+        dm_boot_classifier_stream="$("${dm_boot_journal_args[@]}" -b 0 --no-pager \
+            _COMM=gdm _COMM=gdm-password _COMM=gdm-autologin _COMM=gdm-launch-environment \
+            _COMM=lightdm _COMM=ly _COMM=greetd _COMM=sddm _COMM=sddm-helper _COMM=systemd-logind 2>/dev/null \
             | grep -Ei 'sddm|gdm|lightdm|greetd|(^|[^[:alnum:]])ly([^[:alnum:]]|$)' \
-            | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
             | grep -Eiv 'gkr-pam: unable to locate daemon control file|pam_kwallet5: open_session called without kwallet5_key' \
-            | tail -120 \
-            | collapse_similar_journal_lines || true
+            || true)"
+        dm_boot_failure_line="$(display_manager_boot_failure_line "${configured_manager}" \
+            "$(printf '%s\n' "$dm_boot_classifier_stream" | tail -120 || true)")"
+        [[ -n "$dm_boot_failure_line" ]] && printf '%s\n' "$dm_boot_failure_line"
+        if [[ -n "$dm_boot_classifier_stream" ]]; then
+            printf '%s\n' "$dm_boot_classifier_stream" \
+                | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
+                | tail -120 \
+                | collapse_similar_journal_lines || true
+        fi
     else
         echo "No persistent ${scope_label} journal or syslog evidence source is available."
     fi
@@ -26252,12 +30172,16 @@ diagnostic_display()
     echo
     echo "Recent ${scope_label} graphics/display errors (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && target_journal_evidence_present; then
-        # Preserve the full stream until after boot-relevant and shutdown
-        # filtering; priority queries do not include the reboot marker used by
-        # that filter.
-        evidence_journal_filtered window-1600 \
-            | journal_current_boot_actionable \
-            | grep -Ei 'sddm|gdm|lightdm|greetd|(^|[^[:alnum:]])ly([^[:alnum:]]|$)|plasma|kwin|nvidia|NVRM|nouveau|drm|gpu|display' \
+        # Round 52 (the boot-scoped targeted pass): the current boot's
+        # graphics/DM error lines via the server-side targeted filters (the
+        # cached-window reuse scrolled the boot's early errors past the
+        # tail on a long-running boot).
+        local gfx_journal_args=(journalctl)
+        (( RUNNING_HOST_MODE == 1 )) || gfx_journal_args=(journalctl --root="$TARGET_ROOT")
+        "${gfx_journal_args[@]}" -b 0 --no-pager \
+            _COMM=gdm _COMM=gdm-password _COMM=gdm-autologin _COMM=gdm-launch-environment \
+            _COMM=lightdm _COMM=ly _COMM=greetd _COMM=sddm _COMM=sddm-helper \
+            _COMM=gnome-shell _COMM=kwin_wayland _COMM=kwin_x11 _COMM=plasmashell _COMM=Xorg 2>/dev/null \
             | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
             | tail -160 \
             | collapse_similar_journal_lines || true
@@ -28872,30 +32796,30 @@ input_bus_controller_collect()
 input_initramfs_inclusion_collect()
 {
     INPUT_INITRAMFS_INCLUSION="none-detected"
-    local backend tokens entry
+    local backend mod_tokens entry
     local -a entries=()
     for backend in "${TARGET_INITRAMFS_BACKENDS[@]}"; do
         case "$backend" in
             initramfs-tools)
-                tokens="$(grep -hoE "^[[:space:]]*(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)[[:space:]]*($|#)" \
+                mod_tokens="$(grep -hoE "^[[:space:]]*(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)[[:space:]]*($|#)" \
                     "$TARGET_ROOT/etc/initramfs-tools/modules" 2>/dev/null \
                     | sed 's/[[:space:]#].*$//' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("initramfs-tools: ${tokens:-none}")
+                entries+=("initramfs-tools: ${mod_tokens:-none}")
                 ;;
             dracut)
-                tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
+                mod_tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
                     "$TARGET_ROOT/etc/dracut.conf" "$TARGET_ROOT/etc/dracut.conf.d/"*.conf 2>/dev/null \
                     | sed 's/.*="//; s/"$//' | tr ' ' '\n' \
                     | grep -E '^(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)$' \
                     | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("dracut: ${tokens:-none}")
+                entries+=("dracut: ${mod_tokens:-none}")
                 ;;
             mkinitcpio)
-                tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
+                mod_tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
                     | sed 's/^MODULES=(//; s/)$//; s/[()]//g' | tr ' ' '\n' \
                     | grep -E '^(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)$' \
                     | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("mkinitcpio: ${tokens:-none}")
+                entries+=("mkinitcpio: ${mod_tokens:-none}")
                 ;;
             mkinitfs)
                 # Round 155 (Finding A): the mkinitfs inclusion evidence must
@@ -28911,10 +32835,10 @@ input_initramfs_inclusion_collect()
                 # The round-130 N4 writer stores kernel-relative PATH GLOBS in
                 # that file (kernel/drivers/hid/hid-apple.ko*), so the module
                 # token is extracted from the glob basename.
-                tokens="$(grep -hoE "(^|/)(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)\.ko" \
+                mod_tokens="$(grep -hoE "(^|/)(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)\.ko" \
                     "$TARGET_ROOT/etc/mkinitfs/features.d/boot-bitch-drivers.modules" 2>/dev/null \
                     | sed 's#^.*/##; s/\.ko.*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("mkinitfs: ${tokens:-none}")
+                entries+=("mkinitfs: ${mod_tokens:-none}")
                 ;;
             *) entries+=("$backend: unknown") ;;
         esac
@@ -31278,32 +35202,32 @@ network_module_evidence_collect()
 network_initramfs_inclusion_collect()
 {
     NETWORK_INITRAMFS_INCLUSION="none-detected"
-    local backend tokens entry
+    local backend mod_tokens entry
     local -a entries=()
     local alt
     alt="$(network_module_alternation "$NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES")"
     for backend in "${TARGET_INITRAMFS_BACKENDS[@]}"; do
         case "$backend" in
             initramfs-tools)
-                tokens="$(grep -hoE "^[[:space:]]*(${alt})[[:space:]]*($|#)" \
+                mod_tokens="$(grep -hoE "^[[:space:]]*(${alt})[[:space:]]*($|#)" \
                     "$TARGET_ROOT/etc/initramfs-tools/modules" 2>/dev/null \
                     | sed 's/[[:space:]#].*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("initramfs-tools: ${tokens:-none}")
+                entries+=("initramfs-tools: ${mod_tokens:-none}")
                 ;;
             dracut)
-                tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
+                mod_tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
                     "$TARGET_ROOT/etc/dracut.conf" "$TARGET_ROOT/etc/dracut.conf.d/"*.conf 2>/dev/null \
                     | sed 's/.*="//; s/"$//' | tr ' ' '\n' \
                     | grep -E "^(${alt})$" \
                     | sed 's/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("dracut: ${tokens:-none}")
+                entries+=("dracut: ${mod_tokens:-none}")
                 ;;
             mkinitcpio)
-                tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
+                mod_tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
                     | sed 's/^MODULES=(//; s/)$//; s/[()]//g' | tr ' ' '\n' \
                     | grep -E "^(${alt})$" \
                     | sed 's/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("mkinitcpio: ${tokens:-none}")
+                entries+=("mkinitcpio: ${mod_tokens:-none}")
                 ;;
             mkinitfs)
                 # Round 130 (N4): the mkinitfs inclusion lives in the
@@ -31317,10 +35241,10 @@ network_initramfs_inclusion_collect()
                 # module TOKEN is extracted from the glob basename (the input
                 # twin's round-155 pattern, with the network module
                 # alternation).
-                tokens="$(grep -hoE "(^|/)(${alt})\.ko" \
+                mod_tokens="$(grep -hoE "(^|/)(${alt})\.ko" \
                     "$TARGET_ROOT/etc/mkinitfs/features.d/boot-bitch-drivers.modules" 2>/dev/null \
                     | sed 's#^.*/##; s/\.ko.*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
-                entries+=("mkinitfs: ${tokens:-none}")
+                entries+=("mkinitfs: ${mod_tokens:-none}")
                 ;;
             *) entries+=("$backend: unknown") ;;
         esac
@@ -32123,16 +36047,16 @@ boot_initramfs_modules_write()
             conf="$TARGET_ROOT/etc/mkinitcpio.conf"
             [[ -f "$conf" ]] || { printf '0\n'; return 0; }
             cp -a -- "$conf" "$SESSION_DIR/mkinitcpio.conf.bak" || true
-            local current="" merged=""
+            local current="" modlist=""
             current="$(grep -m1 '^MODULES=' "$conf" 2>/dev/null | sed 's/^MODULES=(//; s/)$//' | tr -d '()' || true)"
-            merged="$current"
+            modlist="$current"
             for mod in $modules; do
                 [[ -n "$mod" ]] || continue
-                grep -qw "$mod" <<<"$merged" 2>/dev/null || merged="$merged $mod"
+                grep -qw "$mod" <<<"$modlist" 2>/dev/null || modlist="$modlist $mod"
             done
-            [[ "$merged" == "$current" ]] && { printf '0\n'; return 0; }
+            [[ "$modlist" == "$current" ]] && { printf '0\n'; return 0; }
             tmp="$conf.boot-bitch-tmp"
-            sed "s/^MODULES=.*/MODULES=(${merged})/" "$conf" > "$tmp" || fail "Failed to rewrite $conf."
+            sed "s/^MODULES=.*/MODULES=(${modlist})/" "$conf" > "$tmp" || fail "Failed to rewrite $conf."
             fp_before="$(repair_file_fingerprint "$conf")"
             install -m 0644 "$tmp" "$conf" || fail "Failed to install $conf."
             rm -f -- "$tmp"
@@ -32707,7 +36631,7 @@ driver_package_available_versions()
                 RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env \
                     HOME=/root LC_ALL=C \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                    dnf5 repoquery --available --qf '%{VERSION}-%{RELEASE}\n' "$pkg" 2>/dev/null
+                    dnf5 -C repoquery --available --qf '%{VERSION}-%{RELEASE}\n' "$pkg" 2>/dev/null
             )"
             set -e
             [[ -n "$output" ]] || return 1
@@ -32797,6 +36721,10 @@ input_repair_reinstall()
         return 0
     fi
     if [[ -n "$pkg" ]]; then
+        # Round 60 (Finding 1c): the broken-dpkg-state preflight — a target
+        # carrying half-configured packages must refuse UPFRONT with the named
+        # reason (the Fix Broken Packages repair), never the mid-apply exit 100.
+        preflight_package_manager_not_interrupted "${TARGET_PACKAGE_MANAGER:-}"
         case "${TARGET_PACKAGE_MANAGER:-}" in
             apt/dpkg)
                 if ! target_package_available "$pkg"; then
@@ -32840,6 +36768,9 @@ network_repair_reinstall()
         return 0
     fi
     if [[ -n "$pkg" ]]; then
+        # Round 60 (Finding 1c): the broken-dpkg-state preflight (see the
+        # input counterpart).
+        preflight_package_manager_not_interrupted "${TARGET_PACKAGE_MANAGER:-}"
         case "${TARGET_PACKAGE_MANAGER:-}" in
             apt/dpkg)
                 if ! target_package_available "$pkg"; then
@@ -33147,7 +37078,15 @@ safe_apt_downgrade_packages()
     if (( CHROOT_TRY_RC == 124 )); then
         fail "$(reason package-manager-timeout "$label")."
     fi
-    (( CHROOT_TRY_RC == 0 )) || fail "$label failed with exit code $CHROOT_TRY_RC."
+    if (( CHROOT_TRY_RC != 0 )); then
+        # Round 69 (the universal unblocker): the named blocker verdict on the
+        # half-configured class — never the bare exit code (see
+        # safe_apt_install_packages).
+        local blocker_prose=""
+        blocker_prose="$(dpkg_half_configured_failure_prose "$CHROOT_TRY_OUTPUT" 2>/dev/null || true)"
+        [[ -z "$blocker_prose" ]] || fail "$label: $blocker_prose"
+        fail "$label failed with exit code $CHROOT_TRY_RC."
+    fi
 }
 
 # The rpm downgrade safety validator: the rpm_simulation_is_safe guards (exit
@@ -33633,9 +37572,15 @@ input_reverify()
     input_collect_evidence
     local after="${INPUT_VERDICT:-unknown}"
     msg_log input-reverify-verdict "$before" "$after"
-    if [[ "$after" == ok ]]; then
+    # Round 83c hygiene (§13.8 — the no-op wording pair): the "FIXED" line
+    # fires only for a GENUINE transition into a healthy verdict — an
+    # already-healthy stack (verdict ok → ok, the no-op attempt shape)
+    # reports the honest no-change transition line alone, never
+    # "FIXED — the evidence now reports a healthy input stack" on top of
+    # the last-attempt "not fixed (reason:install-package-no-op)".
+    if [[ "$after" == ok && "$before" != ok ]]; then
         msg_log input-reverify-fixed
-    else
+    elif [[ "$after" != ok ]]; then
         msg_log input-reverify-not-fixed "$after"
     fi
 }
@@ -34598,13 +38543,13 @@ network_repair_driver_switch()
     fi
     local already=0
     write_module_blacklist "$broken" || already=1
-    local installed=0 applied=0
+    local applied=0
     if (( already == 0 )); then
         msg_log network-blacklist-written "$broken"
         applied=1
     fi
     if [[ -n "$vendor_pkg" ]]; then
-        network_guarded_install_packages "$vendor_pkg" && { installed=1; applied=1; } || true
+        network_guarded_install_packages "$vendor_pkg" && applied=1 || true
         [[ -n "$replacement" ]] && boot_initramfs_modules_write "network" "$replacement" >/dev/null || true
     else
         local written=0
@@ -36832,6 +40777,247 @@ diagnostic_luks()
     fi
 }
 
+# Round 23 (0.2.32, the Num Lock early-boot repair — phase 2): the
+# probe-only diagnostic section. It derives its per-stage verdicts from
+# the session's detected evidence (the shared collectors — the initramfs
+# and display-manager backends, the boot prompt facts) plus the
+# numlock-specific reads below, and it NEVER mutates. The machine-stable
+# verdict lines are the contract the round-21 design defines:
+#   Num Lock at the drive-decryption prompt: enabled|not-enabled|not-applicable|<reason>
+#   Num Lock at the graphical login: ...
+#   Num Lock at the console login: ...
+#   Num Lock at the desktop session: out-of-scope|desktop-managed|<desktop>[:<state>]
+#   Num Lock at the firmware/GRUB stage: out-of-reach|no-grub-mechanism
+# The propagation model (the round-21 PoC): the earliest actionable point
+# (the initrd mechanism) is the one fix target; the greeter and the
+# console confirm the propagated state (the GDM explicit-setter exception
+# was DISPROVEN on the Sparky rig — the greeter preserves the console
+# state); the DE session stage is delegated and never repaired.
+
+# Reads one console VT's Num Lock flag via the KDGKBLED ioctl. Round 26 (the
+# user's TUXEDO finding): the first python3 reader failed in the helper's
+# privileged context — an immutable bytes buffer for an _IOR ioctl (the
+# kernel WRITES the flag into the buffer; CPython refuses an immutable one)
+# and the read-only open. The round-21 C binary (O_RDWR|O_NOCTTY|O_NONBLOCK)
+# is the proven path; the reader now mirrors it (the r+b open + the mutable
+# bytearray) and the SECTION prefers the shipped binary's read mode when it
+# is installed. Prints on|off|unreadable. Host-console only.
+numlock_vt_read()
+{
+    local dev="$1"
+    # The shipped binary's read mode is the proven path (the same ioctl, the
+    # O_RDWR|O_NOCTTY|O_NONBLOCK open); the python3 reader is the fallback
+    # for a scope whose package predates the payload.
+    if [[ -x "$TARGET_ROOT/usr/libexec/boot-bitch/numlock-on" ]]; then
+        "$TARGET_ROOT/usr/libexec/boot-bitch/numlock-on" read "$dev" 2>/dev/null \
+            | sed -nE 's/^boot-bitch: numlock read .*: (on|off|unreadable)$/\1/p' | head -n1
+        return 0
+    fi
+    command -v python3 >/dev/null 2>&1 || { printf '%s\n' "unreadable"; return 0; }
+    python3 - "$dev" <<'PY' 2>/dev/null
+import fcntl, os, sys
+try:
+    # os.open: the C-equivalent open (O_RDWR|O_NOCTTY|O_NONBLOCK) — the
+    # buffered "r+b" mode is refused on a character device (not seekable,
+    # the round-26 Sparky finding).  KDGKBLED = 0x4B64 (linux/kd.h — the
+    # earlier 0x4B60 literal was wrong and returned ENOTTY; the shipped
+    # binary uses the header symbol and is the preferred path).
+    f = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    b = bytearray(b"\x00")
+    fcntl.ioctl(f, 0x4B64, b)                        # KDGKBLED (in place)
+    print("on" if b[0] & 0x02 else "off")
+except Exception:
+    print("unreadable")
+PY
+}
+
+# Positive evidence only: does this scope's boot carry a decrypt prompt?
+# (a) an encrypted component in the selected root's ancestry, (b) an
+# encrypted-boot cmdline token on the running host, (c) a passphrase
+# crypttab entry (the Sparky sparky_home shape), or (d) a ZFS keystore
+# root (the Ubuntu shape). Never guessed.
+# Round 32 (the Alpine fallback): the OpenRC numlock service counts as the
+# console-stage mechanism when ENABLED (the rc-update runlevel state). The
+# host scope queries the live state; the target scope cannot (the runlevel
+# registry is the running system's) — the file presence stays a reported
+# fact, never an enablement claim.
+numlock_openrc_enabled()
+{
+    if (( RUNNING_HOST_MODE == 1 )); then
+        [[ -x /sbin/rc-update ]] || return 1
+        /sbin/rc-update show 2>/dev/null | grep -qw numlock || return 1
+        return 0
+    fi
+    return 1
+}
+
+numlock_boot_decrypt_prompt()
+{
+    lsblk -srpo NAME,TYPE,FSTYPE "$ROOT_DEVICE" 2>/dev/null | grep -q 'crypto_LUKS' && return 0
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local cmdline=""
+        cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+        grep -qE 'rd\.luks|cryptdevice=' <<<"$cmdline" && return 0
+        grep -q 'root=ZFS=' <<<"$cmdline" && return 0
+    fi
+    if [[ -f "$TARGET_ROOT/etc/crypttab" ]]; then
+        while read -r name source key _rest; do
+            [[ -n "$name" && "${name:0:1}" != "#" ]] || continue
+            [[ -z "$key" || "$key" == "none" || "$key" == "-" ]] && return 0
+        done < "$TARGET_ROOT/etc/crypttab"
+    fi
+    return 1
+}
+
+diagnostic_numlock()
+{
+    local scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+
+    # --- the early-mechanism facts (the numlock-specific reads) ----------
+    # Round 31 (the Fedora finding): the listing spans EVERY installed image
+    # (the lexically-first match can be a stale image) and is not truncated —
+    # the per-image greps stream directly.
+    local img="" initrd_readable=no
+    local initrd_numlock=absent initrd_setleds=absent initrd_kbdmode=absent
+    for img in "$TARGET_ROOT"/boot/initrd.img-* "$TARGET_ROOT"/boot/initrd-*.img \
+               "$TARGET_ROOT"/boot/initramfs-*.img "$TARGET_ROOT"/boot/initramfs-*; do
+        [[ -f "$img" ]] || continue
+        if command -v lsinitramfs >/dev/null 2>&1; then
+            lsinitramfs "$img" 2>/dev/null | grep -qE 'numlock-on|bb-numlock' && initrd_numlock=present
+            lsinitramfs "$img" 2>/dev/null | grep -qE '(^|/)setleds$' && initrd_setleds=present
+            lsinitramfs "$img" 2>/dev/null | grep -qE '(^|/)kbd_mode$' && initrd_kbdmode=present
+            initrd_readable=yes
+        elif command -v lsinitrd >/dev/null 2>&1; then
+            lsinitrd "$img" 2>/dev/null | grep -qE 'numlock-on|bb-numlock' && initrd_numlock=present
+            lsinitrd "$img" 2>/dev/null | grep -qE '(^|/)setleds$' && initrd_setleds=present
+            lsinitrd "$img" 2>/dev/null | grep -qE '(^|/)kbd_mode$' && initrd_kbdmode=present
+            initrd_readable=yes
+        elif command -v lsinitcpio >/dev/null 2>&1; then
+            lsinitcpio "$img" 2>/dev/null | grep -qE 'numlock-on|bb-numlock' && initrd_numlock=present
+            lsinitcpio "$img" 2>/dev/null | grep -qE '(^|/)setleds$' && initrd_setleds=present
+            lsinitcpio "$img" 2>/dev/null | grep -qE '(^|/)kbd_mode$' && initrd_kbdmode=present
+            initrd_readable=yes
+        elif command -v zcat >/dev/null 2>&1 && command -v cpio >/dev/null 2>&1; then
+            zcat "$img" 2>/dev/null | cpio -t 2>/dev/null | grep -qE 'numlock-on|bb-numlock' && initrd_numlock=present
+            zcat "$img" 2>/dev/null | cpio -t 2>/dev/null | grep -qE '(^|/)setleds$' && initrd_setleds=present
+            zcat "$img" 2>/dev/null | cpio -t 2>/dev/null | grep -qE '(^|/)kbd_mode$' && initrd_kbdmode=present
+            initrd_readable=yes
+        fi
+    done
+
+    local hook=absent
+    for h in "$TARGET_ROOT"/etc/initramfs-tools/hooks/*numlock* \
+             "$TARGET_ROOT"/etc/initramfs-tools/scripts/init-top/*numlock* \
+             "$TARGET_ROOT"/usr/lib/dracut/modules.d/*boot-bitch* \
+             "$TARGET_ROOT"/etc/mkinitfs/features.d/*numlock* \
+             "$TARGET_ROOT"/etc/initcpio/hooks/*numlock*; do
+        if [[ -e "$h" ]]; then hook=present; break; fi
+    done
+
+    local sys_setleds=absent sys_kbdmode=absent
+    if target_has_executable /usr/bin/setleds /bin/setleds /usr/sbin/setleds; then sys_setleds=present; fi
+    if target_has_executable /usr/bin/kbd_mode /bin/kbd_mode /usr/sbin/kbd_mode; then sys_kbdmode=present; fi
+
+    # --- the display-manager knob facts ---------------------------------
+    local sddm_numlock=absent gdm_dconf=unset lightdm_script=absent
+    local f="" numlock_re='^[[:space:]]*Numlock[[:space:]]*=[[:space:]]*(on|off|none)[[:space:]]*$'
+    for f in "$TARGET_ROOT"/etc/sddm.conf "$TARGET_ROOT"/etc/sddm.conf.d/*.conf; do
+        [[ -f "$f" ]] || continue
+        while read -r line; do
+            if [[ "$line" =~ $numlock_re ]]; then
+                sddm_numlock="${BASH_REMATCH[1]}"
+            fi
+        done < "$f"
+    done
+    grep -l 'numlock-state' "$TARGET_ROOT"/etc/gdm3/greeter.dconf-defaults \
+        "$TARGET_ROOT"/etc/dconf/db/gdm.d/* 2>/dev/null | grep -q . && gdm_dconf=set
+    grep -l 'greeter-setup-script' "$TARGET_ROOT"/etc/lightdm/lightdm.conf \
+        "$TARGET_ROOT"/etc/lightdm/lightdm.conf.d/*.conf 2>/dev/null | grep -q . && lightdm_script=present
+
+    local getty_dropin=absent openrc_numlock=absent
+    for g in "$TARGET_ROOT"/etc/systemd/system/getty@*.service.d/*.conf; do
+        [[ -f "$g" ]] && { getty_dropin=present; break; }
+    done
+    [[ -e "$TARGET_ROOT/etc/init.d/numlock" ]] && openrc_numlock=present
+
+    # --- the desktop-session knob facts (the delegated boundary) --------
+    local kde_knob=absent xfce_knob=absent desktop="none"
+    for kc in "$TARGET_ROOT"/home/*/.config/kcminputrc; do
+        [[ -f "$kc" ]] || continue
+        local v=""
+        v="$(awk '/^\[Keyboard\]/{k=1;next} /^\[/{k=0} k && /^NumLock=/{sub(/^NumLock=/,"");print}' "$kc" | head -1)"
+        [[ -n "$v" ]] && kde_knob="$v"
+    done
+    for xk in "$TARGET_ROOT"/home/*/.config/xfce4/xfconf/xfce-perchannel-xml/keyboards.xml; do
+        [[ -f "$xk" ]] || continue
+        local xv=""
+        xv="$(grep -oE '<property name="RestoreNumlock" type="bool" value="(true|false)"/>' "$xk" | sed -n 's/.*value="\([^"]*\)".*/\1/p' | head -1)"
+        [[ -n "$xv" ]] && xfce_knob="$xv"
+    done
+    if [[ "$kde_knob" != absent ]]; then desktop="kde"; elif [[ "$xfce_knob" != absent ]]; then desktop="xfce"; fi
+
+    # --- the verdict lines (the machine-stable contract) -----------------
+    echo "Num Lock at the firmware/GRUB stage: out-of-reach|no-grub-mechanism"
+
+    local prompt=absent
+    numlock_boot_decrypt_prompt && prompt=present
+    if [[ "$prompt" == absent ]]; then
+        echo "Num Lock at the drive-decryption prompt: not-applicable|no-boot-decrypt-prompt"
+    elif [[ "$initrd_numlock" == present || "$initrd_setleds" == present ]]; then
+        echo "Num Lock at the drive-decryption prompt: enabled"
+    elif [[ "$initrd_readable" == no ]]; then
+        echo "Num Lock at the drive-decryption prompt: not-enabled|reason:initrd-unreadable"
+    else
+        echo "Num Lock at the drive-decryption prompt: not-enabled"
+    fi
+
+    if [[ -z "$TARGET_DISPLAY_BACKEND" || "$TARGET_DISPLAY_BACKEND" == "none" ]]; then
+        echo "Num Lock at the graphical login: not-applicable|no-display-manager"
+    elif [[ "$initrd_numlock" == present || "$initrd_setleds" == present || "$sddm_numlock" == on ]]; then
+        echo "Num Lock at the graphical login: enabled"
+    elif [[ "$sddm_numlock" == off ]]; then
+        echo "Num Lock at the graphical login: not-enabled|reason:sddm-numlock-off"
+    elif [[ "$initrd_readable" == no ]]; then
+        echo "Num Lock at the graphical login: not-enabled|reason:initrd-unreadable"
+    else
+        echo "Num Lock at the graphical login: not-enabled"
+    fi
+
+    if [[ "$initrd_numlock" == present || "$initrd_setleds" == present || "$getty_dropin" == present ]] \
+        || numlock_openrc_enabled; then
+        echo "Num Lock at the console login: enabled"
+    elif [[ "$initrd_readable" == no ]]; then
+        echo "Num Lock at the console login: not-enabled|reason:initrd-unreadable"
+    else
+        echo "Num Lock at the console login: not-enabled"
+    fi
+
+    case "$desktop" in
+        kde)  echo "Num Lock at the desktop session: out-of-scope|desktop-managed|kde:$kde_knob" ;;
+        xfce) echo "Num Lock at the desktop session: out-of-scope|desktop-managed|xfce:$xfce_knob" ;;
+        *)    echo "Num Lock at the desktop session: out-of-scope|desktop-managed|none" ;;
+    esac
+
+    # --- the derivation evidence ----------------------------------------
+    echo "Num Lock early mechanism: initrd-numlock=$initrd_numlock initrd-setleds=$initrd_setleds initrd-kbd-mode=$initrd_kbdmode hook=$hook"
+    echo "Num Lock console tools: system-setleds=$sys_setleds system-kbd-mode=$sys_kbdmode"
+    echo "Num Lock display-manager knob: sddm=$sddm_numlock gdm-dconf=$gdm_dconf lightdm-script=$lightdm_script"
+    echo "Num Lock console-login mechanism: getty-drop-in=$getty_dropin openrc-numlock-service=$openrc_numlock"
+    echo "Num Lock desktop knob: kde=$kde_knob xfce=$xfce_knob"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local vt_state="" t=""
+        for t in 0 1 2 3 4 5 6 7 8; do
+            [[ -e "/dev/tty$t" ]] || continue
+            vt_state+=" tty$t=$(numlock_vt_read "/dev/tty$t")"
+        done
+        echo "Num Lock console state now:$vt_state"
+    else
+        echo "Num Lock console state now: not-probed (the live console belongs to the running host)"
+    fi
+    echo "Num Lock decrypt prompt: $prompt ($scope_label)"
+}
+
 run_one_diagnostic()
 {
     local key="$1" scope="${2:-Repair Target}" title rc=0
@@ -36867,6 +41053,7 @@ run_one_diagnostic()
         luks)        diagnostic_luks || rc=$? ;;
         input)       diagnostic_input || rc=$? ;;
         network)     diagnostic_network || rc=$? ;;
+        numlock)     diagnostic_numlock || rc=$? ;;
         *) fail "Unknown diagnostic: $key" ;;
     esac
     echo
@@ -37036,7 +41223,7 @@ run_target_diagnostic()
         # The File systems section runs last: its read-only check tools require
         # the helper-owned mounts to be released, while every earlier section
         # still reads the mounted target.
-        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input network filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input numlock network filesystem; do
             run_one_target_diagnostic "$key" || true
             if (( SESSION_CANCEL_REQUESTED )); then
                 msg_log diagnostic-cancelled
@@ -37105,7 +41292,7 @@ run_host_diagnostic()
         echo
         # See run_target_diagnostic: the File systems section is last because
         # it releases the helper's read-only mounts for the offline check tools.
-        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input network filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input numlock network filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
             if (( SESSION_CANCEL_REQUESTED )); then
                 msg_log diagnostic-cancelled
@@ -42023,29 +46210,124 @@ shell_filter_flush_pending()
 # boundary and normalize the same way (they never pass through).
 shell_stream_filter()
 {
-    local ch
-    SHELL_FILTER_ESC=0
-    SHELL_FILTER_CR_PENDING=0
-    SHELL_FILTER_LINE_HAS_CONTENT=0
-    SHELL_FILTER_PENDING_WS=""
-    SHELL_FILTER_SEQ_BYTES=0
-    SHELL_FILTER_ALTCHARSET=0
-    while IFS= read -r -n 1 ch; do
-        if [[ -z "$ch" ]]; then
-            ch=$'\n'
-        fi
-        shell_filter_byte "$ch"
-        if [[ -n "$SHELL_FILTER_OUT" ]]; then
-            printf '%s' "$SHELL_FILTER_OUT"
-        fi
-    done
-    # The final line may be unterminated (a prompt or the last progress
-    # update); it was not ended by CR, so flush its deferred trailing
-    # whitespace to keep every byte.
-    shell_filter_flush_pending
-    if [[ -n "$SHELL_FILTER_OUT" ]]; then
-        printf '%s' "$SHELL_FILTER_OUT"
-    fi
+    # Round 60 (Finding 3 — the streaming relay overhead): the pre-round-60
+    # filter ran a BASH FUNCTION PER BYTE (`read -n 1` + shell_filter_byte
+    # per character), so a 930-package apt transcript paid millions of shell
+    # function calls — the "streaming itself is slowing it down" the user
+    # observed (measured: the 9 MB drill stream never finished in 300 s
+    # through the byte loop).  The same state machine now runs as ONE awk
+    # pass (the C-level gsubs + the CR-split records) — the escape-sequence
+    # stripping, the CR progress-line collapsing with the trailing-whitespace
+    # trim, and the DEC alternate-charset box translation, byte-equivalent
+    # for the package-manager shapes (the equivalence fixture is the
+    # round-60 drill).
+    awk '
+    BEGIN {
+        RS = "\r"
+        ORS = "\n"
+    }
+    {
+        s = $0
+        # The DEC line-drawing glyphs translate ONLY inside the paired
+        # ESC(0 ... ESC(B region (the whiptail box shape) — this MUST run
+        # BEFORE the escape strips below, which remove those markers; an
+        # unterminated ESC(0 tail keeps the translation to the line end.
+        while (match(s, /\x1b\(0[^\x1b]*\x1b\(B/)) {
+            region = substr(s, RSTART + 3, RLENGTH - 6)
+            gsub(/q/, "-", region)
+            gsub(/x/, "|", region)
+            gsub(/[j-n]/, "+", region)
+            gsub(/[t-w]/, "+", region)
+            s = substr(s, 1, RSTART - 1) region substr(s, RSTART + RLENGTH)
+        }
+        if (match(s, /\x1b\(0[^\x1b]*$/)) {
+            region = substr(s, RSTART + 3)
+            gsub(/q/, "-", region)
+            gsub(/x/, "|", region)
+            gsub(/[j-n]/, "+", region)
+            gsub(/[t-w]/, "+", region)
+            s = substr(s, 1, RSTART - 1) region
+        }
+        # The bounded resync FIRST: an unterminated CSI whose parameter run
+        # exceeds 2048 bytes is dropped up to the cap and the remainder
+        # reprocessed as plain content (one escape sequence can never swallow
+        # the stream).  The explicit length guard avoids the unbounded
+        # interval expression that mawk 1.3.4 corrupts.
+        while (match(s, /\x1b\[[0-9;?]+/)) {
+            if (RLENGTH - 2 <= 2048) break
+            s = substr(s, 1, RSTART - 1) substr(s, RSTART + 2 + 2048)
+        }
+        # CSI and OSC sequences (bounded by their own terminators — the CSI
+        # parameter run capped to the same 2048, the intermediate run to 32),
+        # the designation bytes and any lone escape or BEL.  Round 62 (the
+        # busybox-awk portability): the caps run as an EXPLICIT-LENGTH match
+        # loop, never an interval expression — busybox awk (the Alpine awk)
+        # rejects interval BOUNDS above 255 outright (`{0,2048}` does not
+        # compile there), while the length-checked form is pure POSIX awk.
+        # The semantics stay byte-identical: a sequence whose parameter or
+        # intermediate run exceeds its cap is left in place (the bare-ESC
+        # strip below turns it into plain content) exactly like the old
+        # regex, which could not complete the capped match either.
+        while (match(s, /\x1b\[[0-9;?]*[ -\/]*[@-~]/)) {
+            # The outer RSTART/RLENGTH are saved FIRST: the inner match
+            # below clobbers them (the awk match globals), and the removal
+            # must use the outer span.
+            csi_start = RSTART
+            csi_len = RLENGTH
+            seq = substr(s, csi_start, csi_len)
+            middle = substr(seq, 3, csi_len - 3)
+            params = 0
+            if (match(middle, /^[0-9;?]*/)) {
+                params = RLENGTH
+            }
+            if (params <= 2048 && length(middle) - params <= 32) {
+                s = substr(s, 1, csi_start - 1) substr(s, csi_start + csi_len)
+            } else {
+                break
+            }
+        }
+        gsub(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/, "", s)
+        gsub(/\x1b\([0BA]/, "", s)
+        gsub(/\x1b[()]/, "", s)
+        gsub(/\x1b/, "", s)
+        gsub(/\a/, "", s)
+        n = split(s, lines, /\n/)
+        for (i = 1; i <= n; i++) {
+            line = lines[i]
+            if (i == 1 && line == "" && NR > 1) {
+                # The companion LF of a CR opens the record (the byte loop
+                # skips it via the CR-pending state); the leading empty
+                # element is not a line.
+                continue
+            }
+            if (i == n && line == "") {
+                # The LF-terminated tail element is not a line.
+                continue
+            }
+            if (i == n && RT == "") {
+                # The last line of the final record: the LF-terminated shape keeps
+                # its newline, the unterminated shape (a prompt or the last
+                # progress update) ends without one — exactly the flush of
+                # the byte loop.
+                if (s ~ /\n$/) {
+                    print line
+                } else {
+                    printf "%s", line
+                }
+                continue
+            }
+            if (i == n && RT == "\r") {
+                # The CR-ended progress line: the trailing whitespace is
+                # dropped (the progress rewrite shape); an empty rewrite
+                # emits nothing.
+                sub(/[ \t]+$/, "", line)
+                if (line != "") print line
+            } else {
+                print line
+            }
+        }
+    }
+    '
 }
 
 shell_interactive_enabled()
@@ -42177,7 +46459,15 @@ helper_menu_read_answer()
         fi
         now="$(shell_now_epoch)"
         (( now - start >= window )) && break
-        sleep 0.2
+        # Round 46 (the user's Ubuntu finding — the cancel's raw leak): the
+        # poll pacing runs as a BACKGROUND job reaped by `wait`.  A
+        # foreground `sleep` interrupted by the force-stop dies of the
+        # tree-TERM while the abort trap runs, and bash's job-status notify
+        # then prints "Terminated                 sleep 0.2" to stderr — the
+        # merged transcript leaked it right after the menu (the rig
+        # reproduction proved the shape).  The wait-reaped background job
+        # dies silently: the notify never names it.
+        sleep 0.2 & wait $! || true
     done
     # The deadline passed while the reader was still blocked: kill it and
     # consume whatever record landed in the race window, exactly like the
@@ -42818,7 +47108,11 @@ shell_protocol_poll_read()
         fi
         now="$(shell_now_epoch)"
         (( now - start >= window )) && break
-        sleep 0.2
+        # Round 46 (the cancel's raw leak): the poll pacing as a
+        # wait-reaped background job — see helper_menu_read_answer (the
+        # foreground sleep's tree-TERM death is the "Terminated ..." notify
+        # that leaked into the force-stop transcript tail).
+        sleep 0.2 & wait $! || true
     done
     kill "$reader_pid" 2>/dev/null || true
     wait "$reader_pid" 2>/dev/null || true
@@ -44202,6 +48496,7 @@ store_evidence_baseline()
         input)         INPUT_BASELINE_B64="$2" ;;
         network)       NETWORK_BASELINE_B64="$2" ;;
         display)       DISPLAY_BASELINE_B64="$2" ;;
+        numlock)       NUMLOCK_BASELINE_B64="$2" ;;
         uki)           UKI_BASELINE_B64="$2" ;;
         grub)          GRUB_BASELINE_B64="$2" ;;
         boot-evidence) BOOT_EVIDENCE_BASELINE_B64="$2" ;;
@@ -45036,7 +49331,15 @@ host_default_diagnostic_evidence()
 
 newest_tuxedo_kernel()
 {
-    find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'vmlinuz-*-tuxedo-amd64' -printf '%f\n' 2>/dev/null \
+    # The vendor kernel naming has two historical shapes: the original
+    # vmlinuz-<v>-tuxedo-amd64 and the current vmlinuz-<v>-txos-amd64 (the
+    # user's 7.3.4+tux.1.1-txos-amd64 — the round-66 finding).  The flavor
+    # suffix is part of the kernel identity (the module-tree directory and the
+    # initrd carry it), so the matched <v> token keeps it verbatim; the
+    # version-sort orders the full version+flavor tokens.
+    find "$TARGET_ROOT/boot" -maxdepth 1 -type f \
+        \( -name 'vmlinuz-*-tuxedo-amd64' -o -name 'vmlinuz-*-txos-amd64' \) \
+        -printf '%f\n' 2>/dev/null \
         | sed 's/^vmlinuz-//' \
         | sort -V \
         | tail -1
@@ -45050,7 +49353,7 @@ validate_tuxedo_uki_target()
         || fail "TUXEDO UKI builder is not installed in the target: /usr/sbin/create_boot_uki_base.sh"
     kver="$(newest_tuxedo_kernel)"
     [[ -n "$kver" && -f "$TARGET_ROOT/boot/vmlinuz-$kver" ]] \
-        || fail "No installed TUXEDO kernel was found for UKI rebuild."
+        || fail "No installed TUXEDO kernel was found for UKI rebuild (expected /boot/vmlinuz-<v>-tuxedo-amd64 or /boot/vmlinuz-<v>-txos-amd64). The UKI rebuild does not apply to this state: the kernel diagnostic names the installed kernels and the initramfs repair rebuilds their initrds."
     [[ -d "$TARGET_ROOT/usr/lib/modules/$kver" || -d "$TARGET_ROOT/lib/modules/$kver" ]] \
         || fail "Newest TUXEDO kernel $kver has no matching modules directory in the target."
 }
@@ -45195,6 +49498,38 @@ efi_entry_ids_for_partuuid_loader()
     while IFS= read -r line; do
         part="$(efi_entry_partuuid_line "$line")"
         [[ "$part" == "$partuuid" ]] || continue
+        loader="$(efi_entry_loader_line "$line" || true)"
+        [[ "${loader,,}" == "$wanted_loader" ]] || continue
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] && printf '%s\n' "$id"
+    done < <(efibootmgr -v 2>/dev/null | sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p')
+}
+
+# Round 42 (the user's Arch full-repair finding): the VOLATILE-NVRAM firmware
+# class (the -bios OVMF domain — no pflash/<nvram> store) creates boot entries
+# with the MBR-STYLE device path (HD(<part>,MBR,0x<disk-sig>,...)) instead of
+# the GPT PARTUUID path the durable store renders; the GPT-partuuid matcher
+# above therefore cannot see them even though the entry IS registered (the
+# user's exact failure: the efibootmgr listing showed Boot0003* arch with the
+# BootOrder, yet the verification refused).  The evidence-derived class probe
+# (never a rig-name map): the ESP's GPT PARTUUID's leading 8 hex digits ARE
+# the disk's MBR signature, so an entry whose HD path carries that signature
+# in the MBR style is the same selected-ESP entry.  The durability across
+# power cycles cannot be verified on this store — the CALLER decides the
+# honest verdict (the refreshed fallback loader is what boots this class).
+efi_entry_ids_for_partuuid_loader_mbr()
+{
+    local partuuid="${1,,}" wanted_loader="${2,,}" sig line loader id
+    local mbr_hd_re='HD\([0-9]+,MBR,0x([[:alnum:]]+),'
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    [[ -n "$partuuid" && -n "$wanted_loader" ]] || return 1
+    sig="${partuuid%%-*}"
+    [[ "$sig" =~ ^[0-9a-f]{8}$ ]] || return 1
+
+    while IFS= read -r line; do
+        [[ -n "$(efi_entry_partuuid_line "$line")" ]] && continue
+        [[ "$line" =~ $mbr_hd_re ]] || continue
+        [[ "${BASH_REMATCH[1],,}" == "$sig" ]] || continue
         loader="$(efi_entry_loader_line "$line" || true)"
         [[ "${loader,,}" == "$wanted_loader" ]] || continue
         id="$(efi_entry_id_line "$line")"
@@ -45370,6 +49705,19 @@ efi_ensure_selected_generic_entry()
     fi
     ((${#ids[@]} == 0)) || return 0
 
+    # Round 42 (the user's Arch full-repair finding): the VOLATILE-NVRAM
+    # firmware class (the -bios OVMF — no pflash/<nvram> store) renders its
+    # entries with the MBR-style device path, invisible to the GPT-partuuid
+    # matcher above.  An existing MBR-style entry for this ESP's loader is
+    # the already-registered state — the honest no-op short-circuit (never
+    # a duplicate create), with the durability note.
+    local -a mbr_ids=()
+    mapfile -t mbr_ids < <(efi_entry_ids_for_partuuid_loader_mbr "$partuuid" "${loader,,}" || true)
+    if ((${#mbr_ids[@]} > 0)); then
+        msg_log efi-volatile-nvram-entry "${mbr_ids[*]}" "$EFI_ESP_SOURCE"
+        return 0
+    fi
+
     uefi_nvram_writable || {
         msg_log efi-loader-not-writable "$loader"
         return 0
@@ -45395,6 +49743,26 @@ efi_ensure_selected_generic_entry()
     current="$SESSION_DIR/efi-nvram-generic.txt"
     efibootmgr -v > "$current" 2>&1 || return 1
     mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
+    if ((${#ids[@]} == 0)); then
+        # Round 42: the volatile-NVRAM class's post-create verification — the
+        # MBR-style match IS the created entry (the MBR signature = the ESP
+        # PARTUUID's leading 8 hex digits).  The honest SUCCESS for this
+        # class: the entry written + carried in the BootOrder + the refreshed
+        # fallback loader (the documented boot reality — the fallback is what
+        # boots), with the note that the canonical entry's durability across
+        # power cycles cannot be verified on the volatile store.
+        mbr_ids=()
+        mapfile -t mbr_ids < <(efi_entry_ids_for_partuuid_loader_mbr "$partuuid" "${loader,,}" || true)
+        if ((${#mbr_ids[@]} == 1)); then
+            local boot_order=""
+            boot_order="$(efibootmgr -v 2>/dev/null | sed -nE 's/^BootOrder: //p' | head -n1)"
+            if [[ " ${boot_order//,/ } " == *" ${mbr_ids[0]} "* ]]; then
+                msg_log efi-volatile-nvram-entry "${mbr_ids[0]}" "$esp"
+                msg_log efi-generic-restored "${mbr_ids[0]}" "$esp"
+                return 0
+            fi
+        fi
+    fi
     ((${#ids[@]} == 1)) || {
         log "ERROR: generic EFI registration completed but could not be verified uniquely on selected system ESP $esp." | tee -a "$SESSION_LOG" >&2
         return 1
@@ -47854,6 +52222,23 @@ restore_display_manager_to()
     # enable/repoint dance) — the restore-default path changes the configured
     # manager exactly like the switch, so the file must follow it.
     display_manager_x11_registry_reconcile "$DISPLAY_MANAGER_UNIT_REL" "$DISPLAY_MANAGER_LABEL"
+    # Round 58 (ITEM 1 — the §15.8 requirement): ANY greetd landing (the
+    # restore-to-greetd included) brings the graphical greeter the same way
+    # the switch does.  Round 78: the non-interactive stage has no menu —
+    # a landing refusal stays a stage failure, converted back into the
+    # honest fail with the SAME named reason.
+    if [[ "$DISPLAY_MANAGER_SERVICE" == greetd.service ]]; then
+        local restore_greetd_rc=0
+        display_manager_greetd_landing || restore_greetd_rc=$?
+        if (( restore_greetd_rc == GREETD_LANDING_REFUSAL_RC )); then
+            fail "${DISPLAY_MANAGER_GREETD_REFUSAL_TEXT:-the greetd landing was refused.}"
+        elif (( restore_greetd_rc != 0 )); then
+            fail "The greetd landing failed (exit code $restore_greetd_rc)."
+        fi
+    fi
+    # Round 50: the landing normalizes the to-DM's autologin (the GDM class
+    # disabled — the rig-proven broken session registration).
+    display_manager_landing_normalize_autologin "$DISPLAY_MANAGER_SERVICE"
     msg_log dm-link-pass "$display_link"
     msg_log dm-default-link-pass "$default_link"
     msg_log dm-configured-offline-chroot "$DISPLAY_MANAGER_LABEL"
@@ -48040,6 +52425,66 @@ efi_promote_entry_first()
 # or a cascaded dependency -- is refused.  The protected essentials are still
 # refused explicitly for defense in depth.  Membership is decided by exact
 # package name, never by parsing the package-name flavour suffix.
+# Round 82 (the stale-evidence plan fix — the round-81b user finding): true when
+# the supplied package is a versioned kernel package of a kernel BEING REMOVED
+# (the removal lineage) — the kernel-package-parsing rules from
+# kernel-package-parsing-cross-distro.md (the >=3-dot-group version token; the
+# TUXEDO/Ubuntu split shapes; the headers/common-headers/kbuild lineage).  The
+# removal validators accept such a package even when the plan (re-derived fresh
+# at plan time) missed it; the genuine protected set is never matched — a
+# SURVIVING kernel's packages carry the survivor's version token and a managed
+# metapackage carries NO version token at all.  Fail-closed: an empty lineage
+# set (no kernel being removed) accepts nothing.
+apt_kernel_package_is_removal_lineage()
+{
+    local pkg="$1" tok removal_v survivor_v
+    ((${#KERNEL_REMOVAL_LINEAGE_VERSIONS[@]} > 0)) || return 1
+    case "$pkg" in
+        linux-headers-*)
+            tok="$(apt_kernel_version_from_package "$pkg" 2>/dev/null || true)"
+            ;;
+        linux-base-*|linux-binary-*|linux-kbuild-*)
+            tok="$(apt_kernel_support_version_from_package "$pkg" 2>/dev/null || true)"
+            ;;
+        *)
+            tok="$(apt_kernel_version_from_package "$pkg" 2>/dev/null || true)"
+            ;;
+    esac
+    if [[ -n "$tok" ]]; then
+        for removal_v in "${KERNEL_REMOVAL_LINEAGE_VERSIONS[@]}"; do
+            [[ "$tok" == "$removal_v" ]] && return 0
+        done
+    fi
+    # The common-headers lineage: a linux-headers package whose embedded
+    # version token is a STRICT version-token prefix of the removed kernel
+    # (linux-headers-7.1.8.2-common-tuxedo for 7.1.8.2-tuxedo-amd64; the bare
+    # generic linux-headers-6.5.0-10038 for 6.5.0-10038-generic) — and which
+    # is NOT also a prefix of any surviving kernel's version (the fail-closed
+    # survivor guard: a shared-series common header belongs to every flavour
+    # of that series, so it is never removal lineage while a survivor shares
+    # the series).
+    [[ "$pkg" == linux-headers-* ]] || return 1
+    tok="${pkg#linux-headers-}"
+    tok="${tok%%-common*}"
+    [[ "$tok" =~ [0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+    for removal_v in "${KERNEL_REMOVAL_LINEAGE_VERSIONS[@]}"; do
+        [[ "$removal_v" == "$tok"-* ]] || continue
+        local survivor_prefix=false
+        for survivor_v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+            kernel_in_list "$survivor_v" "${KERNEL_REMOVAL_LINEAGE_VERSIONS[@]}" && continue
+            [[ "$survivor_v" == "$tok" || "$survivor_v" == "$tok"-* ]] && survivor_prefix=true
+        done
+        [[ "$survivor_prefix" == false ]] && return 0
+    done
+    return 1
+}
+
+# Dedicated validator for the plain kernel-removal transaction (the `apt-get -s
+# remove --purge` simulation).  Every removed package must be an approved removal
+# candidate (never a protected kernel or essential) OR — round 82 — a versioned
+# kernel package of a kernel being removed (the removal lineage; see
+# apt_kernel_package_is_removal_lineage), so a package that appeared mid-session
+# (the half-configured headers class) is never refused as protected.
 apt_kernel_removal_is_safe()
 {
     local output="$1" pkg
@@ -48063,7 +52508,8 @@ apt_kernel_removal_is_safe()
                 return 1
                 ;;
         esac
-        if ! kernel_package_is_removal_candidate "$pkg"; then
+        if ! kernel_package_is_removal_candidate "$pkg" \
+            && ! apt_kernel_package_is_removal_lineage "$pkg"; then
             msg_log apt-refused-protected "$pkg"
             return 1
         fi
@@ -48187,15 +52633,23 @@ apt_managed_metapackage_version_pinning()
 }
 
 # Dedicated validator for the managed-metapackage downgrade transaction: a
-# combined `apt-get install <meta>=<old> <removed-pkg>-` simulation.  Every
-# removed package must be an approved removal candidate (never a protected
-# kernel or essential), and every cascaded managed metapackage must be
-# downgraded (an Inst row carrying the target version), never removed and never
-# left at its pinned-newest version.
+# combined `apt-get install <meta>=<old> <removed-pkg>- [<cascade-meta>- ...]`
+# simulation.  Every removed package must be an approved removal candidate
+# (never a protected kernel or essential) OR one of the cascade-removal
+# metapackages (the round-76 extension — a metapackage that exclusively pins
+# the removed kernel and has no survivor-pinning available version is removed
+# WITH the transaction, never silently upgraded to the replacement).  Every
+# downgraded managed metapackage must be downgraded (an Inst row carrying the
+# target version), never removed and never left at its pinned-newest version.
+# Round 76 (the replacement-install refusal): no OTHER linux-<kind> package
+# may be Installed — an upgrade of a metapackage or the install of a NEW
+# versioned kernel package (the repository replacement apt proposed) would defeat
+# the fallback and is refused.
+# Args: <output> <surviving> <cascade-joined> <spec...>
 apt_kernel_managed_downgrade_is_safe()
 {
-    local output="$1" surviving="$2" spec pkg ver inst_line
-    shift 2
+    local output="$1" surviving="$2" cascade_joined="$3" spec pkg ver inst_line line matched=false
+    shift 3
     local -a specs=("$@")
 
     if grep -Eiq 'essential packages will be removed|WARNING:.*essential.*removed' <<<"$output"; then
@@ -48213,7 +52667,9 @@ apt_kernel_managed_downgrade_is_safe()
                 return 1
                 ;;
         esac
-        if ! kernel_package_is_removal_candidate "$pkg"; then
+        if ! kernel_package_is_removal_candidate "$pkg" \
+            && [[ ",$cascade_joined," != *",$pkg,"* ]] \
+            && ! apt_kernel_package_is_removal_lineage "$pkg"; then
             msg_log apt-refused-protected "$pkg"
             return 1
         fi
@@ -48232,6 +52688,1687 @@ apt_kernel_managed_downgrade_is_safe()
             return 1
         fi
     done
+
+    # Round 76 (the replacement-install refusal): every Inst line naming a
+    # linux-<kind> package must be one of the downgrade specs (a metapackage
+    # upgrade or a NEW versioned kernel package — apt's repository replacement —
+    # is refused; the survivor is already installed, so nothing may install).
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        pkg="$(awk '{print $2}' <<<"$line")"
+        [[ -n "$pkg" ]] || continue
+        case "$pkg" in
+            linux-image-*|linux-headers-*|linux-base-*|linux-binary-*|\
+            linux-modules-*|linux-kbuild-*|linux-main-modules-zfs-*) ;;
+            *) continue ;;
+        esac
+        matched=false
+        for spec in "${specs[@]}"; do
+            [[ "${spec%%=*}" == "$pkg" ]] && matched=true
+        done
+        if [[ "$matched" == false ]]; then
+            msg_log apt-refused-protected "$pkg"
+            return 1
+        fi
+    done < <(awk '$1 == "Inst" {print}' <<<"$output")
+    return 0
+}
+
+# First meaningful failure evidence of a failed dpkg configure/install
+# transcript (the round-60 TUXEDO class): the `dpkg: error processing package
+# <pkg> (--configure…)` lines name the half-configured packages whose
+# postinsts failed, and the dkms postinst failure ("Error! Bad return status
+# for module build on kernel: <kver>" + the make.log path) names the
+# incompatible module the postinst was building.  Prints "<pkgs>" and, when
+# present, "<kver> (<module> <version>)" on a second line so the caller
+# composes the honest reason; nothing when no recognized line exists.
+# Read-only: parses a captured transcript, never runs a tool.
+dpkg_configure_failure_reason()
+{
+    local output="$1" line pkg pkgs="" dkms_kver="" dkms_mod=""
+    while IFS= read -r line; do
+        pkg="$(sed -nE 's/^dpkg: error processing package ([^ ]+) \(--[a-z-]+\):.*/\1/p' <<<"$line")"
+        [[ -n "$pkg" ]] || continue
+        [[ ",$pkgs," == *",$pkg,"* ]] || pkgs="${pkgs:+$pkgs,}$pkg"
+    done <<<"$output"
+    while IFS= read -r line; do
+        if [[ "$line" == *"Error! Bad return status for module build on kernel:"* ]]; then
+            dkms_kver="$(sed -E 's/.*module build on kernel: ([^ ]+).*/\1/' <<<"$line")"
+        elif [[ "$line" == *"/var/lib/dkms/"*"/build/make.log"* ]]; then
+            dkms_mod="$(sed -nE 's|.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log.*|\1 \2|p' <<<"$line")"
+        fi
+    done <<<"$output"
+    [[ -n "$pkgs" ]] || return 1
+    sanitize_reason_text "$pkgs"
+    if [[ -n "$dkms_kver" || -n "$dkms_mod" ]]; then
+        sanitize_reason_text "${dkms_kver:+kernel $dkms_kver}${dkms_kver:+ }${dkms_mod:+($dkms_mod)}"
+    fi
+    # Round 64 (Finding 2): the THIRD output line classifies the failure from
+    # the module's OWN make.log — the actual configure error (a GENUINE
+    # module-vs-kernel incompatibility the kernel removal does NOT unblock)
+    # vs the state artifact (the build blocked by the inconsistent kernel-tree
+    # state the removal DOES unblock).  Unclassifiable prints nothing, and the
+    # trailing-newline rule keeps the two pre-round-64 lines byte-identical
+    # for the older callers (the array-read/head consumers).
+    # Round 69 (the bound naming): the FOURTH line = the module's declared
+    # compatibility ceiling (the `Highest compatible kernel version:` evidence;
+    # empty when the log declares none) so every consumer can name the bound
+    # with the verdict.  The pre-round-69 consumers read by index/head, so the
+    # extension is backward compatible.
+    if [[ -n "$dkms_mod" ]]; then
+        local mod="${dkms_mod%% *}" modver="${dkms_mod#* }" logpath log_text
+        logpath="$TARGET_ROOT/var/lib/dkms/$mod/$modver/build/make.log"
+        if [[ -s "$logpath" ]]; then
+            log_text="$(head -c "$DKMS_MAKELOG_READ_BOUND" -- "$logpath" 2>/dev/null || true)"
+            dkms_build_failure_classification "$log_text"
+            dkms_make_log_compat_bound "$log_text"
+        fi
+    fi
+    return 0
+}
+
+# Round 71 (the placeholder leak — the user's finding: "the DKMS module
+# unknown genuinely cannot build against kernel …"): resolve the module + the
+# kernel from the dpkg_configure_failure_reason dkms-info token.  The full
+# shape is "kernel <kver> (<mod> <ver>)"; the kver-less shape is
+# "(<mod> <ver>)" (the transcript named the make.log but no "Error! Bad
+# return status" line — the pre-round-71 extraction then failed BOTH seds and
+# the verdicts leaked the literal "unknown").  The kernel resolves from the
+# module's make.log header (the round-69 positive evidence) — never a
+# placeholder.  Prints "<kver>TAB<mod> <ver>" (the kver empty when
+# undeterminable).  Read-only.
+dpkg_dkms_info_parts()
+{
+    local info="$1" kver="" mod_ver="" hmod hver hlog
+    if [[ "$info" == kernel\ *\ \(*\) ]]; then
+        kver="$(sed -E 's/^kernel ([^ ]+).*/\1/' <<<"$info" 2>/dev/null || true)"
+        mod_ver="$(sed -nE 's/^kernel [^ ]+ \(([^)]+)\)$/\1/p' <<<"$info" 2>/dev/null || true)"
+    elif [[ "$info" == \(*\) ]]; then
+        mod_ver="$(sed -nE 's/^\(([^)]+)\)$/\1/p' <<<"$info" 2>/dev/null || true)"
+        hmod="${mod_ver%% *}"
+        hver="${mod_ver#* }"
+        hlog="$TARGET_ROOT/var/lib/dkms/$hmod/$hver/build/make.log"
+        if [[ -s "$hlog" ]]; then
+            kver="$(grep -Eo 'make\.log for [^ /]+/[^ ]+ for kernel [^ ]+' "$hlog" 2>/dev/null \
+                | head -n 1 | sed -E 's/.* for kernel ([^ ]+).*/\1/')"
+        fi
+    fi
+    printf '%s\t%s\n' "$kver" "$mod_ver"
+}
+
+# Round 69 (the bound evidence): the module's own declared compatibility
+# ceiling — the `Highest compatible kernel version: <v>` line the module's
+# configure prints when it detected the missing kernel interfaces (the zfs
+# shape: zfs-2.4.4's ceiling is kernel 7.2, the target runs 7.3.4).  Prints
+# the version or nothing.  Read-only: parses a captured log.
+dkms_make_log_compat_bound()
+{
+    local log_text="$1"
+    [[ -n "$log_text" ]] || return 0
+    grep -Eo 'Highest compatible kernel version:[[:space:]]*[0-9][0-9.+-]*' <<<"$log_text" \
+        | head -n 1 \
+        | sed -E 's/^Highest compatible kernel version:[[:space:]]*//' \
+        || true
+}
+
+# Round 69 (the universal unblocker — the user's observation that the zfs-vs-
+# kernel incompatibility is the SINGLE blocker behind every package-touching
+# repair): the shared verdict for an apt/dpkg apply that failed on the
+# half-configured class (the pending postinsts re-ran and the DKMS module
+# build failed — dpkg exit 100).  The failure must NEVER surface as the bare
+# exit code: the named verdict carries the half-configured packages + the
+# module + the kernel + the module's declared compatibility bound + the
+# direction (the kernel repair's per-kernel remedies).  Returns 0 when the
+# transcript proved the class and the verdict was emitted (the caller then
+# returns from the stage instead of dying with the bare code); returns 1 when
+# the transcript carries no half-configured evidence (the caller keeps its
+# own failure wording).  $1 = the stage's change-status key.
+dpkg_half_configured_failure_report()
+{
+    local status_key="$1" output="$2"
+    local pkgs="" dkms_info="" class="" bound="" kver="" mod_ver=""
+    local -a lines=()
+    mapfile -t lines < <(dpkg_configure_failure_reason "$output" 2>/dev/null || true)
+    pkgs="${lines[0]:-}"
+    [[ -n "$pkgs" ]] || return 1
+    dkms_info="${lines[1]:-}"
+    class="${lines[2]:-}"
+    bound="${lines[3]:-}"
+    # Round 71: the shared resolver (the kver-less shape resolves the kernel
+    # from the make.log header — never the "unknown" leak).
+    IFS=$'\t' read -r kver mod_ver <<< "$(dpkg_dkms_info_parts "$dkms_info" 2>/dev/null || true)"
+    [[ -n "$kver" ]] || kver="unknown"
+    [[ -n "$mod_ver" ]] || mod_ver="unknown"
+    [[ -n "$bound" ]] || bound="unknown"
+    case "$class" in
+        genuine-incompatibility)
+            msg_log dpkg-blocker-module-incompatible "$pkgs" "$mod_ver" "$kver" "$bound"
+            repair_change_status "$status_key" "unchanged|$(reason dpkg-module-incompatible "$pkgs" "$mod_ver" "$kver" "$bound")"
+            ;;
+        state-blocker)
+            msg_log dpkg-blocker-state-blocked "$pkgs" "$mod_ver" "$kver"
+            repair_change_status "$status_key" "unchanged|$(reason dpkg-state-blocked "$pkgs" "$mod_ver" "$kver")"
+            ;;
+        *)
+            msg_log dpkg-blocker-half-configured "$pkgs" "${dkms_info:-unknown}"
+            repair_change_status "$status_key" "unchanged|$(reason dpkg-half-configured "$pkgs" "${dkms_info:-unknown}")"
+            ;;
+    esac
+    return 0
+}
+
+# Round 69 (the universal unblocker): the named PROSE verdict for the
+# half-configured failure class — the ERROR-line companion of
+# dpkg_half_configured_failure_report for the paths that must still fail
+# (never a machine key in an ERROR line; the message names the blocker + the
+# direction).  Prints the verdict or nothing (no half-configured evidence).
+dpkg_half_configured_failure_prose()
+{
+    local output="$1" pkgs="" dkms_info="" class="" bound="" kver="" mod_ver=""
+    local -a lines=()
+    mapfile -t lines < <(dpkg_configure_failure_reason "$output" 2>/dev/null || true)
+    pkgs="${lines[0]:-}"
+    [[ -n "$pkgs" ]] || return 1
+    dkms_info="${lines[1]:-}"
+    class="${lines[2]:-}"
+    bound="${lines[3]:-}"
+    # Round 71: the shared resolver (the kver-less shape resolves the kernel
+    # from the make.log header — never the "unknown" leak).
+    IFS=$'\t' read -r kver mod_ver <<< "$(dpkg_dkms_info_parts "$dkms_info" 2>/dev/null || true)"
+    [[ -n "$kver" ]] || kver="unknown"
+    [[ -n "$mod_ver" ]] || mod_ver="unknown"
+    case "$class" in
+        genuine-incompatibility)
+            if [[ -n "$bound" && "$bound" != unknown ]]; then
+                printf 'The package transaction failed on the half-configured package(s) %s: the DKMS module %s genuinely cannot build against kernel %s (the module'"'"'s own declared highest compatible kernel version is %s). The kernel repair'"'"'s per-kernel actions resolve it: install the prior repository kernel the module still supports (with the next-boot default switch) or update the module'"'"'s package; then re-run this repair.' "$pkgs" "$mod_ver" "$kver" "$bound"
+            else
+                printf 'The package transaction failed on the half-configured package(s) %s: the DKMS module %s genuinely cannot build against kernel %s. The kernel repair'"'"'s per-kernel actions resolve it: install the prior repository kernel the module still supports (with the next-boot default switch) or update the module'"'"'s package; then re-run this repair.' "$pkgs" "$mod_ver" "$kver"
+            fi
+            ;;
+        state-blocker)
+            printf 'The package transaction failed on the half-configured package(s) %s: the DKMS module %s'"'"'s build was blocked by an inconsistent kernel state for kernel %s. Removing the offending kernel through the kernel repair unblocks it; then re-run this repair.' "$pkgs" "$mod_ver" "$kver"
+            ;;
+        *)
+            printf 'The package transaction failed on the half-configured package(s) %s (%s); the dependency repair cannot fix a module build failure. Install the prior compatible kernel or update the incompatible module'"'"'s package through the kernel repair, then re-run this repair.' "$pkgs" "${dkms_info:-unknown}"
+            ;;
+    esac
+}
+
+# Round 70 (the production-path fix): the read bound for the failing DKMS
+# make.logs — 1 MiB.  The real zfs configure output pushes the declared-
+# ceiling evidence (`Highest compatible kernel version`) past the round-64's
+# 256 KiB head, so the evidence line could go unseen on the production target
+# (the user's round-70 findings: the dkms resolution found nothing AND the
+# kernel repair's cached evidence was empty).  Still bounded (a failed
+# build's make.log is a few hundred KiB at most; the classifier + the bound
+# grep are linear).
+DKMS_MAKELOG_READ_BOUND=1048576
+
+# Round 64 (Finding 2): classify a failed DKMS module build from its make.log
+# content.  `genuine-incompatibility` = the module's own configure/compile step
+# failed against the kernel (the make.log carries the actual configure error or
+# a compiler error in a source/header file).  Round 69: the module's declared
+# compatibility ceiling (`Highest compatible kernel version:` — the zfs
+# configure shape) is the same genuine-incompatibility evidence even when the
+# configure prints it without a hard `configure: error:` line.
+# `state-blocker` = the build was
+# blocked by an inconsistent kernel-tree state (the log references a missing
+# half-configured kernel build tree and carries no configure/compile error of
+# its own) — the kernel removal unblocks it.  Nothing = no positive signal
+# either way (the caller keeps the unclassified behavior).  Fail closed: only
+# positive evidence classifies.
+dkms_build_failure_classification()
+{
+    local log_text="$1" line
+    [[ -n "$log_text" ]] || return 0
+    while IFS= read -r line; do
+        # The module's own configure step genuinely failed, or a compiler
+        # error fired in a source/header file (the actual configure error),
+        # or the configure declared the compatibility ceiling itself.
+        if [[ "$line" == *"configure: error:"* ]] \
+           || [[ "$line" == *"Highest compatible kernel version:"* ]] \
+           || [[ "$line" =~ \.[chS]:[0-9]+:[0-9]+:[[:space:]]*error: ]] \
+           || [[ "$line" =~ \.[chS]:[0-9]+:[0-9]+:[[:space:]]*fatal[[:space:]]+error: ]]; then
+            printf 'genuine-incompatibility\n'
+            return 0
+        fi
+    done <<<"$log_text"
+    # The state artifact: the build references a kernel build tree that does
+    # not exist / has no rules (the half-configured kernel's tree), with no
+    # configure/compile error of the module's own anywhere in the log.
+    if grep -Eq 'No rule to make target|No such file or directory' <<<"$log_text" \
+        && grep -Eq 'linux-headers|/lib/modules/' <<<"$log_text"; then
+        printf 'state-blocker\n'
+        return 0
+    fi
+    return 0
+}
+
+# Round 64 (Finding 2): the module-vs-kernel incompatibility evidence — one
+# entry per DKMS module whose build GENUINELY failed against an installed
+# kernel.  Parallel arrays: KERNEL_MODULE_INCOMPAT ("<mod> <ver>"),
+# KERNEL_MODULE_INCOMPAT_KVER, KERNEL_MODULE_INCOMPAT_PKGS (the comma-joined
+# owning apt package set, derived read-only via dpkg -S — never a hardcoded
+# module→package table).  Positive evidence only (the round-42 fail-closed
+# pattern): the module is registered for the kernel but not installed, its
+# make.log exists and classifies genuine-incompatibility, and its source tree
+# is owned by a concrete package.  The `added` dkms shape (registered, never
+# built for any kernel — the user's TUXEDO zfs case) names the kernel through
+# the build symlink (the last attempted build).  Read-only and bounded.
+kernel_module_incompatibilities()
+{
+    local status_file dkms_line mod ver kver state rest class pkgs v build_target
+    local -a vers=()
+    KERNEL_MODULE_INCOMPAT=()
+    KERNEL_MODULE_INCOMPAT_KVER=()
+    KERNEL_MODULE_INCOMPAT_PKGS=()
+    journal_cancel_requested && return 0
+    [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] || return 0
+    target_has_executable /usr/bin/dkms /usr/sbin/dkms || return 0
+    status_file="$(evidence_dkms_status 2>/dev/null || true)"
+    # Round 71: an EMPTY/unavailable dkms status must not end the collector —
+    # the authoritative make.log tree scan below still runs (the real
+    # target's status never yielded the pre-round-71 shapes; the user's
+    # round-70/71 finding).
+    if ((${#KERNEL_INVENTORY_VERSIONS[@]} > 0)); then
+        vers=("${KERNEL_INVENTORY_VERSIONS[@]}")
+    else
+        while IFS= read -r v; do
+            [[ -n "$v" ]] && vers+=("$v")
+        done < <(installed_kernel_versions 2>/dev/null || true)
+    fi
+    ((${#vers[@]} > 0)) || return 0
+    if [[ -n "$status_file" && -s "$status_file" ]]; then
+    while IFS= read -r dkms_line; do
+        dkms_line="${dkms_line%$'\r'}"
+        journal_cancel_requested && break
+        state="${dkms_line##*: }"
+        state="${state%% *}"
+        [[ -n "$state" ]] || continue
+        # The per-kernel shape names the kernel directly; the `added` shape
+        # (registered, never built for any kernel) names the kernel through
+        # the build symlink (the last attempted build — the make.log path the
+        # dpkg error cites).
+        if [[ "$dkms_line" == */*,\ *,*:* ]]; then
+            [[ "$state" != installed ]] || continue
+            rest="${dkms_line%:*}"
+            mod="${rest%%/*}"
+            rest="${rest#*/}"
+            ver="${rest%%,*}"
+            rest="${rest#*,}"
+            kver="${rest%%,*}"
+            # Round 83c hygiene (the round-76/§11.3 gap): the standard dkms
+            # status separates the fields with ", " — the split above keeps
+            # the leading space, so the kernel version never matched the
+            # installed-kernel list (the status-driven shape was dead on the
+            # real target).  Trim the leading whitespace (the shared trim
+            # idiom).
+            kver="${kver#"${kver%%[![:space:]]*}"}"
+        elif [[ "$state" == added ]]; then
+            mod="${dkms_line%%/*}"
+            ver="${dkms_line#*/}"
+            ver="${ver%%:*}"
+            [[ -n "$mod" && -n "$ver" ]] || continue
+            build_target="$(readlink -- "$TARGET_ROOT/var/lib/dkms/$mod/$ver/build" 2>/dev/null || true)"
+            kver="${build_target%%/*}"
+            if [[ -z "$kver" ]]; then
+                # Round 69: after a REAL attempted build (the dkms autoinstall
+                # shape) the `build` symlink is replaced by a plain directory
+                # and names no kernel.  The make.log's OWN header names the
+                # kernel the build failed for — positive evidence, never a
+                # guess (`DKMS ... make.log for <mod>/<ver> for kernel
+                # <kver> (<arch>)`).
+                kver="$(grep -Eo 'make\.log for [^ /]+/[^ ]+ for kernel [^ ]+' \
+                    "$TARGET_ROOT/var/lib/dkms/$mod/$ver/build/make.log" 2>/dev/null \
+                    | head -n 1 \
+                    | sed -E 's/.* for kernel ([^ ]+).*/\1/')"
+            fi
+        else
+            continue
+        fi
+        [[ -n "$mod" && -n "$ver" && -n "$kver" ]] || continue
+        kernel_in_list "$kver" "${vers[@]}" || continue
+        # The classifier reads the build-symlink make.log (the actual failing
+        # build log the dpkg error names).
+        local logpath="$TARGET_ROOT/var/lib/dkms/$mod/$ver/build/make.log"
+        [[ -s "$logpath" ]] || continue
+        class="$(dkms_build_failure_classification "$(head -c "$DKMS_MAKELOG_READ_BOUND" -- "$logpath" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ "$class" == genuine-incompatibility ]] || continue
+        pkgs="$(dkms_module_owning_packages "$mod" "$ver" || true)"
+        [[ -n "$pkgs" ]] || continue
+        KERNEL_MODULE_INCOMPAT+=("$mod $ver")
+        KERNEL_MODULE_INCOMPAT_KVER+=("$kver")
+        KERNEL_MODULE_INCOMPAT_PKGS+=("$pkgs")
+    done < "$status_file"
+    fi
+
+    # Round 71 (the real-target fix — the user's round-70/71 finding: the
+    # kernel repair still ran the verify shortcut while the zfs 2.4.4-vs-7.3.4
+    # incompatibility was known): the status-driven shapes above have never
+    # been proven on the real target.  The AUTHORITATIVE evidence is the
+    # failing make.logs in the target's dkms tree — every build/make.log that
+    # classifies genuine AND names an installed kernel in its own header is a
+    # positive entry, whatever the dkms status renders.  Bounded (the dkms
+    # tree IS the module set) + read-only; deduplicated against the
+    # status-driven entries.
+    local scan_log mod_scan ver_scan log_kver_scan pkgs_scan i2 already
+    while IFS= read -r scan_log; do
+        [[ -n "$scan_log" ]] || continue
+        journal_cancel_requested && break
+        mod_scan="$(sed -nE 's|^.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log$|\1|p' <<<"$scan_log")"
+        ver_scan="$(sed -nE 's|^.*/var/lib/dkms/([^/]+)/([^/]+)/build/make\.log$|\2|p' <<<"$scan_log")"
+        [[ -n "$mod_scan" && -n "$ver_scan" ]] || continue
+        already=0
+        for i2 in "${!KERNEL_MODULE_INCOMPAT[@]}"; do
+            [[ "${KERNEL_MODULE_INCOMPAT[$i2]}" == "$mod_scan $ver_scan" ]] && already=1
+        done
+        (( already == 1 )) && continue
+        log_kver_scan="$(grep -Eo 'make\.log for [^ /]+/[^ ]+ for kernel [^ ]+' "$scan_log" 2>/dev/null \
+            | head -n 1 | sed -E 's/.* for kernel ([^ ]+).*/\1/')"
+        [[ -n "$log_kver_scan" ]] || continue
+        kernel_in_list "$log_kver_scan" "${vers[@]}" || continue
+        [[ "$(dkms_build_failure_classification "$(head -c "$DKMS_MAKELOG_READ_BOUND" -- "$scan_log" 2>/dev/null || true)" 2>/dev/null || true)" == genuine-incompatibility ]] || continue
+        pkgs_scan="$(dkms_module_owning_packages "$mod_scan" "$ver_scan" 2>/dev/null || true)"
+        [[ -n "$pkgs_scan" ]] || continue
+        KERNEL_MODULE_INCOMPAT+=("$mod_scan $ver_scan")
+        KERNEL_MODULE_INCOMPAT_KVER+=("$log_kver_scan")
+        KERNEL_MODULE_INCOMPAT_PKGS+=("$pkgs_scan")
+    done < <(find -L "$TARGET_ROOT/var/lib/dkms" -mindepth 4 -maxdepth 4 -type f -name make.log -path '*/build/make.log' 2>/dev/null | LC_ALL=C sort)
+    return 0
+}
+
+# Round 64 (Finding 2): derive the apt package set owning a DKMS module's
+# source tree (dpkg -S on /usr/src/<mod>-<ver> and the dkms registration dir —
+# the concrete owning packages, never a hardcoded module→package table).
+# Comma-joined and deduplicated; empty when nothing owns it (fail closed).
+# Read-only, bounded.
+dkms_module_owning_packages()
+{
+    local mod="$1" modver="$2" out pkg joined="" i
+    [[ -n "$mod" && -n "$modver" ]] || return 0
+    for i in "/usr/src/$mod-$modver" "/var/lib/dkms/$mod"; do
+        set +e
+        out="$(run_apt_bounded probe /usr/bin/env \
+            HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            dpkg -S "$i" 2>/dev/null)"
+        set -e
+        while IFS= read -r pkg; do
+            pkg="${pkg%%:*}"
+            [[ -n "$pkg" && "$pkg" != "dpkg" ]] || continue
+            [[ ",$joined," == *",$pkg,"* ]] || joined="${joined:+$joined,}$pkg"
+        done <<<"$out"
+    done
+    printf '%s\n' "$joined"
+}
+
+# Round 64: the incompatibility evidence entry for one kernel version —
+# prints "<mod> <ver>\t<pkgs>" (0) or nothing (1).  Fail closed: no entry,
+# no offer.
+dkms_incompat_for_kernel()
+{
+    local v="$1" i
+    for i in "${!KERNEL_MODULE_INCOMPAT_KVER[@]}"; do
+        [[ "${KERNEL_MODULE_INCOMPAT_KVER[$i]}" == "$v" ]] || continue
+        printf '%s\t%s\n' "${KERNEL_MODULE_INCOMPAT[$i]}" "${KERNEL_MODULE_INCOMPAT_PKGS[$i]}"
+        return 0
+    done
+    return 1
+}
+
+# Round 64: the "<mod> <ver>" label for one kernel's incompatibility entry
+# (the menu annotation shape).
+dkms_incompat_module_for_kernel()
+{
+    local entry
+    entry="$(dkms_incompat_for_kernel "$1" || true)"
+    [[ -n "$entry" ]] || return 1
+    printf '%s\n' "${entry%%$'\t'*}"
+}
+
+# Round 69 (the bound evidence): the module's declared compatibility ceiling
+# for one kernel's incompatibility entry — read LIVE from the module's
+# make.log (the repair runs with the target mounted, so the bound never needs
+# the cached baseline).  Prints the bound or nothing.  Read-only.
+dkms_incompat_bound_for_kernel()
+{
+    local v="$1" entry mod_ver logpath bound
+    entry="$(dkms_incompat_for_kernel "$v" || true)"
+    [[ -n "$entry" ]] || return 1
+    mod_ver="${entry%%$'\t'*}"
+    logpath="$TARGET_ROOT/var/lib/dkms/${mod_ver%% *}/${mod_ver#* }/build/make.log"
+    [[ -s "$logpath" ]] || return 1
+    bound="$(dkms_make_log_compat_bound "$(head -c "$DKMS_MAKELOG_READ_BOUND" -- "$logpath" 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$bound" ]] || return 1
+    printf '%s\n' "$bound"
+}
+
+# Round 69 (the remedy recommendation — the coordinator's evidence-driven
+# decision): the deciding fact is the ZPOOL USAGE.  For the zfs-family module
+# (zfs/zfs-lts/...): no pools -> the target does not use ZFS -> the REMOVAL is
+# the recommended path (the cleanest: the dpkg settles, the dkms rebuilds
+# succeed, nothing is lost — a btrfs+LUKS root does not need it); pools (or an
+# undecidable probe) -> the PRIOR-KERNEL install is the recommended path (the
+# immediate unblock with the temporary-boot guidance) + the update monitored,
+# and the removal is presented with the stronger consequence warning.  Any
+# other module defaults to the prior-kernel recommendation (the safe immediate
+# unblock).  Prints `remove` or `prior`.
+# Round 72 (the user's ruling — the REMOVAL goes from the offered remedies):
+# the menus no longer consult this (every offer is the prior-kernel install
+# first, then the update); the function is retained so the zpool evidence
+# stays documented for a future re-wiring of the removal.
+dkms_incompat_remedy_recommendation()
+{
+    local mod="${1%% *}"
+    case "$mod" in
+        zfs|zfs-lts|zfs-kmod|spl|spl-lts)
+            if [[ "$(dkms_zpool_usage 2>/dev/null || true)" == no-pools ]]; then
+                printf 'remove\n'
+                return 0
+            fi
+            printf 'prior\n'
+            ;;
+        *)
+            printf 'prior\n'
+            ;;
+    esac
+}
+
+# Round 69 (the remedy recommendation evidence): read-only zpool-usage probe —
+# does the target actually USE ZFS pools?  Prints `no-pools` (the target's
+# `zpool list` proves no pools exist), `pools` (at least one pool listed) or
+# `undecidable` (no zpool binary / no kernel module / the probe failed).
+# Bounded read-only probe.  Round 72: the menus no longer consume this (the
+# removal the recommendation ordered is gone from the offered remedies); the
+# probe is retained for the future re-wiring of the removal.
+dkms_zpool_usage()
+{
+    local out rc
+    if [[ ! -x "$TARGET_ROOT/usr/sbin/zpool" && ! -x "$TARGET_ROOT/sbin/zpool" ]]; then
+        printf 'undecidable\n'
+        return 0
+    fi
+    set +e
+    out="$(RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env \
+        HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        zpool list -H 2>/dev/null)"
+    rc=$?
+    set -e
+    if (( rc == 0 )); then
+        printf 'pools\n'
+    elif grep -Eiq 'no pools available' <<<"$out"; then
+        printf 'no-pools\n'
+    else
+        printf 'undecidable\n'
+    fi
+    return 0
+}
+
+# Round 69 (remedy 3 — the prior-kernel install): every available versioned
+# kernel image version across the target's package indexes — (1) the
+# unversioned metas' stanza-derived linux-image-<V> deps (the round-68
+# apt_kernel_repo_latest derivation) AND, round 72 (the user's TUXEDO re-test
+# finding — the 7.2.12+deb14 candidate class lives OUTSIDE the current metas'
+# dependency graphs), (2) EVERY versioned linux-image-<V> package stanza
+# itself (the round-70 versioned-naming rule: the remainder after the
+# linux-image- prefix starts with a >=3-dot-group version token — the
+# +deb14/-tuxedo/-amd64 shapes included; the unsigned/-dbg/-dbgsym/cloud names
+# never start with a digit and are skipped by the match).  Prints one version
+# per line, ascending.  Read-only, bounded.
+apt_kernel_available_image_versions()
+{
+    local meta metas_joined img rest lists_dir file
+    local -a metas=()
+    while IFS= read -r img; do
+        [[ "$img" == linux-image-* ]] || continue
+        metas+=("$img")
+    done < <(apt_managed_kernel_metapackage)
+    metas_joined=""
+    for meta in "${metas[@]}"; do
+        metas_joined="${metas_joined:+$metas_joined }$meta"
+    done
+    lists_dir="$TARGET_ROOT/var/lib/apt/lists"
+    [[ -d "$lists_dir" ]] || return 1
+    {
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            apt_list_decompress "$file"
+        done < <(find "$lists_dir" -maxdepth 1 -type f -name '*_Packages*' 2>/dev/null | LC_ALL=C sort)
+    } | awk -v metas="$metas_joined" '
+        BEGIN { RS = ""; FS = "\n"; nset = split(metas, mset, / /) }
+        {
+            name = ""; deps = ""
+            for (i = 1; i <= NF; i++) {
+                line = $i
+                if (line ~ /^Package: /) name = substr(line, 10)
+                else if (line ~ /^(Depends|Pre-Depends): /) deps = deps " " substr(line, index(line, ": ") + 2)
+                else if (line ~ /^[[:space:]]/ && deps != "") deps = deps " " line
+            }
+            if (name == "") next
+            # Round 72: the direct versioned-image scan — every concrete
+            # linux-image-<V> package name (7.2.12+deb14-amd64,
+            # 7.1.8-tuxedo-amd64, 7.3.4+tux.1.1-txos-amd64, ...).  The debug
+            # symbol/unsigned/meta names are excluded by the digit-first match.
+            if (name ~ /^linux-image-[0-9]+\.[0-9]+\.[0-9]+/ \
+                && name !~ /-dbg(-|$)/ && name !~ /-dbgsym(-|$)/) {
+                k = name
+                sub(/^linux-image-/, "", k)
+                print k
+            }
+            matched = 0
+            for (m = 1; m <= nset; m++) if (name == mset[m]) { matched = 1; break }
+            if (matched != 1) next
+            n = split(deps, tok, /[ ,|]+/)
+            for (j = 1; j <= n; j++) {
+                k = tok[j]
+                sub(/\(.*\)/, "", k)
+                if (k ~ /^linux-image-[0-9]/) {
+                    sub(/^linux-image-/, "", k)
+                    print k
+                    break
+                }
+            }
+        }
+    ' | LC_ALL=C sort -V -u
+}
+
+# Round 69 (remedy 3): the repository's PRIOR kernel candidate the
+# incompatible module still supports — the newest available versioned kernel
+# image strictly older than <kver> AND within the module's declared
+# compatibility ceiling <bound> (the series-aware compare below).  Prints the
+# version or nothing (no candidate = the honest prior-kernel-unavailable
+# refusal).  Read-only.
+dkms_incompat_prior_kernel_candidate()
+{
+    local kver="$1" bound="$2" v best=""
+    [[ -n "$kver" ]] || return 1
+    [[ -n "$bound" && "$bound" != unknown ]] || return 1
+    while IFS= read -r v; do
+        [[ -n "$v" ]] || continue
+        if dpkg --compare-versions "$v" lt "$kver" 2>/dev/null \
+            && dkms_kernel_within_bound "$v" "$bound"; then
+            best="$v"
+        fi
+    done < <(apt_kernel_available_image_versions 2>/dev/null)
+    [[ -n "$best" ]] || return 1
+    printf '%s\n' "$best"
+}
+
+# Round 69 (remedy 3): the series-aware ceiling compare.  The module's
+# declared bound names a kernel SERIES — 7.2 means every 7.2.x — while dpkg's
+# version policy compares 7.2.0+tux.1.1 > 7.2 (the extra .0 segment) and
+# would wrongly reject the whole 7.2 series.  The candidate's leading dot
+# groups (up to the bound's group count) must compare <= the bound's groups,
+# group-wise numeric, so the patch level within the same series is IN the
+# bound.  Round 72 (the user's TUXEDO re-test finding): every trailing
+# non-version suffix is stripped from the leading version token first
+# (7.2.12+deb14-amd64 -> 7.2.12, 7.1.8-tuxedo-amd64 -> 7.1.8,
+# 7.2.0+tux.1.1-txos -> 7.2.0) so the real repository naming shapes reach
+# the group-wise compare.  Fail closed on unparseable tokens.
+dkms_kernel_within_bound()
+{
+    local kver="$1" bound="$2" bi btok ktok kclean bclean
+    local -a kparts=() bparts=()
+    [[ -n "$kver" && -n "$bound" ]] || return 1
+    kclean="${kver//[^0-9.].*/}"
+    bclean="${bound//[^0-9.].*/}"
+    [[ -n "$kclean" && -n "$bclean" ]] || return 1
+    IFS='.' read -ra kparts <<< "$kclean"
+    IFS='.' read -ra bparts <<< "$bclean"
+    for bi in "${!bparts[@]}"; do
+        btok="${bparts[$bi]}"
+        ktok="${kparts[$bi]:-0}"
+        [[ "$btok" =~ ^[0-9]+$ && "$ktok" =~ ^[0-9]+$ ]] || return 1
+        if (( ktok < btok )); then
+            return 0
+        fi
+        if (( ktok > btok )); then
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Round 69 (remedy 3): positive evidence only — a repository prior kernel the
+# module still supports exists (the candidate probe against the live make.log
+# bound).  Returns 0/1; never a guess.
+dkms_incompat_prior_kernel_available()
+{
+    local kver="$1" bound="" cand=""
+    [[ -n "$kver" ]] || return 1
+    bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+    cand="$(dkms_incompat_prior_kernel_candidate "$kver" "${bound:-unknown}" 2>/dev/null || true)"
+    [[ -n "$cand" ]]
+}
+
+# Round 76 (the already-installed truth — the user's wording finding): the
+# kernel versions the incompatible module's dkms tree PROVES it was BUILT for
+# (the per-kernel `installed` status entries — the strongest compatibility
+# evidence: the build succeeded against that kernel, the user's zfs-on-the-
+# prior-kernel proof).  Probed LIVE through the mounted target's own dkms
+# status, never the
+# diagnostic's evidence cache (the menu can run after a repair built the
+# module for the prior kernel since the cache was collected).  Prints one
+# kernel version per line; nothing when the probe yields none.  Read-only,
+# bounded.
+dkms_incompat_module_installed_kernels()
+{
+    local mod_ver="$1" status_out line state rest mod ver kver
+    [[ -n "$mod_ver" ]] || return 1
+    status_out="$(run_apt_bounded probe /usr/bin/env \
+        LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        dkms status 2>/dev/null)" || status_out=""
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        line="${line%$'\r'}"
+        state="${line##*: }"
+        state="${state%% *}"
+        [[ "$state" == installed ]] || continue
+        [[ "$line" == */*,\ *,*:* ]] || continue
+        rest="${line%:*}"
+        mod="${rest%%/*}"
+        rest="${rest#*/}"
+        ver="${rest%%,*}"
+        rest="${rest#*,}"
+        kver="${rest%%,*}"
+        # The standard dkms status shape spaces the fields after the commas —
+        # trim the leading whitespace before the membership/compare uses.
+        kver="${kver#"${kver%%[![:space:]]*}"}"
+        [[ "$mod $ver" == "$mod_ver" && -n "$kver" ]] && printf '%s\n' "$kver"
+    done <<<"$status_out"
+    return 0
+}
+
+# Round 76 (the already-installed truth — the user's wording finding): the
+# INSTALLED prior compatible kernel — the newest installed kernel strictly
+# older than <kver> that the module's OWN evidence proves compatible: first
+# the module's proven per-kernel build successes (no declared ceiling needed —
+# the round-76 shape where the failed build's make.log is gone and the bound
+# is underivable), then an installed kernel within the declared ceiling (the
+# round-75 shape).  Prints the version or nothing.  Read-only.
+dkms_incompat_prior_kernel_installed_version()
+{
+    local kver="$1" entry mod_ver bound v best=""
+    [[ -n "$kver" ]] || return 1
+    entry="$(dkms_incompat_for_kernel "$kver" 2>/dev/null || true)"
+    [[ -n "$entry" ]] || return 1
+    mod_ver="${entry%%$'\t'*}"
+    [[ -n "$mod_ver" ]] || return 1
+    while IFS= read -r v; do
+        [[ -n "$v" ]] || continue
+        dpkg --compare-versions "$v" lt "$kver" 2>/dev/null || continue
+        kernel_in_list "$v" "${KERNEL_INVENTORY_VERSIONS[@]}" || continue
+        best="$v"
+    done < <(dkms_incompat_module_installed_kernels "$mod_ver" 2>/dev/null || true)
+    if [[ -n "$best" ]]; then
+        printf '%s\n' "$best"
+        return 0
+    fi
+    bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+    [[ -n "$bound" && "$bound" != unknown ]] || return 1
+    for v in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+        [[ -n "$v" ]] || continue
+        dpkg --compare-versions "$v" lt "$kver" 2>/dev/null || continue
+        dkms_kernel_within_bound "$v" "$bound" 2>/dev/null || continue
+        best="$v"
+    done
+    [[ -n "$best" ]] || return 1
+    printf '%s\n' "$best"
+}
+
+# Round 75/76 (the re-offer + the wording findings): true when the prior
+# compatible kernel is ALREADY INSTALLED — positive evidence, the module-build
+# proof or the in-ceiling installed kernel (the installed-version resolver
+# above), never the repository candidate alone (the round-75 derivation missed
+# the shape where the repositories no longer carry the prior series).  A
+# version with no installable packages left is excluded through the inventory
+# membership check (the module tree is the installed truth).  Read-only.
+dkms_incompat_prior_kernel_installed()
+{
+    local kver="$1" inst=""
+    [[ -n "$kver" ]] || return 1
+    inst="$(dkms_incompat_prior_kernel_installed_version "$kver" 2>/dev/null || true)"
+    [[ -n "$inst" ]]
+}
+
+# Round 76 (the already-installed truth): the single prior-kernel resolution
+# every remedy/menu/note/switch site consumes — the INSTALLED prior compatible
+# kernel first (the already-installed truth wins over the repositories), then
+# the repository candidate (the round-69 derivation).  Prints the version or
+# nothing.  Read-only.
+dkms_incompat_prior_kernel_resolved()
+{
+    local kver="$1" inst=""
+    [[ -n "$kver" ]] || return 1
+    inst="$(dkms_incompat_prior_kernel_installed_version "$kver" 2>/dev/null || true)"
+    if [[ -n "$inst" ]]; then
+        printf '%s\n' "$inst"
+        return 0
+    fi
+    dkms_incompat_prior_kernel_candidate "$kver" \
+        "$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)" 2>/dev/null || true
+}
+
+# Round 75/76 (the re-offer + the wording findings): the next-boot default
+# switch availability for the resolved prior candidate — the kernel-version-
+# scoped wrapper over the round-72 GRUB switch probe (the remaining action
+# once the prior kernel is already installed).  The candidate resolves
+# installed-first (the round-76 already-installed truth), so the switch row
+# still appears when the repositories no longer carry the prior series.
+dkms_incompat_prior_boot_default_available_for_kernel()
+{
+    local kver="$1" cand=""
+    cand="$(dkms_incompat_prior_kernel_resolved "$kver" 2>/dev/null || true)"
+    [[ -n "$cand" ]] || return 1
+    [[ "$(dkms_incompat_prior_kernel_boot_default_availability "$cand" 2>/dev/null || true)" == available ]]
+}
+
+# Round 72 (the prior-kernel boot-default switch — the user's ruling: "the
+# kernel install older kernel and allow to switch to older kernel on next
+# reboot"): resolve the prior kernel's GRUB menuentry id from the target's
+# grub.cfg — the saved_entry value that makes GRUB boot that kernel.  Tracks
+# submenu nesting (`submenu>entry`, the shape GRUB's saved_entry uses).
+# Prints the id or nothing (fail closed: an unparsable or ambiguous entry
+# never resolves).  Read-only; bounded.
+grub_menuentry_id_for_kernel()
+{
+    local cand="$1" config
+    [[ -n "$cand" ]] || return 1
+    config="$TARGET_ROOT$(grub_config_path)"
+    [[ -f "$config" ]] || return 1
+    awk -v want="vmlinuz-$cand" -v sq="'" -v dq='"' '
+        function title_of(line,   q, s, e) {
+            q = ""
+            if (index(line, sq) > 0) q = sq
+            else if (index(line, dq) > 0) q = dq
+            if (q == "") return ""
+            s = index(line, q)
+            e = index(substr(line, s + 1), q)
+            if (e == 0) return ""
+            return substr(line, s + 1, e - 1)
+        }
+        {
+            line = $0
+            if (in_entry == 0 && line ~ /^[[:space:]]*}/ && depth > 0) {
+                n = split(subpath, parts, ">")
+                if (n <= 1) subpath = ""
+                else {
+                    subpath = parts[1]
+                    for (i = 2; i < n; i++) subpath = subpath ">" parts[i]
+                }
+                depth--
+                next
+            }
+            if (line ~ /^[[:space:]]*submenu /) {
+                t = title_of(line)
+                if (t == "" || index(t, ">") > 0) exit 1
+                subpath = (subpath == "" ? t : subpath ">" t)
+                depth++
+                next
+            }
+            if (in_entry == 0 && line ~ /^[[:space:]]*menuentry /) {
+                in_entry = 1
+                entry = title_of(line)
+                if (entry == "" || index(entry, ">") > 0) exit 1
+                next
+            }
+            if (in_entry == 1) {
+                if (line ~ /^[[:space:]]*}/) { in_entry = 0; next }
+                if (index(line, want) > 0 && line ~ /(linux|linuxefi|linux16)[[:space:]]/) {
+                    print (subpath == "" ? entry : subpath ">" entry)
+                    done = 1
+                    exit 0
+                }
+            }
+        }
+        END { if (done != 1) exit 1 }
+    ' "$config" 2>/dev/null || true
+}
+
+# Round 72 (the prior-kernel boot-default switch): the short human note for
+# one boot-default-unavailable machine reason (the CONFIRM names why the
+# switch cannot be applied — never a silent partial action).
+prior_kernel_switch_reason_words()
+{
+    case "$1" in
+        no-grubenv) printf "the target has no GRUB environment block" ;;
+        invalid-grubenv) printf "the target GRUB environment block is not a valid block" ;;
+        no-grub-editenv) printf "the target lacks the GRUB environment editor" ;;
+        grub-default-not-saved) printf "the target GRUB default is not the saved-entry mode" ;;
+        no-menu-entry) printf "the prior kernel has no resolved GRUB menu entry" ;;
+        *) printf "the boot-default write could not be proven" ;;
+    esac
+}
+
+# Round 72 (the prior-kernel boot-default switch): the read-only availability
+# probe — `available` or `boot-default-unavailable|<reason>`.  The switch is
+# the target's OWN GRUB grubenv saved_entry write (the Make Default-class
+# semantics for the TARGET scope), so every prerequisite is positive target
+# evidence: GRUB_DEFAULT must be `saved` (otherwise the saved_entry write
+# cannot change what boots), the prior kernel's menuentry id must resolve
+# from the target's grub.cfg, the grubenv must be a valid GRUB environment
+# block, and the target must carry the grubenv editor.
+dkms_incompat_prior_kernel_boot_default_availability()
+{
+    local cand="$1" default_setting menu_id
+    [[ -n "$cand" ]] || { printf 'boot-default-unavailable|reason:no-candidate\n'; return 1; }
+    [[ -f "$TARGET_ROOT$(grub_env_path)" ]] \
+        || { printf 'boot-default-unavailable|reason:no-grubenv\n'; return 1; }
+    grub_env_block_valid \
+        || { printf 'boot-default-unavailable|reason:invalid-grubenv\n'; return 1; }
+    grub_editenv_tool >/dev/null 2>&1 \
+        || { printf 'boot-default-unavailable|reason:no-grub-editenv\n'; return 1; }
+    default_setting="$(sed -nE 's/^[[:space:]]*GRUB_DEFAULT[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/default/grub" 2>/dev/null | head -n1 || true)"
+    [[ "$default_setting" == saved ]] \
+        || { printf 'boot-default-unavailable|reason:grub-default-not-saved|param:%s\n' "${default_setting:-unset}"; return 1; }
+    menu_id="$(grub_menuentry_id_for_kernel "$cand" 2>/dev/null || true)"
+    [[ -n "$menu_id" ]] \
+        || { printf 'boot-default-unavailable|reason:no-menu-entry|param:%s\n' "$cand"; return 1; }
+    printf 'available\n'
+}
+
+# Round 72 (the prior-kernel boot-default switch): the guarded write — set the
+# target's grubenv saved_entry to the prior kernel's menuentry id through the
+# target's own GRUB editor (the Fedora default-entry pattern: only
+# saved_entry is written, every other grubenv key must survive, the read-back
+# must name the target id, and any failure restores the pre-write block
+# byte-identically).  Idempotent: an already-correct saved_entry performs
+# zero writes.  Prints `boot-default-switched` (or the availability refusal
+# on stdout) and returns 0/1.
+dkms_incompat_prior_kernel_boot_default_ensure()
+{
+    local cand="$1" grubenv editenv menu_id avail current
+    local backup before_sha keys_before keys_after
+    [[ -n "$cand" ]] || return 1
+    if ! avail="$(dkms_incompat_prior_kernel_boot_default_availability "$cand" 2>/dev/null || true)" \
+        || [[ "$avail" != available ]]; then
+        printf '%s\n' "${avail:-boot-default-unavailable|reason:unknown}"
+        return 1
+    fi
+    grubenv="$(grub_env_path)"
+    editenv="$(grub_editenv_tool)"
+    menu_id="$(grub_menuentry_id_for_kernel "$cand" 2>/dev/null || true)"
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    if [[ -n "$current" && "$current" == "$menu_id" ]]; then
+        msg_log module-prior-kernel-boot-default-unchanged "$cand" "$menu_id"
+        printf 'boot-default-switched|already-correct\n'
+        return 0
+    fi
+    backup="$SESSION_DIR/prior-kernel-grubenv-before"
+    cp -a -- "$TARGET_ROOT$grubenv" "$backup" 2>/dev/null \
+        || { printf 'boot-default-unavailable|reason:grubenv-backup-failed\n'; return 1; }
+    before_sha="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    keys_before="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+    run_chroot_try "$(msg set-prior-kernel-grub-default "$cand")" \
+        "$editenv" "$grubenv" set "saved_entry=$menu_id"
+    if (( CHROOT_TRY_RC != 0 )); then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            printf 'boot-default-unavailable|reason:grubenv-write-failed-restored\n'
+            return 1
+        fi
+        printf 'boot-default-unavailable|reason:grubenv-write-failed-unrestorable\n'
+        return 1
+    fi
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    keys_after="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+    if [[ "$current" != "$menu_id" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            printf 'boot-default-unavailable|reason:grubenv-readback-mismatch-restored\n'
+            return 1
+        fi
+        printf 'boot-default-unavailable|reason:grubenv-readback-mismatch-unrestorable\n'
+        return 1
+    fi
+    if [[ "$keys_before" != "$keys_after" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            printf 'boot-default-unavailable|reason:grubenv-keys-changed-restored\n'
+            return 1
+        fi
+        printf 'boot-default-unavailable|reason:grubenv-keys-changed-unrestorable\n'
+        return 1
+    fi
+    msg_log module-prior-kernel-boot-default-set "$cand" "$menu_id"
+    printf 'boot-default-switched|saved_entry=%s\n' "$menu_id"
+    return 0
+}
+
+# Round 72 (the kernel menu's honest availability note — never the silent
+# absence): when a kernel carries the positive incompatibility evidence but
+# the repositories resolve no prior compatible candidate, the kernel menu's
+# per-kernel list annotates the absence.  Prints the note line or nothing.
+# Round 76 (the user's wording finding): the ALREADY-INSTALLED truth wins —
+# an installed prior compatible kernel (the module-build proof or the
+# in-ceiling installed kernel) is checked FIRST, so the note never claims
+# "no prior compatible kernel in the repositories" while the prior kernel is
+# already installed (the user's finding: the repositories did carry the image
+# but the declared ceiling was underivable).
+kernel_incompat_prior_kernel_note()
+{
+    local v="$1" mod_ver bound cand switch_avail=""
+    [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] || return 0
+    dkms_incompat_for_kernel "$v" >/dev/null 2>&1 || return 0
+    mod_ver="$(dkms_incompat_module_for_kernel "$v" 2>/dev/null || true)"
+    bound="$(dkms_incompat_bound_for_kernel "$v" 2>/dev/null || true)"
+    # Round 76 (the reorder): the already-installed truth first — the switch
+    # action above is the remaining action when the target GRUB can take it,
+    # the honest already-installed note otherwise (never the repository note).
+    if dkms_incompat_prior_kernel_installed "$v" 2>/dev/null; then
+        cand="$(dkms_incompat_prior_kernel_resolved "$v" 2>/dev/null || true)"
+        if dkms_incompat_prior_boot_default_available_for_kernel "$v" 2>/dev/null; then
+            return 0
+        fi
+        switch_avail="$(dkms_incompat_prior_kernel_boot_default_availability "${cand:-}" 2>/dev/null || true)"
+        switch_avail="${switch_avail#*reason:}"
+        switch_avail="${switch_avail%%|*}"
+        printf '(the prior compatible kernel %s is already installed; the next-boot default cannot be switched automatically (%s) — the module update option above is the remaining remedy)\n' \
+            "${cand:-unknown}" \
+            "$(prior_kernel_switch_reason_words "$switch_avail" 2>/dev/null || true)"
+        return 0
+    fi
+    if ! dkms_incompat_prior_kernel_available "$v" 2>/dev/null; then
+        printf '(no prior compatible kernel in the repositories — no installable image within the module %s'"'"'s declared ceiling%s resolves; the update option above is the remaining remedy)\n' \
+            "${mod_ver:-unknown}" \
+            "$([[ -n "$bound" && "$bound" != unknown ]] && printf ' %s' "$bound")"
+        return 0
+    fi
+    return 0
+}
+
+# Round 80 (the stuck re-prompt): predict the managed-metapackage-cascade
+# refusal for the newest kernel's removal BEFORE the menu offers the action —
+# the mixed-pins-without-repoint shape (a managed meta pinning BOTH the
+# removed and a surviving kernel with no survivor-pinning available version)
+# and the no-surviving-kernel shape can only refuse, so the menu annotates
+# them instead of re-offering a remove-newest action that can only fail.
+# Read-only (the same dpkg-status probes the removal re-runs).  Prints
+# `refusal|<meta|none>|<surviving|none>` or nothing.
+apt_kernel_remove_newest_refusal_reason()
+{
+    local v="$1" meta_pkg downgrade_target pinned pinned_any pinned_removed_only
+    local surviving_kernel="" ver
+    [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] || return 0
+    [[ -n "$v" && "$v" == "$KERNEL_LATEST" ]] || return 0
+    kernel_newest_is_removable || return 0
+    # The remove-newest action removes the NEWEST kernel by definition — the
+    # removed-vs-surviving split derives from the version identity (never the
+    # mode-armed removal-candidate gate, which is empty while the menu is
+    # merely offering the action).
+    for ver in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+        [[ "$ver" == "$KERNEL_LATEST" ]] && continue
+        surviving_kernel="$ver"
+    done
+    [[ -n "$surviving_kernel" ]] || { printf 'refusal|none|none\n'; return 0; }
+    while IFS= read -r meta_pkg; do
+        [[ -n "$meta_pkg" ]] || continue
+        kernel_package_is_removal_candidate "$meta_pkg" && continue
+        downgrade_target="$(apt_managed_metapackage_version_pinning "$meta_pkg" "$surviving_kernel" || true)"
+        [[ -n "$downgrade_target" ]] && continue
+        pinned_any=false
+        pinned_removed_only=true
+        while IFS= read -r pinned; do
+            [[ -n "$pinned" ]] || continue
+            pinned_any=true
+            [[ "$pinned" == "$KERNEL_LATEST" ]] || pinned_removed_only=false
+        done < <(apt_managed_kernel_versions "$meta_pkg" 2>/dev/null || true)
+        if [[ "$pinned_any" == true && "$pinned_removed_only" == false ]]; then
+            # Mixed pins without a re-point: the removal refuses (the
+            # round-69 contract) — annotate, never re-offer.
+            printf 'refusal|%s|%s\n' "$meta_pkg" "$surviving_kernel"
+            return 0
+        fi
+    done < <(apt_present_unversioned_kernel_metapackages 2>/dev/null || true)
+    return 0
+}
+
+# Round 80: the human note for the predicted remove-newest refusal (the menu
+# annotation — the honest reason, never a silent suppression).
+kernel_remove_newest_refusal_words()
+{
+    local refusal="$1" meta="" surviving=""
+    meta="${refusal#refusal|}"
+    surviving="${meta#*|}"
+    meta="${meta%%|*}"
+    if [[ "$meta" == none ]]; then
+        printf '(remove newest is refused: no surviving kernel remains to fall back to)'
+        return 0
+    fi
+    printf '(remove newest is refused: the managed metapackage %s pins both the removed and a surviving kernel and cannot be re-pointed to %s — the removal would leave a broken meta chain)' \
+        "$meta" "$surviving"
+}
+
+# Round 69 (the universal unblocker): the blocker note for the interrupted-
+# package-manager preflight — the first proven module-vs-kernel
+# incompatibility with its declared bound (empty when none is proven).
+# Read-only; collects the positive evidence once when the arrays are cold.
+dkms_incompat_blocker_note()
+{
+    local i mod_ver kver bound
+    if ((${#KERNEL_MODULE_INCOMPAT_KVER[@]} == 0)); then
+        kernel_module_incompatibilities || true
+    fi
+    for i in "${!KERNEL_MODULE_INCOMPAT[@]}"; do
+        mod_ver="${KERNEL_MODULE_INCOMPAT[$i]}"
+        kver="${KERNEL_MODULE_INCOMPAT_KVER[$i]}"
+        bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+        if [[ -n "$bound" && "$bound" != unknown ]]; then
+            printf "the DKMS module %s genuinely cannot build against kernel %s (the module's declared highest compatible kernel version is %s)." "$mod_ver" "$kver" "$bound"
+        else
+            printf "the DKMS module %s genuinely cannot build against kernel %s." "$mod_ver" "$kver"
+        fi
+        return 0
+    done
+    return 1
+}
+
+# Round 71 (the update option's availability gating — the user's no-op-loop
+# finding): the read-only availability pre-flight for the module update
+# remedy.  The VENDOR-scoped proof decides FIRST (the round-68 evidence: when
+# the target's sources carry the vendor entries, the version comparison is
+# the availability truth — the apt simulation may propose the pending
+# half-configured Conf line while the vendor proof already knows no newer
+# version exists); the simulation is the fallback for the vendor-less
+# targets.  Prints `available` (a version change is provable) or
+# `no-op|<note>` / `not-installable|<note>` (the CONFIRM must never fire for
+# those — the menus annotate the option and the remedy refuses before the
+# prompt).  The note texts reuse the round-68 vendor-scoped refusal shapes.
+dkms_incompat_update_availability()
+{
+    local kver="$1" entry mod_ver pkgs
+    entry="$(dkms_incompat_for_kernel "$kver" 2>/dev/null || true)"
+    [[ -n "$entry" ]] || { printf 'no-op|no proven module-vs-kernel incompatibility evidence\n'; return 0; }
+    mod_ver="${entry%%$'\t'*}"
+    pkgs="${entry#*$'\t'}"
+    [[ -n "$mod_ver" && -n "$pkgs" ]] || { printf 'no-op|the owning package set could not be derived\n'; return 0; }
+    local vendor_ver="" installed_ver="" vpkg candidate
+    if target_has_vendor_apt_origins; then
+        for vpkg in $(tr ',' ' ' <<<"$pkgs"); do
+            [[ -n "$vpkg" ]] || continue
+            candidate="$(apt_vendor_candidate_version "$vpkg" 2>/dev/null || true)"
+            [[ -n "$candidate" ]] || continue
+            vendor_ver="$(printf '%s\n%s\n' "$vendor_ver" "$candidate" | grep -v '^$' | LC_ALL=C sort -V | tail -n 1)"
+        done
+        installed_ver="$(apt_installed_package_version "${pkgs%%,*}" 2>/dev/null || true)"
+        if [[ -z "$vendor_ver" ]]; then
+            printf 'no-op|the vendor repositories carry no candidate for %s\n' "$pkgs"
+            return 0
+        fi
+        if [[ -n "$installed_ver" ]] \
+            && ! dpkg --compare-versions "$vendor_ver" gt "$installed_ver" 2>/dev/null; then
+            printf "no-op|the vendor repositories' newest version is %s (no newer vendor version exists)\n" "$vendor_ver"
+            return 0
+        fi
+    fi
+    # The simulation (the round-64/68 availability proof) — the vendor-less
+    # fallback and the final word when the vendor scope carries a newer
+    # version (the target's lists may or may not resolve it).
+    local output rc
+    set +e
+    output="$(
+        run_apt_bounded probe /usr/bin/env \
+            HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get -s -o Debug::NoLocking=1 install $(tr ',' ' ' <<<"$pkgs") 2>&1
+    )"
+    rc=$?
+    set -e
+    # Round 71 stdout discipline: the probe's stdout is captured as the
+    # availability verdict — the simulation evidence goes to the session log
+    # + stderr only.
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG" >&2
+    if (( rc != 0 )) || ! apt_simulation_is_safe "$output"; then
+        printf 'not-installable|the repository candidate is not installable or failed the safety policy\n'
+        return 0
+    fi
+    if apt_transaction_reported_no_changes "$output"; then
+        if [[ -n "$vendor_ver" && -n "$installed_ver" ]] \
+            && dpkg --compare-versions "$vendor_ver" gt "$installed_ver" 2>/dev/null; then
+            printf "no-op|the vendor repositories carry a newer version %s, but the target's package lists do not resolve it (run the Update package lists repair)\n" "$vendor_ver"
+        else
+            printf 'no-op|the repositories offer no newer version\n'
+        fi
+        return 0
+    fi
+    printf 'available\n'
+}
+
+# Round 71: the cached variant for the menu labels (the availability probe
+# runs the apt simulation once per kernel — the menus render the labels
+# repeatedly, so the result is memoized per kernel version for the session).
+DKMS_UPDATE_AVAIL_CACHE_KVER=""
+DKMS_UPDATE_AVAIL_CACHE_VALUE=""
+dkms_incompat_update_availability_cached()
+{
+    local kver="$1"
+    if [[ -n "$DKMS_UPDATE_AVAIL_CACHE_KVER" && "$DKMS_UPDATE_AVAIL_CACHE_KVER" == "$kver" \
+        && -n "$DKMS_UPDATE_AVAIL_CACHE_VALUE" ]]; then
+        printf '%s\n' "$DKMS_UPDATE_AVAIL_CACHE_VALUE"
+        return 0
+    fi
+    local out=""
+    out="$(dkms_incompat_update_availability "$kver" 2>/dev/null || true)"
+    DKMS_UPDATE_AVAIL_CACHE_KVER="$kver"
+    DKMS_UPDATE_AVAIL_CACHE_VALUE="$out"
+    printf '%s\n' "$out"
+}
+
+# Round 64 (Finding 2, the user's "can we programatically fix that?"): the
+# CONFIRM for the two guarded remedies.  One terminal CONFIRM (120 s) names
+# the exact package change + the consequence; only an explicit y/Y/yes
+# proceeds.  Without an interactive channel the verb is itself the explicit
+# intent (the round-134 no-channel rule).  Returns 0 to proceed, 1 to decline.
+dkms_incompat_remedy_confirm()
+{
+    local prompt_text="$1"
+    shell_interactive_ready || return 0
+    prompt_text="CONFIRM PACKAGE CHANGE"$'\n'"$prompt_text"$'\n'
+    prompt_text+="Answer: type y or yes to proceed with this change; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to decline."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 68 (the vendor-package evidence requirement — the user's ruling): the
+# availability probes and the package derivations consume the target's OWN
+# vendor sources + the vendor-scoped package indexes — the configured/installed
+# evidence, never a hardcoded package map.
+
+# The vendor apt origins: every enabled sources entry whose URI names the
+# TUXEDO vendor host (deb.tuxedocomputers.com — the origin the target's own
+# sources point at).  Prints "uri<TAB>component" lines (one per component);
+# nothing when no vendor entry exists.  Read-only: reads sources.list and
+# sources.list.d (the one-line `deb uri suite component...` shape AND the
+# deb822 *.sources shape).
+target_vendor_apt_origins()
+{
+    local file
+    for file in "$TARGET_ROOT"/etc/apt/sources.list \
+                "$TARGET_ROOT"/etc/apt/sources.list.d/*.list \
+                "$TARGET_ROOT"/etc/apt/sources.list.d/*.sources; do
+        [[ -f "$file" ]] || continue
+        if [[ "$file" == *.sources ]]; then
+            # The deb822 shape: Types:/URIs:/Suites:/Components: fields.
+            awk '
+                BEGIN { RS = "" }
+                {
+                    uri = ""; comps = ""
+                    n = split($0, lines, "\n")
+                    for (i = 1; i <= n; i++) {
+                        if (lines[i] ~ /^[[:space:]]*URIs?:/) { sub(/^[[:space:]]*URIs?:[[:space:]]*/, "", lines[i]); uri = lines[i] }
+                        else if (lines[i] ~ /^[[:space:]]*Components?:/) { sub(/^[[:space:]]*Components?:[[:space:]]*/, "", lines[i]); comps = lines[i] }
+                    }
+                    if (uri !~ /tuxedocomputers\.com/) next
+                    m = split(comps, c, /[[:space:]]+/)
+                    for (j = 1; j <= m; j++) if (c[j] != "") print uri "\t" c[j]
+                }
+            ' "$file"
+            continue
+        fi
+        # The one-line shape: deb [opts] uri suite component...
+        awk '
+            /^[[:space:]]*deb([[:space:]]|\[)/ {
+                uri = ""
+                for (i = 1; i <= NF; i++) {
+                    t = $i
+                    if (t == "deb" || t ~ /^\[.*\]$/) continue
+                    if (t ~ /^#/) break
+                    if (uri == "") { uri = t; continue }
+                    print uri "\t" t
+                }
+            }
+        ' "$file" | grep -F 'tuxedocomputers.com'
+    done
+}
+
+# True when the target's sources carry at least one vendor origin.
+target_has_vendor_apt_origins()
+{
+    [[ -n "$(target_vendor_apt_origins | head -n1)" ]]
+}
+
+# The newest VENDOR-scoped candidate version of <pkg>: the highest Version
+# among the vendor index stanzas (the lists files whose encoded URI names the
+# vendor host).  Prints the version or nothing (1).  Read-only, bounded.
+apt_vendor_candidate_version()
+{
+    local pkg="$1" lists_dir="$TARGET_ROOT/var/lib/apt/lists" file
+    [[ -n "$pkg" ]] || return 1
+    [[ -d "$lists_dir" ]] || return 1
+    {
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            [[ "$(basename -- "$file")" == *tuxedocomputers.com* ]] || continue
+            apt_list_decompress "$file"
+        done < <(find "$lists_dir" -maxdepth 1 -type f -name '*_Packages*' 2>/dev/null | LC_ALL=C sort)
+    } | awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; ver = ""
+            for (i = 1; i <= NF; i++) {
+                line = $i
+                if (line ~ /^Package: /) name = substr(line, 10)
+                else if (line ~ /^Version: /) ver = substr(line, 10)
+            }
+            if (name == pkg && ver != "") print ver
+        }
+    ' | LC_ALL=C sort -V | tail -n 1
+}
+
+# The installed version of <pkg> from the live dpkg status database
+# (read-only; prints the version or nothing).
+apt_installed_package_version()
+{
+    local pkg="$1"
+    [[ -n "$pkg" ]] || return 1
+    awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n"; found = "" }
+        {
+            name = ""; ver = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                line = $i
+                if (line ~ /^Package: /) name = substr(line, 10)
+                else if (line ~ /^Version: /) ver = substr(line, 10)
+                else if (line ~ /^Status: /) state = substr(line, 9)
+            }
+            if (name == pkg && state ~ /installed/) { found = ver; exit }
+        }
+        END { if (found != "") print found }
+    ' "$TARGET_ROOT/var/lib/dpkg/status"
+}
+
+# Round 64 (Finding 2, remedy 1 — the module package UPDATE): prove a
+# repository candidate installable via the simulation AND prove it is an
+# actual version change (a no-op simulation = the repositories offer nothing
+# newer than the installed incompatible version → the honest unavailable
+# refusal, never a fake success), CONFIRM naming the install, then the guarded
+# apply.  $1 = kernel version, $2 = the status key the change evidence lands
+# on.  The module/package context is ALWAYS read from the collected positive
+# incompatibility evidence (the cached diagnostic's
+# `Kernel module build incompatibility:` lines — the round-42 fail-closed
+# pattern); the remedy is only reachable from the kernel repair's per-kernel
+# action row (the user's "never global" ruling).
+dkms_incompat_remedy_update_module()
+{
+    local kver="$1" status_key="${2:-kernels}" entry mod_ver pkgs avail avail_state avail_note
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || fail "No proven module-vs-kernel incompatibility evidence for kernel $kver."
+    mod_ver="${entry%%$'\t'*}"
+    pkgs="${entry#*$'\t'}"
+    [[ -n "$mod_ver" && -n "$pkgs" ]] \
+        || fail "$(reason module-update-unavailable "$mod_ver: the owning package set could not be derived")"
+    # Round 71 (the no-op-loop finding): the availability pre-flight decides
+    # BEFORE the CONFIRM — a proven no-op / not-installable update refuses
+    # with the honest note (the round-68 vendor-scoped shapes), never a
+    # CONFIRM + a looping apply.
+    avail="$(dkms_incompat_update_availability "$kver" 2>/dev/null || true)"
+    avail_state="${avail%%|*}"
+    avail_note="${avail#*|}"
+    if [[ "$avail_state" != available ]]; then
+        msg_log module-update-unavailable-outcome "$mod_ver"
+        repair_change_status "$status_key" "unchanged|$(reason module-update-unavailable "$pkgs: $avail_note")"
+        return 0
+    fi
+    if ! dkms_incompat_remedy_confirm "Install ${pkgs//,/, } to replace the incompatible module $mod_ver (kernel $kver)."; then
+        msg_log module-update-declined "$mod_ver"
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    # Round 195 (task 3a): the pre-apply change evidence on the caller's
+    # status key so a cancel mid-install still carries it in the transcript.
+    PACKAGE_INSTALL_PRE_APPLY_KEY="$status_key"
+    safe_apt_install_packages "$(msg update-incompatible-module "$mod_ver")" "Update the incompatible module $mod_ver" no $(tr ',' ' ' <<<"$pkgs")
+    msg_log module-update-outcome "$mod_ver"
+    repair_change_status "$status_key" "changed|$(reason module-updated "$mod_ver")"
+}
+
+# Round 64 (Finding 2, remedy 2 — the module package REMOVAL): the deliberate
+# user decision — the CONFIRM names the packages + the consequence (the
+# volumes needing the module become inaccessible), never automatic.  The
+# removal runs through the shared simulation + safety policy + never-prompt
+# options; afterwards the dpkg configure re-run proves the unblock (the
+# honest note when it still fails).  $1 = kernel version, $2 = the status key
+# the change evidence lands on.  The module/package context is ALWAYS read
+# from the collected positive incompatibility evidence (the round-42
+# fail-closed pattern).  Round 72 (the user's ruling — "removal ... seems
+# risky should not be offered, we want to repair linux, not break it"): the
+# REMOVAL is NO LONGER OFFERED by any menu — this guarded implementation is
+# retained (never re-wired) so the deliberate decision stays documented; the
+# offered remedies are the non-destructive set (the prior-kernel install with
+# its next-boot default switch + the update).
+dkms_incompat_remedy_remove_module()
+{
+    local kver="$1" status_key="${2:-kernels}" entry mod_ver pkgs
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || fail "No proven module-vs-kernel incompatibility evidence for kernel $kver."
+    mod_ver="${entry%%$'\t'*}"
+    pkgs="${entry#*$'\t'}"
+    [[ -n "$mod_ver" && -n "$pkgs" ]] \
+        || fail "$(reason module-update-unavailable "$mod_ver: the owning package set could not be derived")"
+    if ! dkms_incompat_remedy_confirm "Remove ${pkgs//,/, } (the module $mod_ver, incompatible with kernel $kver) — after the removal any volumes that need the $mod_ver kernel module become inaccessible."; then
+        msg_log module-remove-declined "$mod_ver"
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    local output rc
+    set +e
+    output="$(
+        run_apt_bounded probe /usr/bin/env \
+            HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get -s -o Debug::NoLocking=1 remove --purge $(tr ',' ' ' <<<"$pkgs") 2>&1
+    )"
+    rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    (( rc == 0 )) || fail "$(reason module-update-unavailable "$pkgs: the removal simulation failed")"
+    apt_simulation_is_safe "$output" \
+        || fail "$(reason module-update-unavailable "$pkgs: the removal was rejected by the safety policy")"
+    # Round 195 (task 3a): the pre-apply change evidence (the removal is the
+    # mutation that must invalidate even when a cancel/failure follows).
+    repair_change_status_force "$status_key" changed
+    run_chroot_try_display_bounded "$(msg remove-incompatible-module "$mod_ver")" apt-get -y "${APT_NEVER_PROMPT_OPTIONS[@]}" remove --purge $(tr ',' ' ' <<<"$pkgs")
+    if (( CHROOT_TRY_RC != 0 )); then
+        # The exit-100 class (the round-60 shape): the removal's own packages
+        # are already taken but the unrelated half-configured packages'
+        # postinsts re-failed mid-transaction — the removal COMPLETES on the
+        # positive absence evidence (never a reinstall loop).
+        local all_absent=true pkg
+        for pkg in $(tr ',' ' ' <<<"$pkgs"); do
+            if target_dpkg_package_installed "$pkg"; then
+                all_absent=false
+            fi
+        done
+        [[ "$all_absent" == true ]] || fail "The module removal failed with exit code $CHROOT_TRY_RC."
+    fi
+    # The unblock proof: the dpkg configure re-run after the removal.
+    run_chroot_try_display_bounded "$(msg recheck-dpkg-after-module-removal)" dpkg "${DPKG_NEVER_PROMPT_OPTIONS[@]}" --configure -a
+    if (( CHROOT_TRY_RC == 0 )); then
+        msg_log module-remove-outcome "$mod_ver"
+    else
+        local remaining=""
+        remaining="$(dpkg_configure_failure_reason "$CHROOT_TRY_OUTPUT" 2>/dev/null | head -n1 || true)"
+        msg_log module-remove-outcome-dpkg-still-failing "$mod_ver" "${remaining:-unknown}"
+    fi
+    repair_change_status "$status_key" "changed|$(reason module-removed "$mod_ver")"
+}
+
+# Round 69 (Finding 3, remedy 3 — the user's "the distribution may still have
+# the older prior kernel in the repository"): install the repository's PRIOR
+# kernel version the module still supports — the newest available versioned
+# kernel image strictly older than the installed kernel AND not newer than the
+# module's declared compatibility ceiling (the live make.log bound).  The
+# install runs through the shared guarded simulation-first apt path; the
+# initramfs/bootloader regeneration is sequenced by the caller exactly like
+# the update remedy.  Round 72 (the user's ruling — the REMOVAL goes, the
+# PRIOR-KERNEL remedy gains the BOOT-DEFAULT SWITCH): after the install the
+# remedy makes the prior kernel the target's next-boot default (the Make
+# Default-class grubenv saved_entry write — the CONFIRM names the boot
+# change); when the switch cannot be proven the install still completes and
+# the verdict names the honest note.  The candidate's OWN compatibility with
+# the module is part of the offer's evidence (candidate <= ceiling).  $1 =
+# kernel version, $2 = the status key the change evidence lands on.  Gated on
+# the positive incompatibility evidence (the round-42 fail-closed pattern);
+# never automatic, never global.
+dkms_incompat_remedy_install_prior_kernel()
+{
+    local kver="$1" status_key="${2:-kernels}" entry mod_ver bound cand image_pkg
+    local switch_avail="" switch_note="" switch_out=""
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || fail "No proven module-vs-kernel incompatibility evidence for kernel $kver."
+    mod_ver="${entry%%$'\t'*}"
+    bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+    cand="$(dkms_incompat_prior_kernel_candidate "$kver" "${bound:-unknown}" 2>/dev/null || true)"
+    if [[ -z "$cand" ]]; then
+        msg_log module-prior-kernel-unavailable-outcome "$mod_ver" "$kver" "${bound:-unknown}"
+        repair_change_status "$status_key" "unchanged|$(reason prior-kernel-unavailable "$mod_ver" "$kver" "${bound:-unknown}")"
+        return 0
+    fi
+    image_pkg="linux-image-$cand"
+    # Round 72: probe the boot-default switch availability BEFORE the CONFIRM
+    # so the prompt names exactly what will happen (install + the next-boot
+    # default switch, or install + the honest note when the target's GRUB
+    # cannot take the switch).
+    switch_avail=0
+    if [[ "$(dkms_incompat_prior_kernel_boot_default_availability "$cand" 2>/dev/null || true)" == available ]]; then
+        switch_avail=1
+    fi
+    if (( switch_avail == 1 )); then
+        if ! dkms_incompat_remedy_confirm "Install the prior repository kernel $cand ($image_pkg) — the newest kernel version the module $mod_ver still supports (its declared ceiling is kernel ${bound:-unknown}) — AND switch the next-boot default to it: the system boots the prior kernel on the next reboot until the module's compatible version lands; the tool re-checks the repositories on the next diagnostic."; then
+            msg_log module-prior-kernel-declined "$mod_ver"
+            repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+            return 0
+        fi
+    else
+        switch_note="$(dkms_incompat_prior_kernel_boot_default_availability "$cand" 2>/dev/null || true)"
+        switch_note="${switch_note#*reason:}"
+        switch_note="${switch_note%%|*}"
+        if ! dkms_incompat_remedy_confirm "Install the prior repository kernel $cand ($image_pkg) — the newest kernel version the module $mod_ver still supports (its declared ceiling is kernel ${bound:-unknown}). Note: the next-boot default cannot be switched automatically ($(prior_kernel_switch_reason_words "$switch_note" 2>/dev/null || true)) — select the prior kernel from the boot menu on the next reboot."; then
+            msg_log module-prior-kernel-declined "$mod_ver"
+            repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+            return 0
+        fi
+    fi
+    # Round 195 (task 3a): the pre-apply change evidence on the caller's status
+    # key so a cancel/failure mid-install still carries it in the transcript.
+    PACKAGE_INSTALL_PRE_APPLY_KEY="$status_key"
+    SAFE_APT_INSTALL_NO_CHANGES=0
+    safe_apt_install_packages "$(msg install-prior-kernel "$cand")" "Install the prior compatible kernel $cand" no "$image_pkg"
+    if [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]]; then
+        repair_change_status "$status_key" "unchanged|$(reason install-package-no-op)"
+        return 0
+    fi
+    # Round 72: the next-boot default switch (the guarded grubenv saved_entry
+    # write); the honest note + the manual-boot guidance when unavailable.
+    switch_out="$(dkms_incompat_prior_kernel_boot_default_ensure "$cand" 2>/dev/null || true)"
+    # The ensure's log lines precede the machine verdict in the captured
+    # output — match the verdict anywhere, never a line-prefix match.
+    if [[ "$switch_out" == *boot-default-switched* ]]; then
+        msg_log module-prior-kernel-boot-default "$cand" "$mod_ver"
+        repair_change_status "$status_key" "changed|$(reason prior-kernel-installed-default "$cand")"
+    else
+        switch_note="${switch_out#*reason:}"
+        switch_note="${switch_note%%|*}"
+        msg_log module-prior-kernel-boot-default-unavailable "$cand" "$(prior_kernel_switch_reason_words "$switch_note" 2>/dev/null || true)"
+        repair_change_status "$status_key" "changed|$(reason prior-kernel-installed "$cand" "$(prior_kernel_switch_reason_words "$switch_note" 2>/dev/null || true)")"
+    fi
+}
+
+# Round 69 (Finding 3, remedy 4 — the combined "both" guidance): the prior
+# kernel NOW + the module update MONITORED.  Dispatches the prior-kernel
+# remedy (its own CONFIRM + the guarded install) and, after a proven change,
+# names the monitoring guidance — the tool re-checks the vendor scope for the
+# module's compatible version on the next diagnostic (the evidence re-probes
+# there); no automatic update runs behind the user's back.  $1 = kernel
+# version, $2 = the status key.
+dkms_incompat_remedy_prior_and_monitor()
+{
+    local kver="$1" status_key="${2:-kernels}" entry mod_ver bound
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || fail "No proven module-vs-kernel incompatibility evidence for kernel $kver."
+    mod_ver="${entry%%$'\t'*}"
+    bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+    dkms_incompat_remedy_install_prior_kernel "$kver" "$status_key"
+    # Only a proven change carries the monitoring guidance; a decline/no-op/
+    # unavailable leg reports its own honest verdict inside the remedy.
+    if [[ "${REPAIR_CHANGE_STATUS_LAST_STATE:-}" == changed ]]; then
+        msg_log module-prior-kernel-monitoring "$mod_ver" "${bound:-unknown}"
+        repair_change_status "$status_key" "changed|$(reason prior-kernel-installed-monitoring "${bound:-unknown}")"
+    fi
+}
+
+# Round 75 (the re-offer finding): the STANDALONE next-boot default switch for
+# the ALREADY-INSTALLED prior kernel — the remaining action once the install
+# completed (the install option clears on the positive installed evidence).
+# The CONFIRM names the boot change; the write is the round-72 guarded grubenv
+# saved_entry ensure.  The remedy re-checks the evidence live and refuses
+# honestly (never a fake switch).  $1 = kernel version, $2 = the status key.
+dkms_incompat_remedy_switch_prior_boot_default()
+{
+    local kver="$1" status_key="${2:-kernels}" entry mod_ver bound cand switch_out switch_note
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || fail "No proven module-vs-kernel incompatibility evidence for kernel $kver."
+    mod_ver="${entry%%$'\t'*}"
+    bound="$(dkms_incompat_bound_for_kernel "$kver" 2>/dev/null || true)"
+    # Round 76 (the already-installed truth): the candidate resolves
+    # installed-first — the switch still fires when the repositories no longer
+    # carry the prior series but the compatible kernel is installed.
+    cand="$(dkms_incompat_prior_kernel_resolved "$kver" 2>/dev/null || true)"
+    if [[ -z "$cand" ]] || ! dkms_incompat_prior_kernel_installed "$kver" 2>/dev/null; then
+        msg_log module-prior-kernel-unavailable-outcome "$mod_ver" "$kver" "${bound:-unknown}"
+        repair_change_status "$status_key" "unchanged|$(reason prior-kernel-unavailable "$mod_ver" "$kver" "${bound:-unknown}")"
+        return 0
+    fi
+    if ! dkms_incompat_remedy_confirm "Switch the next-boot default to the prior compatible kernel $cand — the system boots it on the next reboot until the module $mod_ver's compatible version lands."; then
+        msg_log module-prior-kernel-declined "$mod_ver"
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    switch_out="$(dkms_incompat_prior_kernel_boot_default_ensure "$cand" 2>/dev/null || true)"
+    if [[ "$switch_out" == *boot-default-switched* ]]; then
+        repair_change_status "$status_key" "changed|$(reason prior-kernel-boot-default-switched "$cand")"
+    else
+        switch_note="${switch_out#*reason:}"
+        switch_note="${switch_note%%|*}"
+        msg_log module-prior-kernel-boot-default-unavailable "$cand" "$(prior_kernel_switch_reason_words "$switch_note" 2>/dev/null || true)"
+        repair_change_status "$status_key" "unchanged|$(reason prior-kernel-boot-default-unavailable "$(prior_kernel_switch_reason_words "$switch_note" 2>/dev/null || true)")"
+    fi
+}
+
+# Round 64 (Finding 1): the honest initramfs-rebuild failure reason when the
+# rebuild breaks on the module-vs-kernel incompatibility class (the zfs-hook
+# shape — the initramfs generation needs a module the DKMS build could not
+# produce for this kernel; the missing initrd is the second casualty of the
+# same root cause).  Positive evidence only: the collected incompatibility
+# entry for the kernel (re-probed once when the arrays are cold).  Prints the
+# named hint or nothing.
+initramfs_failure_incompat_hint()
+{
+    local kver="$1" entry mod_ver
+    if ((${#KERNEL_MODULE_INCOMPAT_KVER[@]} == 0)); then
+        kernel_module_incompatibilities || true
+    fi
+    entry="$(dkms_incompat_for_kernel "$kver" || true)"
+    [[ -n "$entry" ]] || return 0
+    mod_ver="${entry%%$'\t'*}"
+    printf "the DKMS module %s genuinely cannot build against this kernel (a module-vs-kernel incompatibility): install the prior compatible kernel or update the module's package through the kernel repair, then run this repair again.\n" "$mod_ver"
+}
+
+# True when the supplied kernel version is FULLY REMOVED on positive evidence
+# (the round-60 forceful-removal contract): every one of its grouped packages
+# is absent from the live dpkg status database AND the vmlinuz plus both
+# module-tree layouts are gone from disk.  A kernel whose packages or files
+# still exist is NOT fully removed.  The second argument is the kernel's
+# comma-joined grouped package list; the probes re-read the LIVE state, never
+# the stale pre-removal baseline.
+apt_kernel_is_fully_removed()
+{
+    local kver="$1" joined="$2" pkg
+    [[ -n "$kver" ]] || return 1
+    [[ -f "$TARGET_ROOT/boot/vmlinuz-$kver" ]] && return 1
+    [[ -d "$TARGET_ROOT/usr/lib/modules/$kver" || -d "$TARGET_ROOT/lib/modules/$kver" ]] && return 1
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        target_dpkg_package_installed "$pkg" && return 1
+    done < <(tr ',' '\n' <<<"$joined")
+    # Round 80 (the whole lineage): the removed kernel's DKMS trees are gone
+    # too (the sweep above + the positive absence proof — never "absent"
+    # while a /var/lib/dkms/<mod>/<ver>/<kver> tree survives).
+    if [[ -d "$TARGET_ROOT/var/lib/dkms" ]]; then
+        [[ -z "$(find "$TARGET_ROOT/var/lib/dkms" -mindepth 3 -maxdepth 3 -type d -name "$kver" -print 2>/dev/null | head -n1)" ]] \
+            || return 1
+    fi
+    return 0
+}
+
+# Reconcile the dpkg database after a forceful kernel removal: any lingering
+# record of the removed grouped packages is purged with the never-prompt
+# options (the poisoned-transaction state where dpkg exited 100 on the
+# UNRELATED half-configured packages while the removal's own packages were
+# already taken).  Bounded + honest: a purge failure is reported, never a
+# second package operation loop.  Returns 0.
+dpkg_purge_removed_kernel_records()
+{
+    local joined="$1" pkg rc
+    [[ -n "$joined" ]] || return 0
+    for pkg in $(tr ',' ' ' <<<"$joined"); do
+        [[ -n "$pkg" ]] || continue
+        target_dpkg_package_installed "$pkg" && continue
+        dpkg --purge "${DPKG_NEVER_PROMPT_OPTIONS[@]}" "$pkg" >/dev/null 2>&1 || rc=$?
+    done
+    return 0
+}
+
+# Round 60 (the user's forceful-removal ruling): a kernel-removal apply whose
+# dpkg exited 100 on the UNRELATED half-configured packages (the zfs-dkms
+# postinst build-failure class) while the removal's OWN kernels were already
+# taken.  The removal COMPLETES: (a) every removal candidate's on-disk
+# components are swept (the zombie cleanup), (b) the dpkg database records are
+# reconciled (a lingering record purged), (c) the metadata cache is refreshed
+# so the removed kernel is never re-retrieved or re-offered (the honest note
+# when the refresh cannot run), (d) the post-verify proves the ABSENCE (the
+# grouped packages gone + the vmlinuz/module trees gone).  Returns 0 when every
+# removal candidate is provably absent — the status is emitted here and the
+# caller returns the success with the unrelated broken state named; 1 when any
+# candidate remains (the caller fails closed as before).
+kernel_removal_completed_despite_dpkg()
+{
+    local i ver removed_any=false remaining=false
+    local broken_pkgs=""
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
+        kernel_was_removal_target "${KERNEL_INVENTORY_PKGS[$i]}" "$@" || continue
+        if apt_kernel_is_half_removed "$ver" "${KERNEL_INVENTORY_PKGS[$i]}"; then
+            apt_kernel_zombie_cleanup "$ver" "$@"
+            dpkg_purge_removed_kernel_records "${KERNEL_INVENTORY_PKGS[$i]}"
+        fi
+        if apt_kernel_is_fully_removed "$ver" "${KERNEL_INVENTORY_PKGS[$i]}"; then
+            removed_any=true
+        else
+            remaining=true
+        fi
+    done
+    [[ "$removed_any" == true && "$remaining" != true ]] || return 1
+    # The unrelated broken state (the half-configured packages whose postinsts
+    # failed) is the named accompanying note, never the blocker.
+    broken_pkgs="$(dpkg_configure_failure_reason "$CHROOT_TRY_OUTPUT" 2>/dev/null | head -n1 || true)"
+    msg_log kernel-removal-completed-unrelated-broken "${broken_pkgs:-unknown}"
+    # The metadata refresh keeps the removed kernel out of the repository
+    # offers and the inventory (the honest note when the refresh cannot run).
+    apt_update_allow_release_info_retry || true
+    KERNEL_CLEANUP_APPLIED=true
+    repair_change_status "$KERNEL_STAGE_STATUS_KEY" "changed|$(reason kernel-removal-completed "${broken_pkgs:-unknown}")"
+    return 0
+}
+
+# Round 60 (the forceful-removal ruling, the general shape): a package removal
+# whose apply exited nonzero on the UNRELATED half-configured packages while
+# the removal's OWN packages are provably absent (the live dpkg status no
+# longer lists any of them).  The metadata refresh follows so the removed
+# packages are never re-offered, and the honest success is emitted with the
+# unrelated broken state named.  Returns 0 when every listed package is absent
+# (the caller returns the success), 1 otherwise (the caller fails closed).
+apt_removal_completed_despite_dpkg()
+{
+    local joined="$1" status_key="$2" label="$3" pkg
+    local all_absent=true broken_pkgs=""
+    [[ -n "$joined" ]] || return 1
+    for pkg in $(tr ',' ' ' <<<"$joined"); do
+        [[ -n "$pkg" ]] || continue
+        if target_dpkg_package_installed "$pkg"; then
+            all_absent=false
+            break
+        fi
+    done
+    [[ "$all_absent" == true ]] || return 1
+    broken_pkgs="$(dpkg_configure_failure_reason "$CHROOT_TRY_OUTPUT" 2>/dev/null | head -n1 || true)"
+    msg_log package-removal-completed-unrelated-broken "$label" "${broken_pkgs:-unknown}"
+    apt_update_allow_release_info_retry || true
+    repair_change_status "$status_key" "changed|$(reason package-removal-completed "$label" "${broken_pkgs:-unknown}")"
     return 0
 }
 
@@ -48269,6 +54406,84 @@ apt_kernel_is_half_removed()
     return 1
 }
 
+# Round 80 (the whole-lineage residue sweep — the user's "remove means remove"
+# ruling): the removed kernel's DKMS state goes WITH it — for a half-installed
+# kernel the prerm/dkms hooks never fired, so the removal completion sweeps
+# /var/lib/dkms/<module>/<version>/<kver> for the removed version (an exact
+# valid_kver-gated match, never a surviving kernel) and drops a module version
+# directory that ends with no kernel trees (its build/source dirs are residue
+# of the removed lineage).  The round-72 boundary is untouched: this is the
+# KERNEL-removal completion sweeping its own evidence, never a module-removal
+# action anywhere in the dkms repair menus.  Bounded (a per-run sweep cap) and
+# containment-checked through safe_rm_tree_target; a leftover the sweep cannot
+# take fails the caller's absence proof (never a silent residue).
+apt_kernel_dkms_lineage_sweep()
+{
+    local kver="$1" mod_dir="" ver_dir="" kver_dir="" count=0 kernel_dirs="" child=""
+    local ver_base="" surviving="" protected_dir=false
+    valid_kver "$kver" || return 1
+    [[ -d "$TARGET_ROOT/var/lib/dkms" ]] || return 0
+    for mod_dir in "$TARGET_ROOT"/var/lib/dkms/*/; do
+        [[ -d "$mod_dir" ]] || continue
+        for ver_dir in "$mod_dir"*/; do
+            [[ -d "$ver_dir" ]] || continue
+            kver_dir="${ver_dir}${kver}"
+            if [[ -d "$kver_dir" ]]; then
+                count=$((count + 1))
+                if (( count > 64 )); then
+                    msg_log kernel-dkms-sweep-bound "$kver"
+                    return 1
+                fi
+                msg_log kernel-dkms-lineage-removed "$kver" "$(basename -- "${mod_dir%/}")" "$(basename -- "${ver_dir%/}")"
+                safe_rm_tree_target "${kver_dir#"$TARGET_ROOT"/}"
+            fi
+            # Round 81 (the survivor-safe residue drop — the user's legacy-dir
+            # finding): a version directory whose OWN basename embeds a
+            # SURVIVING kernel's version string (the legacy `kernel-<survivor>
+            # -…` shape the dirty dkms state leaves) is NEVER dropped — the
+            # round-80 `-name '*-*'` heuristic misclassified it and removed
+            # the survivor's built state wholesale (the system then re-built
+            # it, masking the breach).  Only version dirs naming the REMOVED
+            # kernel (or neither) may drop, and only when no kernel-version
+            # child remains: a child counts as a kernel dir only when it
+            # parses as a kernel version (the valid_kver gate AND a digit —
+            # build/ and source/ never block the drop).
+            [[ -d "$ver_dir" ]] || continue
+            ver_base="$(basename -- "${ver_dir%/}")"
+            protected_dir=false
+            for surviving in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
+                [[ -n "$surviving" && "$surviving" != "$kver" ]] || continue
+                if [[ "$ver_base" == *"$surviving"* ]]; then
+                    protected_dir=true
+                    break
+                fi
+            done
+            if [[ "$protected_dir" == true ]]; then
+                continue
+            fi
+            kernel_dirs=""
+            for child in "$ver_dir"*/; do
+                [[ -d "$child" ]] || continue
+                child="$(basename -- "${child%/}")"
+                if valid_kver "$child" && [[ "$child" == *[0-9]* ]]; then
+                    kernel_dirs="$child"
+                    break
+                fi
+            done
+            if [[ -z "$kernel_dirs" ]]; then
+                msg_log kernel-dkms-lineage-removed "$kver" "$(basename -- "${mod_dir%/}")" "$ver_base"
+                safe_rm_tree_target "${ver_dir#"$TARGET_ROOT"/}"
+            fi
+        done
+        # A module directory left with no version dirs is residue too.
+        if [[ -d "$mod_dir" ]] \
+            && [[ -z "$(find "$mod_dir" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | head -n1)" ]]; then
+            safe_rm_tree_target "${mod_dir#"$TARGET_ROOT"/}"
+        fi
+    done
+    return 0
+}
+
 # Remove the leftover on-disk components of one removed kernel version so no
 # zombie remains even when apt-get remove --purge failed part-way (for example
 # a DKMS prerm hook error).  Only the version being removed is ever cleaned,
@@ -48281,15 +54496,19 @@ apt_kernel_zombie_cleanup()
     shift
     valid_kver "$kver" || { msg_log kernel-zombie-refused "$kver"; return 1; }
     msg_log kernel-zombie-cleanup "$kver"
-    safe_rm_tree "$TARGET_ROOT" "usr/lib/modules/$kver"
-    safe_rm_tree "$TARGET_ROOT" "lib/modules/$kver"
+    safe_rm_tree_target "usr/lib/modules/$kver"
+    safe_rm_tree_target "lib/modules/$kver"
+    # Round 80 (the whole-lineage sweep): the removed kernel's DKMS trees go
+    # with it (the prerm hooks never fired for a half-installed kernel).
+    apt_kernel_dkms_lineage_sweep "$kver" || msg_log kernel-dkms-sweep-incomplete "$kver"
     # The headers glob is valid_kver-gated but the shell expands it; route
-    # every match through safe_rm_tree so the removal keeps the same
+    # every match through safe_rm_tree_target so the removal keeps the same
     # mechanical containment guarantee as the module trees (realpath-contained
-    # under TARGET_ROOT, traversal refused) instead of a bare rm -rf glob.
+    # under the scope root, traversal refused) instead of a bare rm -rf glob —
+    # the target wrapper makes the sweep work in HOST mode too (round 74).
     for dir in "$TARGET_ROOT"/usr/src/linux-headers-"$kver"*; do
         [[ -e "$dir" || -L "$dir" ]] || continue
-        safe_rm_tree "$TARGET_ROOT" "${dir#"$TARGET_ROOT"/}"
+        safe_rm_tree_target "${dir#"$TARGET_ROOT"/}"
     done
     rm -f -- "$TARGET_ROOT/boot/vmlinuz-$kver" \
              "$TARGET_ROOT/boot/initrd.img-$kver" \
@@ -48303,7 +54522,7 @@ apt_kernel_zombie_cleanup()
         while IFS= read -r dir; do
             [[ -n "$dir" ]] || continue
             [[ "$dir" == /usr/src/linux-headers-* ]] || continue
-            safe_rm_tree "$TARGET_ROOT" "${dir#/}"
+            safe_rm_tree_target "${dir#/}"
         done < <(apt_package_owned_dirs "$pkg" "/usr/src/linux-headers-")
     done
 }
@@ -48489,6 +54708,12 @@ apt_cleanup_orphaned_headers()
         fail "$(reason package-manager-timeout "Remove orphaned kernel headers")."
     fi
     if (( CHROOT_TRY_RC != 0 )); then
+        # Round 60 (the forceful-removal ruling): the poisoned exit 100 on the
+        # unrelated half-configured packages must never block a removal whose
+        # own packages are provably gone.
+        if apt_removal_completed_despite_dpkg "$(IFS=,; printf '%s' "${remove_packages[*]}")" "$KERNEL_STAGE_STATUS_KEY" "orphaned kernel header packages"; then
+            return 0
+        fi
         msg_log orphaned-headers-removal-failed "$CHROOT_TRY_RC"
         for v in "${KERNEL_ORPHANED_HEADERS[@]}"; do
             apt_kernel_zombie_cleanup "$v" "${remove_packages[@]}"
@@ -48559,11 +54784,41 @@ apt_cleanup_orphaned_build_support()
         fail "$(reason package-manager-timeout "Remove orphaned kernel build support")."
     fi
     if (( CHROOT_TRY_RC != 0 )); then
+        # Round 60 (the forceful-removal ruling; the user's named case).
+        if apt_removal_completed_despite_dpkg "$(IFS=,; printf '%s' "${remove_packages[*]}")" "$KERNEL_STAGE_STATUS_KEY" "orphaned kernel build-support packages"; then
+            return 0
+        fi
         msg_log orphaned-build-support-removal-failed "$CHROOT_TRY_RC"
         fail "Orphaned kernel build-support removal failed with exit code $CHROOT_TRY_RC."
     fi
 
     repair_change_status "$KERNEL_STAGE_STATUS_KEY" changed
+}
+
+# Round 76 (the remove-newest re-resolution — the user's live finding): true
+# when the simulated transaction INSTALLS a NEW versioned kernel package — a
+# kernel version not among the installed inventory versions.  Removing the
+# newest makes the managed metapackage pull the repository-latest kernel in
+# (the replacement-install shape); the plain removal must then be re-planned as
+# the managed downgrade, never applied with the replacement sneaking in.  An
+# Inst of the REMOVED kernel's own version (the Ubuntu signed→unsigned swap
+# shape) is NOT a new kernel and never triggers.  Read-only.
+apt_sim_installs_new_kernel_version()
+{
+    local output="$1" pkg kver
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        case "$pkg" in
+            linux-image-*|linux-modules-*|linux-main-modules-zfs-*|linux-headers-*)
+                kver="$(apt_kernel_version_from_package "$pkg" 2>/dev/null || true)" ;;
+            linux-base-*|linux-binary-*|linux-kbuild-*)
+                kver="$(apt_kernel_support_version_from_package "$pkg" 2>/dev/null || true)" ;;
+            *) continue ;;
+        esac
+        [[ -n "$kver" ]] || continue
+        kernel_in_list "$kver" "${KERNEL_INVENTORY_VERSIONS[@]}" || return 0
+    done < <(awk '$1 == "Inst" {print $2}' <<<"$output")
+    return 1
 }
 
 # The apt/dpkg kernel-cleanup backend, dispatched from run_package_stage for
@@ -48581,7 +54836,9 @@ apt_cleanup_orphaned_build_support()
 apt_kernel_cleanup_stage()
 {
     local output sim_rc pkg ver i stale_meta=false stale_meta_pkg
+    local fresh_joined="" pi plan_pkgs=""
     local -a remove_packages=() protected_packages=()
+    local -a plan_versions=() plan_joined=()
     local cascaded_metas="" unversioned_metas="" meta_pkg downgrade_target spec surviving_kernel=""
     local -a downgrade_metas=() downgrade_specs=() combined_args=()
 
@@ -48612,6 +54869,38 @@ apt_kernel_cleanup_stage()
         protected_packages+=("$pkg")
     done
 
+    # Round 82 (the stale-evidence plan fix — the round-81b user finding): the
+    # removal plan is re-derived from the THEN-CURRENT package state on EVERY
+    # attempt.  The cached inventory (the menu's evidence source) may predate a
+    # mid-session mutation (the half-configured headers install class), so each
+    # removal candidate's FULL grouped versioned package set is probed fresh
+    # and UNIONED into the plan — never a stale subtraction.  The union is the
+    # authoritative candidate set for the validators (KERNEL_REMOVAL_PLAN_PKGS)
+    # and the removal lineage for the lineage acceptance; the completion's
+    # absence proof below re-checks the fresh per-version set so the removed
+    # kernel ends FULLY absent (the user's "remove means remove" ruling).
+    # apt/dpkg-scoped (the fresh grouped-package probes); the rpm/apk/pacman
+    # backends keep their pre-round-82 plan/validator semantics.
+    KERNEL_REMOVAL_PLAN_PKGS=()
+    KERNEL_REMOVAL_LINEAGE_VERSIONS=()
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
+            kernel_is_removal_candidate "$ver" || continue
+            KERNEL_REMOVAL_LINEAGE_VERSIONS+=("$ver")
+            fresh_joined="$(apt_fresh_kernel_package_set "$ver" | paste -sd, -)"
+            plan_versions+=("$ver")
+            plan_joined+=("${fresh_joined:-${KERNEL_INVENTORY_PKGS[$i]}}")
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] && remove_packages+=("$pkg")
+            done < <(tr ',' '\n' <<<"$fresh_joined")
+        done
+        if ((${#remove_packages[@]} > 0)); then
+            mapfile -t remove_packages < <(printf '%s\n' "${remove_packages[@]}" | LC_ALL=C sort -u)
+        fi
+    fi
+    KERNEL_REMOVAL_PLAN_PKGS=("${remove_packages[@]}")
+
     if ((${#remove_packages[@]} == 0)); then
         repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-removable-kernels)"
         return 0
@@ -48640,11 +54929,20 @@ apt_kernel_cleanup_stage()
     fi
     (( sim_rc == 0 )) || fail "The simulated kernel-removal transaction failed with exit code $sim_rc."
 
-    # Detect a managed-metapackage cascade: a protected (non-stale, non-candidate)
-    # unversioned metapackage that apt proposes to remove because it pins the
-    # removed newest kernel.  A stale metapackage is already a removal candidate
-    # (handled by the plain path), never a downgrade target.
-    unversioned_metas="$(apt_unversioned_kernel_metapackages || true)"
+    # Detect a managed-metapackage cascade / re-resolution (round 76): a
+    # protected (non-stale, non-candidate) unversioned metapackage that apt
+    # proposes to REMOVE because it pins the removed newest kernel (the
+    # round-69 shape), that apt proposes to UPGRADE (an `Inst <meta> [old]
+    # (new)` line — the txos metas re-pointing forward to the repository
+    # replacement), OR a NEW versioned kernel package apt proposes to INSTALL
+    # as the replacement (the replacement-install shape).  Any of these means
+    # the plain removal would defeat the fallback, so the managed downgrade
+    # intervenes.
+    # A stale metapackage is already a removal candidate (handled by the plain
+    # path), never a downgrade target.  The presence-based meta set matches
+    # the package set apt itself acts on (the user's target carries its
+    # metapackages in install-in-progress states).
+    unversioned_metas="$(apt_present_unversioned_kernel_metapackages || true)"
     cascaded_metas=""
     while IFS= read -r pkg; do
         [[ -n "$pkg" ]] || continue
@@ -48653,78 +54951,181 @@ apt_kernel_cleanup_stage()
         grep -Fxq "$pkg" <<<"$unversioned_metas" || continue
         cascaded_metas+="$pkg"$'\n'
     done < <(awk '$1 == "Remv" || $1 == "Purg" {print $2}' <<<"$output")
+    # Round 76: a protected metapackage UPGRADE is a cascade too (the meta is
+    # re-pointed forward, never silently upgraded to the replacement).
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        pkg="${pkg%%:*}"
+        kernel_package_is_removal_candidate "$pkg" && continue
+        grep -Fxq "$pkg" <<<"$unversioned_metas" || continue
+        [[ "$cascaded_metas" == *"$pkg"$'\n'* ]] || cascaded_metas+="$pkg"$'\n'
+    done < <(awk '$1 == "Inst" {print $2}' <<<"$output")
 
-    if [[ -n "$cascaded_metas" ]]; then
-        # Managed downgrade: re-point the cascaded metapackages at the surviving
-        # (newest non-removed) kernel.  Fails closed with a specific reason when
-        # the surviving kernel or an older pinning version cannot be resolved.
+    if [[ -n "$cascaded_metas" ]] || apt_sim_installs_new_kernel_version "$output"; then
+        # Managed downgrade: re-point the managed metapackages at the surviving
+        # (newest non-removed) kernel.  Round 76 (the two meta classes): every
+        # protected metapackage that resolves a survivor-pinning available
+        # version is DOWNGRADED to it; a metapackage with no survivor-pinning
+        # version whose versioned pins reference ONLY the removed kernel(s) is
+        # a CASCADE-REMOVAL meta — removed WITH the transaction, because it
+        # belongs to the removed kernel's lineage and would otherwise stay
+        # pinned to a gone kernel (the user's "when we say remove we mean
+        # remove" ruling).  The cascade-removal class is only taken while at
+        # least one meta downgrades (the meta chain survives): with NO
+        # resolvable meta the stage fails closed naming the metapackages and
+        # the surviving kernel (the round-69 contract, never a silent meta
+        # removal).  A meta whose pins reference only surviving kernels is
+        # left untouched; mixed pins without a re-point fail closed.
         for ver in "${KERNEL_INVENTORY_VERSIONS[@]}"; do
             kernel_is_removal_candidate "$ver" && continue
             surviving_kernel="$ver"
         done
         if [[ -z "$surviving_kernel" ]]; then
             repair_change_status "$KERNEL_STAGE_STATUS_KEY" \
-                "unchanged|$(reason managed-default-metapackage-cascade "$(printf '%s\n' "$cascaded_metas" | paste -sd, -)" "none")"
+                "unchanged|$(reason managed-default-metapackage-cascade "$(printf '%s\n' "$cascaded_metas" | grep -vE '^[[:space:]]*$' | paste -sd, -)" "none")"
             return 0
         fi
 
+        local pinned pinned_any pinned_removed_only
+        local -a cascade_metas=()
         while IFS= read -r meta_pkg; do
             [[ -n "$meta_pkg" ]] || continue
+            kernel_package_is_removal_candidate "$meta_pkg" && continue
             downgrade_target="$(apt_managed_metapackage_version_pinning "$meta_pkg" "$surviving_kernel" || true)"
-            if [[ -z "$downgrade_target" ]]; then
+            if [[ -n "$downgrade_target" ]]; then
+                downgrade_metas+=("$meta_pkg")
+                downgrade_specs+=("$meta_pkg=$downgrade_target")
+                continue
+            fi
+            pinned_any=false
+            pinned_removed_only=true
+            while IFS= read -r pinned; do
+                [[ -n "$pinned" ]] || continue
+                pinned_any=true
+                kernel_is_removal_candidate "$pinned" || pinned_removed_only=false
+            done < <(apt_managed_kernel_versions "$meta_pkg" 2>/dev/null || true)
+            if [[ "$pinned_any" == true && "$pinned_removed_only" == true ]]; then
+                cascade_metas+=("$meta_pkg")
+            elif [[ "$pinned_any" == true ]]; then
+                # Mixed pins (removed + surviving) without a re-point: fail
+                # closed, never a half-clean removal.
                 repair_change_status "$KERNEL_STAGE_STATUS_KEY" \
-                    "unchanged|$(reason managed-default-metapackage-cascade "$(printf '%s\n' "$cascaded_metas" | paste -sd, -)" "$surviving_kernel")"
+                    "unchanged|$(reason managed-default-metapackage-cascade "$meta_pkg" "$surviving_kernel")"
                 return 0
             fi
-            downgrade_metas+=("$meta_pkg")
-            downgrade_specs+=("$meta_pkg=$downgrade_target")
-        done <<<"$cascaded_metas"
+            # Empty versioned pins: the meta is left untouched (protected);
+            # the validator refuses any disturbance apt proposes for it.
+        done <<<"$unversioned_metas"
 
-        msg_log managed-metapackage-downgrade "$(printf '%s' "${downgrade_metas[*]}" | tr ' ' ',')" "$surviving_kernel"
+        if ((${#downgrade_metas[@]} == 0)) && ((${#cascade_metas[@]} == 0)); then
+            # No metapackage resolves a survivor-pinning version AND none
+            # pins only the removed kernel(s): the meta chain cannot be
+            # handled (the round-69 contract — the managed metapackages are
+            # never removed silently when the chain cannot survive).
+            # Round 80 (the cascade-class extension): this refusal no longer
+            # fires while a cascade-removal meta exists — the removed-kernel-
+            # only metas go WITH the transaction below (they belong to the
+            # removed kernel's lineage).
+            repair_change_status "$KERNEL_STAGE_STATUS_KEY" \
+                "unchanged|$(reason managed-default-metapackage-cascade "$(printf '%s\n' "$cascaded_metas" | grep -vE '^[[:space:]]*$' | paste -sd, -)" "$surviving_kernel")"
+            return 0
+        fi
 
-        # Combined remove+install (downgrade) transaction, simulation-first.
+        if ((${#downgrade_metas[@]} > 0)); then
+            msg_log managed-metapackage-downgrade "$(printf '%s' "${downgrade_metas[*]}" | tr ' ' ',')" "$surviving_kernel"
+        fi
+        if ((${#cascade_metas[@]} > 0)); then
+            msg_log managed-metapackage-cascade-removal "$(printf '%s' "${cascade_metas[*]}" | tr ' ' ',')"
+        fi
+
+        # Combined transaction, simulation-first.  Two shapes:
+        #  - the managed downgrade (≥1 downgrade spec): the specs + the
+        #    removal candidates + the cascade-removal metapackages as
+        #    explicit removals, applied as one `install --allow-downgrades`;
+        #  - Round 80 (the no-downgrade cascade shape — the user's host):
+        #    every managed meta pins ONLY the removed kernel(s) with no
+        #    survivor-pinning available version — the removal candidates +
+        #    the cascade metapackages apply as one plain remove --purge
+        #    (the metas go WITH the transaction, never a silent stay).
         for spec in "${downgrade_specs[@]}"; do
             combined_args+=("$spec")
         done
         for pkg in "${remove_packages[@]}"; do
             combined_args+=("$pkg-")
         done
-        msg_log simulate-apt "install (managed metapackage downgrade)"
+        for meta_pkg in "${cascade_metas[@]}"; do
+            combined_args+=("$meta_pkg-")
+        done
+        local txn_sim_label="" txn_timeout_label="" txn_apply_label=""
+        if ((${#downgrade_specs[@]} > 0)); then
+            txn_sim_label="install (managed metapackage downgrade)"
+            txn_timeout_label="Managed metapackage downgrade"
+            txn_apply_label="$(msg managed-metapackage-downgrade "$(printf '%s' "${downgrade_metas[*]}" | tr ' ' ',')")"
+        else
+            txn_sim_label="remove --purge (kernel cleanup + cascade metapackages)"
+            txn_timeout_label="Kernel cleanup + cascade metapackages"
+            txn_apply_label="$(msg remove-superseded-kernels)"
+        fi
+        msg_log simulate-apt "$txn_sim_label"
         set +e
-        output="$(
-            RUN_SELECTED_CHROOT_BOUND="$APT_MUTATE_TIMEOUT_SECONDS" run_selected_chroot /usr/bin/env \
-                HOME=/root \
-                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
-                APT_LISTCHANGES_FRONTEND=none \
-                apt-get -s -o Debug::NoLocking=1 --allow-downgrades install "${combined_args[@]}" 2>&1
-        )"
+        if ((${#downgrade_specs[@]} > 0)); then
+            output="$(
+                RUN_SELECTED_CHROOT_BOUND="$APT_MUTATE_TIMEOUT_SECONDS" run_selected_chroot /usr/bin/env \
+                    HOME=/root \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
+                    APT_LISTCHANGES_FRONTEND=none \
+                    apt-get -s -o Debug::NoLocking=1 --allow-downgrades install "${combined_args[@]}" 2>&1
+            )"
+        else
+            output="$(
+                RUN_SELECTED_CHROOT_BOUND="$APT_MUTATE_TIMEOUT_SECONDS" run_selected_chroot /usr/bin/env \
+                    HOME=/root \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
+                    APT_LISTCHANGES_FRONTEND=none \
+                    apt-get -s -o Debug::NoLocking=1 remove --purge "${remove_packages[@]}" "${cascade_metas[@]}" 2>&1
+            )"
+        fi
         sim_rc=$?
         set -e
         printf '%s\n' "$output" | tee -a "$SESSION_LOG"
-        msg_log simulation-exit-code "install (managed metapackage downgrade)" "$sim_rc"
+        msg_log simulation-exit-code "$txn_sim_label" "$sim_rc"
         if (( sim_rc == 124 )); then
-            fail "$(reason package-manager-timeout "install (managed metapackage downgrade) simulation")."
+            fail "$(reason package-manager-timeout "$txn_sim_label")."
         fi
-        (( sim_rc == 0 )) || fail "The simulated managed-metapackage downgrade failed with exit code $sim_rc."
-        apt_kernel_managed_downgrade_is_safe "$output" "$surviving_kernel" "${downgrade_specs[@]}" \
-            || fail "The simulated managed-metapackage downgrade failed Boot Bitch kernel safety checks."
+        (( sim_rc == 0 )) || fail "The simulated $txn_sim_label transaction failed with exit code $sim_rc."
+        apt_kernel_managed_downgrade_is_safe "$output" "$surviving_kernel" \
+            "$(IFS=,; printf '%s' "${cascade_metas[*]}")" "${downgrade_specs[@]}" \
+            || fail "The simulated $txn_sim_label transaction failed Boot Bitch kernel safety checks."
 
         if apt_transaction_reported_no_changes "$output"; then
             repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason kernel-removal-no-changes)"
             return 0
         fi
 
-        # Apply the exact simulated combined transaction.
-        run_chroot_try_display_bounded "$(msg managed-metapackage-downgrade)" apt-get -y "${APT_NEVER_PROMPT_OPTIONS[@]}" --allow-downgrades install "${combined_args[@]}"
+        # Apply the exact simulated transaction.
+        if ((${#downgrade_specs[@]} > 0)); then
+            run_chroot_try_display_bounded "$txn_apply_label" apt-get -y "${APT_NEVER_PROMPT_OPTIONS[@]}" --allow-downgrades install "${combined_args[@]}"
+        else
+            run_chroot_try_display_bounded "$txn_apply_label" apt-get -y "${APT_NEVER_PROMPT_OPTIONS[@]}" remove --purge "${remove_packages[@]}" "${cascade_metas[@]}"
+        fi
         if (( CHROOT_TRY_RC == 124 )); then
-            fail "$(reason package-manager-timeout "Managed metapackage downgrade")."
+            fail "$(reason package-manager-timeout "$txn_timeout_label")."
         fi
         if (( CHROOT_TRY_RC != 0 )); then
+            if kernel_removal_completed_despite_dpkg "${remove_packages[@]}"; then
+                # Round 76: the cascade-removal metapackages are part of the
+                # removal — reconcile their records too on the forceful path.
+                if ((${#cascade_metas[@]} > 0)); then
+                    dpkg_purge_removed_kernel_records "$(IFS=,; printf '%s' "${cascade_metas[*]}")"
+                fi
+                return 0
+            fi
             msg_log kernel-removal-failed "$CHROOT_TRY_RC"
             for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
                 ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
-                kernel_is_removal_candidate "$ver" || continue
+                kernel_was_removal_target "${KERNEL_INVENTORY_PKGS[$i]}" "${remove_packages[@]}" || continue
                 if apt_kernel_is_half_removed "$ver" "${KERNEL_INVENTORY_PKGS[$i]}"; then
                     apt_kernel_zombie_cleanup "$ver" "${remove_packages[@]}"
                 else
@@ -48738,8 +55139,20 @@ apt_kernel_cleanup_stage()
         fi
 
         # Assert the protected set survived AND every downgraded metapackage is
-        # still installed and pins the surviving kernel (never a removed one).
-        if ! apt_kernel_protected_set_present "${protected_packages[@]}"; then
+        # still installed and pins the surviving kernel (never a removed one),
+        # AND every cascade-removal metapackage is gone.  Round 80: the
+        # cascade-removal metas are EXPECTED to be gone — they are excluded
+        # from the protected-set assert (the round-76 latent shape the
+        # no-downgrade cascade exposed).
+        local -a post_protected=()
+        for pkg in "${protected_packages[@]}"; do
+            local is_cascade=false
+            for meta_pkg in "${cascade_metas[@]}"; do
+                [[ "$meta_pkg" == "$pkg" ]] && is_cascade=true
+            done
+            [[ "$is_cascade" == false ]] && post_protected+=("$pkg")
+        done
+        if ! apt_kernel_protected_set_present "${post_protected[@]}"; then
             msg_log kernel-protected-removed "${protected_packages[*]}"
             run_chroot_try_display_bounded "$(msg reinstall-protected-kernels)" apt-get -y "${APT_NEVER_PROMPT_OPTIONS[@]}" install "${protected_packages[@]}"
             if (( CHROOT_TRY_RC == 124 )); then
@@ -48752,6 +55165,37 @@ apt_kernel_cleanup_stage()
                 || ! apt_kernel_metapackage_pins_kernel "$meta_pkg" "$surviving_kernel"; then
                 fail "managed metapackage $meta_pkg no longer pins the surviving kernel $surviving_kernel after the downgrade."
             fi
+        done
+        for meta_pkg in "${cascade_metas[@]}"; do
+            target_dpkg_package_present "$meta_pkg" \
+                && fail "managed metapackage $meta_pkg was not removed with the kernel it pinned."
+        done
+
+        # Round 74 (the residue class — the removal completion on the SUCCESS
+        # path, applied to the managed downgrade too): a clean apply can leave
+        # on-disk residue (files no package owns) behind; the completion sweeps
+        # every removal candidate whose packages are provably gone and
+        # verifies the ABSENT state before the changed verdict.
+        local i ver
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
+            # Round 82 (the stale-evidence plan fix): the completion proves the
+            # absence of the FRESH per-version plan (the union re-derived at
+            # plan time), never the stale cached grouping — a mid-session
+            # package (the half-configured headers class) is part of what must
+            # be gone.
+            plan_pkgs=""
+            for pi in "${!plan_versions[@]}"; do
+                [[ "${plan_versions[$pi]}" == "$ver" ]] && plan_pkgs="${plan_joined[$pi]}"
+            done
+            [[ -n "$plan_pkgs" ]] || plan_pkgs="${KERNEL_INVENTORY_PKGS[$i]}"
+            kernel_was_removal_target "$plan_pkgs" "${remove_packages[@]}" || continue
+            if ! kernel_version_has_installed_packages "$plan_pkgs"; then
+                msg_log kernel-removal-residue "$ver"
+                apt_kernel_zombie_cleanup "$ver" "${remove_packages[@]}"
+            fi
+            apt_kernel_is_fully_removed "$ver" "$plan_pkgs" \
+                || fail "Kernel removal reported success but kernel $ver is not provably absent (on-disk residue could not be swept)."
         done
 
         KERNEL_CLEANUP_APPLIED=true
@@ -48774,6 +55218,16 @@ apt_kernel_cleanup_stage()
         fail "$(reason package-manager-timeout "Remove superseded kernels")."
     fi
     if (( CHROOT_TRY_RC != 0 )); then
+        # Round 60 (the user's forceful-removal ruling): a poisoned exit 100 —
+        # the UNRELATED half-configured packages' postinsts re-ran and failed
+        # (the zfs-dkms build class) — must never block a removal whose own
+        # kernels are provably absent.  kernel_removal_completed_despite_dpkg
+        # sweeps the on-disk components, reconciles the database records,
+        # refreshes the metadata and reports the honest success when every
+        # removal candidate is gone, naming the unrelated broken state.
+        if kernel_removal_completed_despite_dpkg "${remove_packages[@]}"; then
+            return 0
+        fi
         # A DKMS prerm hook or an interrupted transaction can abort the purge
         # mid-way, leaving a half-removed kernel.  Clean the on-disk components
         # of every half-removed version being removed so no zombie remains, then
@@ -48783,7 +55237,7 @@ apt_kernel_cleanup_stage()
         msg_log kernel-removal-failed "$CHROOT_TRY_RC"
         for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
             ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
-            kernel_is_removal_candidate "$ver" || continue
+            kernel_was_removal_target "${KERNEL_INVENTORY_PKGS[$i]}" "${remove_packages[@]}" || continue
             if apt_kernel_is_half_removed "$ver" "${KERNEL_INVENTORY_PKGS[$i]}"; then
                 apt_kernel_zombie_cleanup "$ver" "${remove_packages[@]}"
             else
@@ -48803,8 +55257,93 @@ apt_kernel_cleanup_stage()
         fail "protected kernel was removed; restored."
     fi
 
+    # Round 74 (the residue class — the removal completion on the SUCCESS
+    # path, restoring the proven round-60 absence contract): a clean exit-0
+    # removal can still leave on-disk residue — dpkg keeps a NON-EMPTY module
+    # directory (files no package owned, e.g. the dkms-built modules), which
+    # keeps the version in the inventory and re-offers "remove this kernel"
+    # forever (the "Package '…' is not installed, so not removed" loop).  The
+    # completion sweeps the residue of every removal candidate whose packages
+    # are provably gone and verifies the ABSENT state before the changed
+    # verdict — never "changed" for a kernel that still exists.
+    local i ver
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
+        kernel_was_removal_target "${KERNEL_INVENTORY_PKGS[$i]}" "${remove_packages[@]}" || continue
+        if ! kernel_version_has_installed_packages "${KERNEL_INVENTORY_PKGS[$i]}"; then
+            msg_log kernel-removal-residue "$ver"
+            apt_kernel_zombie_cleanup "$ver" "${remove_packages[@]}"
+        fi
+        apt_kernel_is_fully_removed "$ver" "${KERNEL_INVENTORY_PKGS[$i]}" \
+            || fail "Kernel removal reported success but kernel $ver is not provably absent (on-disk residue could not be swept)."
+    done
+
     KERNEL_CLEANUP_APPLIED=true
     repair_change_status "$KERNEL_STAGE_STATUS_KEY" changed
+}
+
+# Round 82 (the stale-evidence plan fix — the round-81b user finding): re-derive
+# ONE kernel version's FULL grouped versioned package set from the THEN-CURRENT
+# package database — the same grouped-package probes the diagnostic's inventory
+# uses (dpkg -S ownership of the module trees, the vmlinuz and the arch headers;
+# the arch headers' common-headers dependency; the presence-based versioned image
+# metapackage) plus the presence-based name-mapped enumerators for every other
+# versioned kernel package of that version (the base/binary/kbuild support
+# shapes).  Presence-based throughout: a half-configured headers package that
+# appeared mid-session joins the set (the round-81b class).  Read-only; the
+# cached inventory stays the menu's evidence source — this probe is the
+# plan-time fresh re-derivation the removal stage unions into its plan.
+apt_fresh_kernel_package_set()
+{
+    local v="$1" pkg arch_headers kver
+    [[ -n "$v" ]] || return 0
+    local -a pkgs=()
+    # The ownership index may have been built before the mid-session mutation
+    # (the round-118 once-per-session map): drop it so the probes read the
+    # current file-list database, exactly like the mutation paths do.
+    dpkg_path_owner_map_clear
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && pkgs+=("$pkg")
+    done < <(dpkg_path_owner "/usr/lib/modules/$v"; dpkg_path_owner "/lib/modules/$v")
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && pkgs+=("$pkg")
+    done < <(dpkg_path_owner "/boot/vmlinuz-$v")
+    arch_headers=""
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        pkgs+=("$pkg")
+        arch_headers="$pkg"
+    done < <(dpkg_path_owner "/usr/src/linux-headers-$v")
+    # Group the arch-independent common headers via the arch headers package's
+    # dependency (generic; no flavour parsing) — presence-gated so the
+    # half-configured arch headers still pull their installed common headers.
+    if [[ -n "$arch_headers" ]]; then
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] || continue
+            [[ "$pkg" == linux-headers-* ]] || continue
+            [[ "$pkg" == "$arch_headers" ]] && continue
+            target_dpkg_package_present "$pkg" && pkgs+=("$pkg")
+        done < <(apt_package_depends "$arch_headers")
+    fi
+    # TUXEDO split kernels: linux-image-<v> is a versioned metapackage that
+    # owns no files — presence-add it so the plan covers it explicitly.
+    target_dpkg_package_present "linux-image-$v" && pkgs+=("linux-image-$v")
+    # Every OTHER present versioned kernel package of this version, mapped by
+    # name through the shared parsers (the image/unsigned/modules/restricted-
+    # modules/main-modules-zfs/headers shapes and the base/binary/kbuild
+    # support shapes) — the equality filter keeps only this kernel's lineage.
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        case "$pkg" in
+            linux-image-*|linux-modules-*|linux-main-modules-zfs-*|linux-headers-*)
+                kver="$(apt_kernel_version_from_package "$pkg" 2>/dev/null || true)" ;;
+            linux-base-*|linux-binary-*|linux-kbuild-*)
+                kver="$(apt_kernel_support_version_from_package "$pkg" 2>/dev/null || true)" ;;
+            *) continue ;;
+        esac
+        [[ -n "$kver" && "$kver" == "$v" ]] && pkgs+=("$pkg")
+    done < <(apt_present_versioned_kernel_packages; apt_present_kernel_support_packages)
+    printf '%s\n' "${pkgs[@]}" | LC_ALL=C sort -u
 }
 
 # Print the still-installed versioned package names of one incomplete (partial)
@@ -48890,6 +55429,12 @@ apt_kernel_remove_partial_stage()
     # this kernel's packages (never another kernel, a managed metapackage or an
     # essential) can be removed.
     KERNEL_PARTIAL_PKGS=("${remove_packages[@]}")
+    # Round 82 (the stale-evidence plan fix): the plan and the removal lineage
+    # ride the same shared gate the cleanup stage uses — the validator accepts
+    # the exact fresh plan and any versioned package of this kernel the live
+    # simulation proposes (the half-configured presence class).
+    KERNEL_REMOVAL_PLAN_PKGS=("${remove_packages[@]}")
+    KERNEL_REMOVAL_LINEAGE_VERSIONS=("$v")
 
     msg_log kernel-partial-removal-plan "$v" "${#remove_packages[@]}" "${remove_packages[*]}"
 
@@ -49466,8 +56011,8 @@ pacman_kernel_zombie_cleanup()
         pkgbase="$(tr -d '[:space:]' < "$pkgbase_file" 2>/dev/null | head -c 64 || true)"
         [[ -n "$pkgbase" ]] && break
     done
-    safe_rm_tree "$TARGET_ROOT" "usr/lib/modules/$kver"
-    safe_rm_tree "$TARGET_ROOT" "lib/modules/$kver"
+    safe_rm_tree_target "usr/lib/modules/$kver"
+    safe_rm_tree_target "lib/modules/$kver"
     if [[ -n "$pkgbase" ]]; then
         if [[ "$pkgbase" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
             rm -f -- "$TARGET_ROOT/boot/vmlinuz-$pkgbase" \
@@ -49580,8 +56125,8 @@ alpine_apk_kernel_zombie_cleanup()
         done
         [[ -n "$suffix" ]] && break
     done
-    safe_rm_tree "$TARGET_ROOT" "usr/lib/modules/$kver"
-    safe_rm_tree "$TARGET_ROOT" "lib/modules/$kver"
+    safe_rm_tree_target "usr/lib/modules/$kver"
+    safe_rm_tree_target "lib/modules/$kver"
     if [[ -n "$suffix" ]]; then
         if [[ "$suffix" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
             rm -f -- "$TARGET_ROOT/boot/vmlinuz-$suffix" "$TARGET_ROOT/boot/initramfs-$suffix"
@@ -49664,6 +56209,13 @@ kernel_menu_state()
         state="${state:+$state,}broken${reason:+ ($reason)}"
     fi
     kernel_in_list "$v" "${KERNEL_PARTIAL[@]}" && state="${state:+$state,}incomplete"
+    # Round 74 (the residue class): a version whose packages are provably gone
+    # is annotated honestly (the global orphaned-kernel cleanup is its
+    # resolution) — never "removable" (nothing is left to remove through apt).
+    kernel_in_list "$v" "${KERNEL_ORPHANED_KERNELS[@]}" && state="${state:+$state,}orphaned (residue)"
+    # Round 66 (Finding 2): the missing-initramfs flag propagates into the
+    # per-kernel state annotation (the honest state shape the user asked for).
+    kernel_in_list "$v" "${KERNEL_NO_INITRD[@]}" && state="${state:+$state,}no initramfs"
     printf '%s' "${state:-none}"
 }
 
@@ -49691,7 +56243,13 @@ kernel_menu_action_keys()
 {
     local v="$1" action_keys=""
     if [[ "$v" == "$KERNEL_LATEST" ]] && kernel_newest_is_removable; then
-        action_keys+="remove-newest "
+        # Round 80 (the stuck re-prompt): a predicted managed-metapackage-
+        # cascade refusal suppresses the remove-newest offer — the row stays
+        # listed with the honest annotation (the caller adds the note), never
+        # a forever-re-offerable action that can only refuse.
+        if [[ -z "$(apt_kernel_remove_newest_refusal_reason "$v" 2>/dev/null || true)" ]]; then
+            action_keys+="remove-newest "
+        fi
     fi
     kernel_is_stale "$v" && action_keys+="remove-stale "
     # A removable superseded kernel (never the running kernel; never the newest;
@@ -49735,6 +56293,44 @@ kernel_menu_action_keys()
     elif kernel_in_list "$v" "${KERNEL_PARTIAL[@]}" && [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
         action_keys+="remove-partial "
     fi
+    # Round 64 (Finding 2, the user's ruling — the per-kernel action row, never
+    # the Global actions): the dkms-incompatibility remedies for a kernel whose
+    # state a genuinely-incompatible module build blocks.  Gated on the
+    # POSITIVE incompatibility evidence from the cached diagnostic (the
+    # round-42 fail-closed pattern) + the apt/dpkg backend (the remedies'
+    # guarded install/update are apt).  Never offered on a guess.
+    # Round 72 (the user's ruling — the REMOVAL goes; the offered remedies are
+    # the NON-destructive set): the prior-kernel install with its next-boot
+    # default switch (the positive repository candidate <= the module's
+    # declared ceiling), the update (its own round-64/68/71 gating), and the
+    # combined prior-and-monitor.  The verdict still names the module + the
+    # bound; the removal direction is gone.  A kernel whose repositories
+    # resolve no prior candidate gets the honest availability note in the
+    # per-kernel action list (kernel_incompat_prior_kernel_note), never a
+    # silent absence.
+    # Round 75 (the re-offer finding — the user's TUXEDO-target evidence): the
+    # install option is gated on the candidate NOT already being installed —
+    # once the prior kernel is installed, the remaining actions are the
+    # standalone next-boot default switch (when the target's GRUB can take
+    # it) and the honest already-installed note otherwise.
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] \
+        && dkms_incompat_for_kernel "$v" >/dev/null 2>&1; then
+        local prior_installed=false
+        dkms_incompat_prior_kernel_installed "$v" 2>/dev/null && prior_installed=true
+        if [[ "$prior_installed" == false ]] \
+            && dkms_incompat_prior_kernel_available "$v" 2>/dev/null; then
+            action_keys+="install-prior-kernel "
+        fi
+        action_keys+="update-module "
+        if [[ "$prior_installed" == true ]] \
+            && dkms_incompat_prior_boot_default_available_for_kernel "$v" 2>/dev/null; then
+            action_keys+="switch-prior-boot-default "
+        fi
+        if [[ "$prior_installed" == false ]] \
+            && dkms_incompat_prior_kernel_available "$v" 2>/dev/null; then
+            action_keys+="prior-and-monitor "
+        fi
+    fi
     printf '%s' "$action_keys"
 }
 
@@ -49758,6 +56354,56 @@ kernel_action_label()
         remove-partial) printf 'Remove this incomplete kernel (%s)' "${2:-$KERNEL_REMOVE_THIS_VERSION}" ;;
         install-headers) printf 'Install missing headers' ;;
         reinstall) printf 'Reinstall/complete this kernel' ;;
+        update-module)
+            # Round 71 (the no-op-loop finding): the label carries the
+            # availability annotation (the memoized probe).
+            local uavail=""
+            uavail="$(dkms_incompat_update_availability_cached "${2:-$KERNEL_REMOVE_THIS_VERSION}" 2>/dev/null || true)"
+            case "${uavail%%|*}" in
+                no-op)
+                    printf 'Update the incompatible module package (%s) — no newer version in the repositories' \
+                        "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)"
+                    ;;
+                not-installable)
+                    printf 'Update the incompatible module package (%s) — the repository candidate is not installable' \
+                        "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)"
+                    ;;
+                *)
+                    printf 'Update the incompatible module package (%s) — install a repository version that builds against kernel %s' \
+                        "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)" "${2:-$KERNEL_REMOVE_THIS_VERSION}"
+                    ;;
+            esac
+            ;;
+        install-prior-kernel)
+            # Round 71 (the user's "that would be option for latest available
+            # 7.2"): the label names the CONCRETE resolved candidate — the
+            # newest repository kernel within the module's compatible series
+            # (the round-69 latest-<=-ceiling derivation) — never an
+            # arbitrary older kernel.  Round 72 (the user's ruling): the
+            # install pairs with the next-boot default switch.
+            local prior_cand=""
+            prior_cand="$(dkms_incompat_prior_kernel_candidate "${2:-$KERNEL_REMOVE_THIS_VERSION}" \
+                "$(dkms_incompat_bound_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" 2>/dev/null || true)" 2>/dev/null || true)"
+            if [[ -n "$prior_cand" ]]; then
+                printf 'Install the prior compatible kernel %s + boot it on the next reboot — the newest the module %s still supports (recommended)' \
+                    "$prior_cand" "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)"
+            else
+                printf 'Install the prior repository kernel the module %s still supports + boot it on the next reboot (recommended)' \
+                    "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)"
+            fi
+            ;;
+        prior-and-monitor)
+            printf 'Install the prior compatible kernel + boot it on the next reboot, and monitor the module %s update (the tool re-checks the repositories on the next diagnostic)' \
+                "$(dkms_incompat_module_for_kernel "${2:-$KERNEL_REMOVE_THIS_VERSION}" || true)"
+            ;;
+        switch-prior-boot-default)
+            # Round 75 (the re-offer finding): the standalone next-boot default
+            # switch for the ALREADY-INSTALLED prior kernel — the remaining
+            # action once the install completed.  Round 76: the candidate
+            # resolves installed-first (the already-installed truth).
+            printf 'Switch the next-boot default to the prior compatible kernel %s — the system boots it on the next reboot (the kernel is already installed)' \
+                "$(dkms_incompat_prior_kernel_resolved "${2:-$KERNEL_REMOVE_THIS_VERSION}" 2>/dev/null || true)"
+            ;;
     esac
 }
 
@@ -49771,6 +56417,10 @@ kernel_action_short()
         remove-partial) printf 'remove incomplete' ;;
         install-headers) printf 'install missing headers' ;;
         reinstall) printf 'reinstall/complete' ;;
+        update-module) printf 'update module package' ;;
+        install-prior-kernel) printf 'install prior compatible kernel + boot it next' ;;
+        prior-and-monitor) printf 'prior kernel + monitor update' ;;
+        switch-prior-boot-default) printf 'switch next-boot default to prior kernel' ;;
     esac
 }
 
@@ -49853,10 +56503,11 @@ kernel_interactive_menu()
             && grep -q '^changed' "$SESSION_DIR/repair-status-history" 2>/dev/null
     }
 
-    local idx answer choice repo_latest repo_latest_not_installable="" menu="" ki kv prev_menu="" dispatched=0 no_progress_streak=0
+    local idx answer choice repo_latest repo_latest_not_installable="" menu="" ki kv prev_menu="" dispatched=0 no_progress_streak=0 local_note=""
     local repo_latest_not_installable_reason="" repo_latest_state=""
     local -a global_labels=() global_stages=()
     local -a kern_versions=() kern_states=() kern_action_lists=()
+    local -a kern_refusal_notes=()
     local -a partial_versions=()
     local -a ka_labels=() ka_stages=()
     local any_actionable=false kactions k_menu kanswer kchoice total num_partials num_globals ann pv pi
@@ -49879,6 +56530,7 @@ kernel_interactive_menu()
         kern_versions=()
         kern_states=()
         kern_action_lists=()
+        kern_refusal_notes=()
         partial_versions=()
         any_actionable=false
 
@@ -49952,19 +56604,39 @@ kernel_interactive_menu()
             esac
         fi
 
+        # Round 70 (the user's finding: "no option to roll back or install
+        # prior kernel" — the consistent-inventory shortcut bypassed the menu
+        # while the dkms-incompatibility evidence existed).  The cached
+        # baseline may predate the failure state (the diagnostic's evidence
+        # line absent), so when the incompatibility arrays are cold the menu
+        # re-probes the LIVE positive evidence (the target is mounted, the
+        # probe is read-only — the round-42 fail-closed pattern: only a
+        # positive genuine-incompatibility entry fills the arrays, so a
+        # healthy target never gains spurious rows).  The cached evidence
+        # still wins when present (the probe skips).
+        if ((${#KERNEL_MODULE_INCOMPAT_KVER[@]} == 0)); then
+            kernel_module_incompatibilities || true
+        fi
+
         # Per-kernel state + the per-kernel actions available for each kernel.
         # A kernel with NO per-kernel action (e.g. a healthy running==newest
         # kernel, or a healthy older fallback while the newest is broken) is NOT
         # a numbered selectable entry: selecting it would just re-prompt.  It is
         # still described in the diagnostic-state lines above; only actionable
         # kernels are listed here.
+        local krefusal=""
         for ki in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
             kv="${KERNEL_INVENTORY_VERSIONS[$ki]}"
             kactions="$(kernel_menu_action_keys "$kv")"
-            [[ -n "$kactions" ]] || continue
+            # Round 80 (the stuck re-prompt): the predicted cascade refusal
+            # keeps the row listed (with the honest annotation) even when no
+            # action remains — the reason stays visible, never a silent drop.
+            krefusal="$(apt_kernel_remove_newest_refusal_reason "$kv" 2>/dev/null || true)"
+            [[ -n "$kactions" || -n "$krefusal" ]] || continue
             kern_versions+=("$kv")
             kern_states+=("$(kernel_menu_state "$kv" "$ki")")
             kern_action_lists+=("$kactions")
+            kern_refusal_notes+=("$krefusal")
             any_actionable=true
         done
         # Incomplete (partial) kernels are surfaced in their own section.  A
@@ -50051,6 +56723,12 @@ kernel_interactive_menu()
                 ann="${ann:+$ann, }$(kernel_action_short "$kchoice")"
             done
             [[ -n "$ann" ]] && menu+=" [$ann]"
+            # Round 80 (the stuck re-prompt): the predicted cascade refusal
+            # annotates the row — the honest reason instead of the
+            # forever-refusing action.
+            if [[ -n "${kern_refusal_notes[$ki]}" ]]; then
+                menu+=" [$(kernel_remove_newest_refusal_words "${kern_refusal_notes[$ki]}")]"
+            fi
             menu+=$'\n'
         done
         total="${#kern_versions[@]}"
@@ -50128,12 +56806,30 @@ kernel_interactive_menu()
                     ka_labels+=("$(kernel_action_label "$kchoice" "$kv")")
                 done
                 if ((${#ka_labels[@]} == 0)); then
+                    # Round 80 (the stuck re-prompt): a row listed only for
+                    # its predicted cascade refusal — print the honest reason
+                    # once, then return to the menu (never a dead selection).
+                    if [[ -n "${kern_refusal_notes[$ki]}" ]]; then
+                        helper_menu_prompt "Kernel $kv — removal refused:$'\n'$(kernel_remove_newest_refusal_words "${kern_refusal_notes[$ki]}")"$'\n'"0) Back" "$MENU_ANSWER_WINDOW_SECONDS" MENU >/dev/null 2>&1 || true
+                    fi
                     continue
                 fi
                 k_menu="Kernel $kv actions:"$'\n'
                 for idx in "${!ka_labels[@]}"; do
                     k_menu+="$((idx + 1))) ${ka_labels[$idx]}"$'\n'
                 done
+                # Round 72 (the honest availability note): a kernel whose
+                # repositories resolve no prior compatible candidate gets the
+                # annotation instead of the silently absent rows.
+                if local_note="$(kernel_incompat_prior_kernel_note "$kv" 2>/dev/null || true)" && [[ -n "$local_note" ]]; then
+                    k_menu+="$local_note"$'\n'
+                fi
+                # Round 80: the predicted cascade refusal note rides the
+                # level-2 menu too (the remove-newest offer is suppressed;
+                # the reason stays visible).
+                if [[ -n "${kern_refusal_notes[$ki]}" ]]; then
+                    k_menu+="$(kernel_remove_newest_refusal_words "${kern_refusal_notes[$ki]}")"$'\n'
+                fi
                 k_menu+="0) Back"
                 while :; do
                     if ! helper_menu_prompt "$k_menu" "$MENU_ANSWER_WINDOW_SECONDS" MENU || [[ -z "$HELPER_MENU_ANSWER" ]]; then
@@ -50160,6 +56856,10 @@ kernel_interactive_menu()
                             reinstall) ( repair_kernel_reinstall ) || true ;;
                             remove-this) ( repair_kernel_remove_this "$kv" ) || true ;;
                             remove-partial) ( repair_kernel_remove_partial "$kv" ) || true ;;
+                            update-module) ( dkms_incompat_remedy_update_module "$kv" "$KERNEL_STAGE_STATUS_KEY" ) || true ;;
+                            install-prior-kernel) ( dkms_incompat_remedy_install_prior_kernel "$kv" "$KERNEL_STAGE_STATUS_KEY" ) || true ;;
+                            prior-and-monitor) ( dkms_incompat_remedy_prior_and_monitor "$kv" "$KERNEL_STAGE_STATUS_KEY" ) || true ;;
+                            switch-prior-boot-default) ( dkms_incompat_remedy_switch_prior_boot_default "$kv" "$KERNEL_STAGE_STATUS_KEY" ) || true ;;
                         esac
                         # The chosen sub-action may have mutated the target: drop
                         # the cached baseline so the next display re-collects
@@ -50177,6 +56877,32 @@ kernel_interactive_menu()
                         # menu stays open (a proven no-op — nothing changed —
                         # re-emits nothing, the round-195 rule).
                         if kernel_status_history_changed; then
+                            case "$choice" in
+                                update-module)
+                                    # Round 64 (Finding 1): the sequenced chain —
+                                    # the module remedy first, the guarded
+                                    # initramfs rebuild after (the missing
+                                    # initrd is the second casualty of the same
+                                    # root cause; the rebuild generates it).
+                                    ( adaptive_initramfs_repair ) || true
+                                    ;;
+                                install-prior-kernel|prior-and-monitor)
+                                    # Round 69 (Finding 3): the prior kernel was
+                                    # just installed — drop the stale baseline,
+                                    # re-collect the live inventory and run the
+                                    # same guarded initramfs/bootloader
+                                    # regeneration (the round-65 recollect
+                                    # pattern, mirrored here so the NEW kernel's
+                                    # initrd is generated).
+                                    kernel_inventory_recollect_after_install
+                                    ( adaptive_initramfs_repair ) || true
+                                    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+                                        ( adaptive_extlinux_repair ) || true
+                                    else
+                                        ( adaptive_grub_stage ) || true
+                                    fi
+                                    ;;
+                            esac
                             interactive_menu_scoped_regen "kernel usage boot boot-evidence grub uki"
                         fi
                         break
@@ -50616,8 +57342,13 @@ repair_kernel_remove_orphaned_kernels()
     fi
     local v
     for v in "${KERNEL_ORPHANED_KERNELS[@]}"; do
-        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] \
-            || fail "orphaned kernel cleanup protection set violation for $v."
+        # Round 74 (the residue class): an orphaned version may be the newest
+        # inventory entry — its packages are provably gone, so sweeping it
+        # removes no live kernel (the newest-kernel protection guards live
+        # kernels; the orphaned set only ever holds the residue class).  The
+        # running kernel stays hard-protected (its modules are loaded).
+        [[ "$v" != "$KERNEL_RUNNING" ]] \
+            || fail "orphaned kernel cleanup protection set violation for $v (the running kernel must never be removed)."
         msg_log kernel-orphaned-plan "$v"
         case "${TARGET_PACKAGE_MANAGER:-}" in
             apk)    alpine_apk_kernel_zombie_cleanup "$v" ;;
@@ -50863,6 +57594,13 @@ apk_repair_kernel_reinstall()
 repair_kernel_reinstall()
 {
     repair_kernel_prepare_inventory
+    # Round 60 (Finding 1c): the broken-dpkg-state preflight for the kernel
+    # reinstall — the half-configured-packages class refuses UPFRONT with the
+    # named reason (the Fix Broken Packages repair), never the mid-apply
+    # exit-100 cascade.
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+        preflight_package_manager_not_interrupted apt/dpkg
+    fi
     if ((${#KERNEL_PARTIAL[@]} == 0)); then
         repair_change_status "kernels:reinstall" "unchanged|$(reason no-partial-kernels)"
         return 0
@@ -51041,6 +57779,33 @@ repair_kernel_verify()
         || ((${#KERNEL_ORPHANED_HEADERS[@]} > 0)) \
         || ((${#KERNEL_ORPHANED_SUPPORT_VERSIONS[@]} > 0)); then
         repair_change_status "kernels:verify" "unchanged|$(reason kernel-components-remain)"
+        return 0
+    fi
+    # Round 66 (Finding 2, the user's ruling): NEVER report a kernel
+    # "installed and working" while its initramfs is absent.  The pairing is
+    # re-probed from the LIVE files over the SAME running/latest set the
+    # intactness loop above verified (a stale running kernel whose module tree
+    # is gone was already skipped there and is skipped here too); the verdict
+    # names the kernel(s) + the initramfs repair direction.  The re-probe is
+    # live because the verify runs after mutations (the sequenced rebuild
+    # creates the initrd and the verdict must return to the clean state); the
+    # full inventory's flag rides the diagnostic/menu instead.
+    local noinitrd_v noinitrd_joined=""
+    for noinitrd_v in "$KERNEL_RUNNING" "$KERNEL_LATEST"; do
+        [[ -n "$noinitrd_v" ]] || continue
+        [[ ",$noinitrd_joined," == *",$noinitrd_v,"* ]] && continue
+        if [[ "$noinitrd_v" == "$KERNEL_RUNNING" ]] \
+            && ! kernel_in_list "$noinitrd_v" "${KERNEL_INVENTORY_VERSIONS[@]}"; then
+            continue
+        fi
+        kernel_initramfs_present "$noinitrd_v" || noinitrd_joined="${noinitrd_joined:+$noinitrd_joined,}$noinitrd_v"
+    done
+    if [[ -n "$noinitrd_joined" ]]; then
+        repair_change_status "kernels:verify" "unchanged|$(reason kernel-incomplete-no-initramfs "$noinitrd_joined")"
+        log "verified: kernel $noinitrd_joined is installed but incomplete: no initramfs (run the Initramfs repair to generate the missing initrd)"
+        if [[ -n "$SESSION_LOG" ]]; then
+            printf '[%s] %s\n' "$(date '+%H:%M:%S')" "verified: kernel $noinitrd_joined is installed but incomplete: no initramfs (run the Initramfs repair to generate the missing initrd)" >> "$SESSION_LOG" 2>/dev/null || true
+        fi
         return 0
     fi
     # Name the kernels this verify checked (running and latest, deduplicated when
@@ -51483,12 +58248,12 @@ run_host_repair()
 host_default_probe_evidence()
 {
     local state="$1" candidate="$2" embedded="" cmdline_root="" live_root="" luks="" subvol=""
-    local match="no" secure_boot candidate_kind candidate_detail installed="none"
+    local match="no" secure_boot candidate_kind candidate_detail installed_kernel="none"
 
     if [[ "$state" == present\|* ]]; then
         IFS='|' read -r _ embedded cmdline_root live_root luks subvol <<<"$state"
         match="yes"
-        installed="$embedded"
+        installed_kernel="$embedded"
     fi
     case "$candidate" in
         uki\ *) candidate_kind="uki" ;;
@@ -51500,7 +58265,7 @@ host_default_probe_evidence()
 
     printf 'Host default probe: uki=%s embedded-kernel=%s installed-kernel=%s match=%s\n' \
         "$([[ "$match" == yes ]] && printf present || printf absent)" \
-        "${embedded:-unknown}" "$installed" "$match" \
+        "${embedded:-unknown}" "$installed_kernel" "$match" \
         | tee -a "$SESSION_LOG"
     printf 'Host default probe: cmdline-root=%s live-root=%s luks=%s subvol=%s match=%s\n' \
         "${cmdline_root:-unknown}" "${live_root:-unknown}" "${luks:-none}" "${subvol:-none}" "$match" \
@@ -51594,6 +58359,41 @@ ensure_host_default_entry_for_loader()
         return 0
     fi
 
+    # Round 69 (the volatile-NVRAM acceptance — the round-42 efi-repair pattern
+    # applied to the host-default path, the user's Arch Make Default finding):
+    # the -bios/volatile-NVRAM firmware class renders its entries with the
+    # MBR-style device path (HD(<part>,MBR,0x<sig>,...)), invisible to the
+    # GPT-partuuid matcher above even though the entry IS registered.  An
+    # existing MBR-style entry for this ESP's loader is the already-registered
+    # state — the honest no-op short-circuit (never a duplicate create) with
+    # the durability note.
+    local -a mbr_ids=()
+    mapfile -t mbr_ids < <(efi_entry_ids_for_partuuid_loader_mbr "$partuuid" "${loader,,}" 2>/dev/null || true)
+    local mbr_id=""
+    if ((${#mbr_ids[@]} == 1)); then
+        mbr_id="${mbr_ids[0]}"
+    elif ((${#mbr_ids[@]} > 1)); then
+        for id in "${mbr_ids[@]}"; do
+            if [[ "$id" == "$current_id" || "$id" == "$next_id" ]]; then
+                mbr_id="$id"
+                break
+            fi
+        done
+        [[ -n "$mbr_id" ]] \
+            || fail "ambiguous host $noun entries on the volatile NVRAM store: ${mbr_ids[*]}"
+    fi
+    if [[ -n "$mbr_id" ]]; then
+        existing_line="$(grep -E "^Boot${mbr_id}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+        existing_label="$(efi_entry_label_line "$existing_line")"
+        # Round 69: stdout discipline — this function's stdout is captured as
+        # the entry ID by the caller, so the note goes to stderr.
+        msg_log efi-volatile-nvram-entry "$mbr_id" "$host_esp" >&2
+        printf '%s\t%s\t%s\t%s\n' "$mbr_id" reused "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+        log "Host default: entry=Boot$mbr_id label='${existing_label:-$label_stem}' loader=$loader action=reused (volatile NVRAM: the MBR-style device path was accepted; the entry's power-cycle durability cannot be verified on this store)" | tee -a "$SESSION_LOG" >&2
+        printf '%s\n' "$mbr_id"
+        return 0
+    fi
+
     # No entry references the host loader yet: create exactly one.
     uefi_nvram_writable \
         || fail "Host firmware variables are not writable; the host $noun entry cannot be registered."
@@ -51622,6 +58422,31 @@ ensure_host_default_entry_for_loader()
         log "Host default: entry=Boot$verified_id label='$label' loader=$loader action=created" | tee -a "$SESSION_LOG" >&2
         printf '%s\n' "$verified_id"
         return 0
+    fi
+
+    # Round 69 (the volatile-NVRAM acceptance): the MBR-style match IS the
+    # created entry on this store (the MBR signature = the ESP PARTUUID's
+    # leading 8 hex digits — the evidence-derived round-42 class probe).  The
+    # honest SUCCESS for this class: the entry written + carried in the
+    # BootOrder + the refreshed fallback loader (the documented boot reality),
+    # with the note that the canonical entry's power-cycle durability cannot
+    # be verified on the volatile store.  The durable stores keep the strict
+    # GPT verification.
+    mbr_ids=()
+    mapfile -t mbr_ids < <(efi_entry_ids_for_partuuid_loader_mbr "$partuuid" "${loader,,}" 2>/dev/null || true)
+    if ((${#mbr_ids[@]} == 1)); then
+        local boot_order=""
+        boot_order="$(efibootmgr -v 2>/dev/null | sed -nE 's/^BootOrder: //p' | head -n1 || true)"
+        if [[ " ${boot_order//,/ } " == *" ${mbr_ids[0]} "* ]]; then
+            verified_id="${mbr_ids[0]}"
+            # Round 69: stdout discipline — this function's stdout is captured
+            # as the entry ID by the caller, so the note goes to stderr.
+            msg_log efi-volatile-nvram-entry "$verified_id" "$host_esp" >&2
+            printf '%s\t%s\t%s\t%s\n' "$verified_id" created "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+            log "Host default: entry=Boot$verified_id label='$label' loader=$loader action=created (volatile NVRAM: the MBR-style device path was accepted; the entry's power-cycle durability cannot be verified on this store)" | tee -a "$SESSION_LOG" >&2
+            printf '%s\n' "$verified_id"
+            return 0
+        fi
     fi
 
     # The created entry could not be verified by identity.  Identify it from the
@@ -51998,8 +58823,22 @@ run_host_default_generic_body()
     efibootmgr -v > "$after" 2>&1 \
         || fail "Unable to re-read firmware entries after host default maintenance."
     mapfile -t verify_ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" 2>/dev/null | sort -u)
-    [[ ${#verify_ids[@]} -eq 1 && "${verify_ids[0]}" == "$new_id" ]] \
-        || fail "Canonical host EFI entry Boot$new_id no longer matches PARTUUID $partuuid and loader $loader after maintenance."
+    if [[ ${#verify_ids[@]} -eq 1 && "${verify_ids[0]}" == "$new_id" ]]; then
+        :
+    elif ((${#verify_ids[@]} == 0)); then
+        # Round 69 (the volatile-NVRAM acceptance): the MBR-style match naming
+        # the ensured id IS the verified entry on this store (the round-42
+        # class probe) — the success carries the durability note.
+        local -a mbr_verify=()
+        mapfile -t mbr_verify < <(efi_entry_ids_for_partuuid_loader_mbr "$partuuid" "${loader,,}" 2>/dev/null || true)
+        if [[ ${#mbr_verify[@]} -eq 1 && "${mbr_verify[0]}" == "$new_id" ]]; then
+            msg_log efi-volatile-nvram-entry "$new_id" "$EFI_ESP_SOURCE"
+        else
+            fail "Canonical host EFI entry Boot$new_id no longer matches PARTUUID $partuuid and loader $loader after maintenance."
+        fi
+    else
+        fail "Canonical host EFI entry Boot$new_id no longer matches PARTUUID $partuuid and loader $loader after maintenance."
+    fi
     order_first="$(sed -n 's/^BootOrder: //p' "$after" | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
     [[ "$order_first" == "$new_id" ]] \
         || fail "Boot$new_id is not first in BootOrder after host default maintenance."
@@ -52290,10 +59129,10 @@ run_grub_list()
     local foreign="" default_mark="" i=""
     local grub_default="" saved_entry="" match_value="" label="" default_index=-1
     local grub_esp_partuuid="" grub_esp_model=""
-    local depth="" kind="" opens="" closes="" brace_depth=0 submenu_depth=0
+    local depth="" kind="" opens="" closes="" brace_depth=0 submenu_depth=0 if_depth=0 wrapped=""
     local sub_index="" cfg_path=""
     local -a titles=() classes=() ids=() foreign_flags=() depths=() kinds=()
-    local -a configfiles=() submenu_open_depths=() submenu_open_indices=()
+    local -a wrapped_flags=() configfiles=() submenu_open_depths=() submenu_open_indices=()
 
     CURRENT_STAGE="GRUB menu list"
     if is_running_host_target "$raw_disk" "$raw_root"; then
@@ -52346,7 +59185,18 @@ run_grub_list()
             kind=""
             depth=""
         fi
+        # Round 79 (plan-boot-menu-reorder): a depth-0 entry inside an
+        # `if … then / fi` wrapper (the 30_uefi-firmware / 31_efi_bootnext
+        # shape) is PINNED — the reorder never moves it out of its
+        # conditional.  The if/fi depth tracks only the top level (brace
+        # depth 0); conditionals inside a menuentry body never gate a
+        # depth-0 unit.
         if [[ -n "$kind" ]]; then
+            if (( brace_depth == 0 && if_depth > 0 )); then
+                wrapped=1
+            else
+                wrapped=0
+            fi
             title="$(grub_list_entry_title "$line" || true)"
             cls="$(grub_list_entry_class "$line" || true)"
             id="$(grub_list_entry_id "$line" || true)"
@@ -52361,6 +59211,7 @@ run_grub_list()
             foreign_flags+=("$foreign")
             depths+=("$depth")
             kinds+=("$kind")
+            wrapped_flags+=("$wrapped")
             configfiles+=("")
             if [[ "$kind" == submenu ]]; then
                 # Remember this submenu's row index so a later configfile
@@ -52386,6 +59237,13 @@ run_grub_list()
         opens="$(tr -cd '{' <<<"$line" | wc -c)"
         closes="$(tr -cd '}' <<<"$line" | wc -c)"
         brace_depth=$((brace_depth + opens - closes))
+        if (( brace_depth == 0 )); then
+            if [[ "$line" =~ ^[[:space:]]*if[[:space:]] ]]; then
+                if_depth=$((if_depth + 1))
+            elif [[ "$line" =~ ^[[:space:]]*fi[[:space:]]*$ ]]; then
+                (( if_depth > 0 )) && if_depth=$((if_depth - 1))
+            fi
+        fi
         while (( ${#submenu_open_depths[@]} > 0 )) && (( brace_depth <= submenu_open_depths[${#submenu_open_depths[@]} - 1] )); do
             unset "submenu_open_depths[${#submenu_open_depths[@]} - 1]"
             unset "submenu_open_indices[${#submenu_open_indices[@]} - 1]"
@@ -52427,15 +59285,456 @@ run_grub_list()
     fi
 
     printf 'GRUB default: %s\n' "$label"
+    if (( RUNNING_HOST_MODE == 1 )) && is_tuxedo_uki_layout; then
+        # Round 79 (plan-boot-menu-reorder §5): the UKI-first honest
+        # limitation — the marked default is the GRUB menu's OWN default, not
+        # the actual boot path (the firmware/UKI boots first there).
+        printf 'GRUB default note: the running host boots its UEFI UKI (TUX.EFI) before this GRUB menu; the marked default is the GRUB menu'"'"'s own default, not the actual boot path.\n'
+    fi
 
     for i in "${!titles[@]}"; do
         default_mark=0
         [[ "$i" -eq "$default_index" ]] && default_mark=1
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "${titles[$i]}" "${classes[$i]}" "${ids[$i]}" "${foreign_flags[$i]}" \
-            "$default_mark" "${depths[$i]}" "${kinds[$i]}" "${configfiles[$i]}"
+            "$default_mark" "${depths[$i]}" "${kinds[$i]}" "${configfiles[$i]}" \
+            "${wrapped_flags[$i]}"
     done
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# Boot menu reorder (grub-reorder) — the Boot menu Move Up/Down/Save feature
+# (round 79, plan-boot-menu-reorder.md).  The CSV anchors the depth-0
+# (top-level) entries on the READ-ONLY grub-list evidence: a menuentry id
+# when present, else `~<base64(title)>` (titles may contain commas).  The
+# reorder is block-level (each depth-0 menuentry/submenu block moves as a
+# unit with its nested children), verified byte-exactly before the live
+# config is replaced, and the saved order is PERSISTED in the helper's own
+# target-side state file so the tool's own grub-mkconfig regeneration
+# re-applies it.  Conventional GRUB only: extlinux/BLS(grub2)/UKI-only
+# scopes fail closed with the honest named reason.
+# ---------------------------------------------------------------------------
+
+# The anchor token for one depth-0 row (the grub-list title/id pair).
+grub_reorder_anchor_encode()
+{
+    local title="$1" id="$2"
+    if [[ -n "$id" ]]; then
+        printf '%s' "$id"
+    else
+        printf '~%s' "$(printf '%s' "$title" | base64 -w0 2>/dev/null | tr -d '\n' || true)"
+    fi
+}
+
+# The helper-owned state file holding the saved depth-0 order (target-relative).
+grub_reorder_state_path()
+{
+    printf '%s' "/etc/boot-bitch/grub-order"
+}
+
+# Depth-0 block inventory of a grub.cfg: one line per top-level UNWRAPPED
+# block — `<anchor>\t<start-line>\t<end-line>` (1-based line numbers,
+# inclusive).  The brace tracking mirrors run_grub_list (menuentry/submenu/
+# function bodies use braces; if/else do not); a menuentry/submenu inside a
+# depth-0 `if … then / fi` wrapper (the 30_uefi-firmware / 31_efi_bootnext
+# shape) is PINNED — it is part of its conditional unit and is never emitted
+# as a reorderable block (moving it out of the wrapper would break the
+# conditional).  Read-only; bounded.
+grub_reorder_depth0_blocks()
+{
+    local config="$1" line="" anchor="" title="" id=""
+    local opens="" closes="" brace_depth=0 if_depth=0 block_start=-1 i=0
+    local -a _gro_lines=()
+    local _gro_block_re='^[[:space:]]*(menuentry|submenu)[[:space:]]'
+    local _gro_if_re='^[[:space:]]*if[[:space:]]'
+    local _gro_fi_re='^[[:space:]]*fi[[:space:]]*$'
+    mapfile -t _gro_lines < "$config" 2>/dev/null || return 1
+    for line in "${_gro_lines[@]}"; do
+        i=$((i + 1))
+        if (( block_start < 0 )) && (( brace_depth == 0 )) && (( if_depth == 0 )) \
+            && [[ "$line" =~ $_gro_block_re ]]; then
+            block_start=$i
+            title="$(grub_list_entry_title "$line" || true)"
+            id="$(grub_list_entry_id "$line" || true)"
+            anchor="$(grub_reorder_anchor_encode "$title" "$id")"
+        fi
+        opens="$(tr -cd '{' <<<"$line" | wc -c)"
+        closes="$(tr -cd '}' <<<"$line" | wc -c)"
+        brace_depth=$((brace_depth + opens - closes))
+        if (( brace_depth == 0 )); then
+            # if/fi tracking only at the top level (nested conditionals inside
+            # menuentry blocks never gate a depth-0 unit).
+            if [[ "$line" =~ $_gro_if_re ]]; then
+                if_depth=$((if_depth + 1))
+            elif [[ "$line" =~ $_gro_fi_re ]]; then
+                (( if_depth > 0 )) && if_depth=$((if_depth - 1))
+            fi
+        fi
+        if (( block_start >= 0 )) && (( brace_depth == 0 )); then
+            printf '%s\t%s\t%s\n' "$anchor" "$block_start" "$i"
+            block_start=-1
+        fi
+    done
+    return 0
+}
+
+# Every depth-0 block anchor (wrapped or not) in file order — the complete
+# first-entry/default view the verb's reconciliation consumes.
+grub_reorder_all_depth0_anchors()
+{
+    local config="$1" line="" anchor="" title="" id=""
+    local opens="" closes="" brace_depth=0 i=0
+    local -a _groa_lines=()
+    local _groa_block_re='^[[:space:]]*(menuentry|submenu)[[:space:]]'
+    mapfile -t _groa_lines < "$config" 2>/dev/null || return 1
+    for line in "${_groa_lines[@]}"; do
+        i=$((i + 1))
+        if [[ "$line" =~ $_groa_block_re ]] && (( brace_depth == 0 )); then
+            title="$(grub_list_entry_title "$line" || true)"
+            id="$(grub_list_entry_id "$line" || true)"
+            grub_reorder_anchor_encode "$title" "$id"
+            printf '\n'
+        fi
+        opens="$(tr -cd '{' <<<"$line" | wc -c)"
+        closes="$(tr -cd '}' <<<"$line" | wc -c)"
+        brace_depth=$((brace_depth + opens - closes))
+    done
+    return 0
+}
+
+# Reassemble the config with the UNWRAPPED depth-0 blocks permuted per the
+# CSV: the unwrapped block SLOTS (file positions) receive the CSV-ordered
+# blocks, and every other line (the header, the pinned wrapped units, the
+# between-block content, the tail) stays byte-identical IN PLACE.  Writes
+# $out; returns 1 on an unresolved, missing or duplicated anchor (never a
+# guessed reorder).
+grub_reorder_assemble()
+{
+    local config="$1" out="$2" csv="$3"
+    local -a _gro_anchors=() _gro_ranges=() _gro_tokens=()
+    local -a _gro_slots=() _gro_slot_ranges=() _gro_file=()
+    local anchor="" start="" end="" token="" idx="" found="" slot_idx="" i=""
+    local block_start="" block_end="" in_block=0
+    while IFS=$'\t' read -r anchor start end; do
+        [[ -n "$anchor" && -n "$start" && -n "$end" ]] || continue
+        for idx in "${!_gro_anchors[@]}"; do
+            [[ "${_gro_anchors[$idx]}" == "$anchor" ]] && return 1
+        done
+        _gro_anchors+=("$anchor")
+        _gro_ranges+=("$start $end")
+    done < <(grub_reorder_depth0_blocks "$config")
+    IFS=',' read -ra _gro_tokens <<< "$csv"
+    ((${#_gro_tokens[@]} > 0)) || return 1
+    ((${#_gro_tokens[@]} == ${#_gro_anchors[@]})) || return 1
+    for token in "${_gro_tokens[@]}"; do
+        found=0
+        for idx in "${!_gro_anchors[@]}"; do
+            [[ "${_gro_anchors[$idx]}" == "$token" ]] && { found=1; break; }
+        done
+        (( found == 1 )) || return 1
+    done
+    # Build the slot map: each unwrapped block (in file order) is one slot.
+    local -a _gro_slot_starts=()
+    for idx in "${!_gro_ranges[@]}"; do
+        read -r start end <<< "${_gro_ranges[$idx]}"
+        _gro_slot_starts+=("$start")
+    done
+    # The CSV-assigned block for slot k is the token at index k; resolve each
+    # token to its range once.
+    local -a _gro_emit_ranges=()
+    for token in "${_gro_tokens[@]}"; do
+        for idx in "${!_gro_anchors[@]}"; do
+            [[ "${_gro_anchors[$idx]}" == "$token" ]] \
+                && { read -r start end <<< "${_gro_ranges[$idx]}"; break; }
+        done
+        _gro_emit_ranges+=("$start $end")
+    done
+    mapfile -t _gro_file < "$config" 2>/dev/null || return 1
+    : > "$out" || return 1
+    slot_idx=0
+    i=0
+    for line in "${_gro_file[@]}"; do
+        i=$((i + 1))
+        if (( in_block == 1 )); then
+            if (( i > block_end )); then
+                in_block=0
+            else
+                continue
+            fi
+        fi
+        if (( slot_idx < ${#_gro_emit_ranges[@]} )) \
+            && (( i == ${_gro_slot_starts[$slot_idx]} )); then
+            # The SLOT's own file range drives the skip (the emitted block may
+            # come from a different file region with a different length).
+            read -r skip_start block_end <<< "${_gro_ranges[$slot_idx]}"
+            read -r emit_start emit_end <<< "${_gro_emit_ranges[$slot_idx]}"
+            sed -n "${emit_start},${emit_end}p" "$config" >> "$out" || return 1
+            in_block=1
+            slot_idx=$((slot_idx + 1))
+            continue
+        fi
+        printf '%s\n' "$line" >> "$out" || return 1
+    done
+    return 0
+}
+
+# Read the saved depth-0 order from the state file: one anchor per line.
+# Returns 1 when the file is absent or names a different GRUB config.
+grub_reorder_read_state()
+{
+    local state="$(grub_reorder_state_path)" cfg=""
+    [[ -f "$TARGET_ROOT$state" ]] || return 1
+    cfg="$(sed -n '1s/^GRUB config: //p' "$TARGET_ROOT$state" 2>/dev/null | head -n1 || true)"
+    [[ "$cfg" == "$(grub_config_path)" ]] || return 1
+    sed -n '2,$p' "$TARGET_ROOT$state" 2>/dev/null | grep -vE '^[[:space:]]*$' || true
+}
+
+# Write the saved depth-0 order to the state file (atomic temp + mv).
+grub_reorder_write_state()
+{
+    local csv="$1" state="$(grub_reorder_state_path)" tmp="" token=""
+    local -a _gro_wtoks=()
+    mkdir -p -- "$TARGET_ROOT/etc/boot-bitch" 2>/dev/null \
+        || fail "Unable to create the Boot Bitch state directory in the target."
+    tmp="$TARGET_ROOT/etc/boot-bitch/.grub-order.tmp.$$"
+    {
+        printf 'GRUB config: %s\n' "$(grub_config_path)"
+        IFS=',' read -ra _gro_wtoks <<< "$csv"
+        for token in "${_gro_wtoks[@]}"; do
+            printf '%s\n' "$token"
+        done
+    } > "$tmp" || { rm -f -- "$tmp"; fail "Unable to write the boot menu order state file."; }
+    mv -f -- "$tmp" "$TARGET_ROOT$state" 2>/dev/null \
+        || { rm -f -- "$tmp"; fail "Unable to install the boot menu order state file."; }
+}
+
+# Round 79: reconcile the GRUB default with the reordered first entry.
+# GRUB_DEFAULT=saved scopes get their grubenv saved_entry set to the new
+# FIRST depth-0 row's id through the round-72 guarded-write pattern (backup,
+# chroot grub-editenv set, read-back, every-other-key survival, byte-identical
+# restore on any failure).  GRUB_DEFAULT=0/unset needs nothing (the first
+# entry rule follows the reorder).  A GRUB_DEFAULT naming its own entry, or a
+# first row without an id, emits the honest note — never a guessed write.
+grub_reorder_reconcile_saved_entry()
+{
+    local first_id="$1" default_setting="" grubenv="" editenv=""
+    local backup="" before_sha="" keys_before="" keys_after="" current=""
+    default_setting="$(sed -nE 's/^[[:space:]]*GRUB_DEFAULT[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/default/grub" 2>/dev/null | head -n1 || true)"
+    if [[ "$default_setting" != saved ]]; then
+        if [[ -n "$default_setting" && "$default_setting" != "0" ]]; then
+            msg_log grub-reorder-default-note "$default_setting"
+        fi
+        return 0
+    fi
+    if [[ -z "$first_id" ]]; then
+        msg_log grub-reorder-default-note "saved (the first entry has no menuentry id)"
+        return 0
+    fi
+    grub_env_block_valid \
+        || { msg_log grub-reorder-default-note "saved (no valid GRUB environment block)"; return 0; }
+    editenv="$(grub_editenv_tool 2>/dev/null || true)"
+    [[ -n "$editenv" ]] \
+        || { msg_log grub-reorder-default-note "saved (no GRUB environment editor)"; return 0; }
+    grubenv="$(grub_env_path)"
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    [[ -n "$current" && "$current" == "$first_id" ]] && return 0
+    backup="$SESSION_DIR/grub-reorder-grubenv-before"
+    cp -a -- "$TARGET_ROOT$grubenv" "$backup" 2>/dev/null \
+        || fail "Unable to back up the GRUB environment block before the saved-default update."
+    before_sha="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    keys_before="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+    run_chroot_try "$(msg set-grub-reorder-default "$first_id")" \
+        "$editenv" "$grubenv" set "saved_entry=$first_id"
+    if (( CHROOT_TRY_RC != 0 )); then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "The GRUB environment editor could not set saved_entry=$first_id; the previous grubenv was restored byte-identical."
+        fi
+        fail "The GRUB environment editor could not set saved_entry=$first_id and the grubenv restore could not be proven."
+    fi
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    keys_after="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+    if [[ "$current" != "$first_id" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "grubenv read-back names '${current:-unset}' instead of $first_id; the previous grubenv was restored byte-identical."
+        fi
+        fail "grubenv read-back names '${current:-unset}' instead of $first_id and the restore could not be proven."
+    fi
+    if [[ "$keys_before" != "$keys_after" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "setting saved_entry changed another grubenv key; the previous grubenv was restored byte-identical."
+        fi
+        fail "setting saved_entry changed another grubenv key and the restore could not be proven."
+    fi
+    msg_log grub-reorder-saved-entry-set "$first_id"
+}
+
+# The verb: reorder the depth-0 GRUB menu blocks per the CSV, persist the
+# order, reconcile the default.  The verified-commit discipline mirrors
+# run_efi_reorder: validate against the FRESH evidence, write to a temp,
+# verify the anchor sequence, install, re-read, restore on any mismatch.
+run_grub_reorder()
+{
+    local raw_disk="$1" raw_root="$2" requested="$3"
+    local config="" layout="" current_csv="" out="" backup=""
+    local -a _grr_anchors=() _grr_tokens=()
+    local anchor="" token="" uki_first=0 first_id="" found=0 idx=""
+
+    CURRENT_STAGE="boot menu reorder"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" yes
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target rw
+    fi
+
+    # GRUB-target-only: refuse extlinux/BLS(grub2)/UKI-only scopes with the
+    # honest named reason (never a guessed reorder).
+    layout="$(grub_resolved_layout)"
+    if [[ "$layout" != grub ]]; then
+        fail "$(reason grub-reorder-not-grub "the ${layout:-unknown} boot layout")"
+    fi
+    config="$(grub_config_path)"
+    if [[ ! -s "$TARGET_ROOT$config" ]]; then
+        fail "$(reason grub-reorder-not-grub "no GRUB configuration found")"
+    fi
+
+    # Fresh evidence: the current depth-0 anchors in file order.
+    mapfile -t _grr_anchors < <(grub_reorder_depth0_blocks "$TARGET_ROOT$config" | cut -f1)
+    ((${#_grr_anchors[@]} > 0)) \
+        || fail "$(reason grub-reorder-not-grub "the GRUB configuration declares no menu entries")"
+
+    [[ -n "$requested" ]] \
+        || fail "Refusing to reorder the boot menu: an empty order would remove every entry."
+    IFS=',' read -ra _grr_tokens <<< "$requested"
+    for token in "${_grr_tokens[@]}"; do
+        [[ -n "$token" ]] || fail "Invalid empty anchor in the requested boot menu order."
+        found=0
+        for anchor in "${_grr_tokens[@]}"; do
+            [[ "$anchor" == "$token" ]] && found=$((found + 1))
+        done
+        (( found == 1 )) \
+            || fail "Duplicate anchor in the requested boot menu order: $token"
+    done
+    for anchor in "${_grr_anchors[@]}"; do
+        found=0
+        for token in "${_grr_tokens[@]}"; do
+            [[ "$token" == "$anchor" ]] && { found=1; break; }
+        done
+        (( found == 1 )) \
+            || fail "Refusing to reorder the boot menu: the existing menu entry anchor $anchor is missing from the requested order."
+    done
+    for token in "${_grr_tokens[@]}"; do
+        found=0
+        for anchor in "${_grr_anchors[@]}"; do
+            [[ "$anchor" == "$token" ]] && { found=1; break; }
+        done
+        (( found == 1 )) \
+            || fail "Refusing to reorder the boot menu: $token is not an existing menu entry anchor."
+    done
+
+    current_csv="$(IFS=','; printf '%s' "${_grr_anchors[*]}")"
+    if [[ "$current_csv" == "$requested" ]]; then
+        msg_log grub-reorder-unchanged "$requested"
+        repair_change_status grub-reorder unchanged
+        return 0
+    fi
+
+    if (( RUNNING_HOST_MODE == 1 )) && is_tuxedo_uki_layout; then
+        uki_first=1
+    fi
+    # The new first ENTRY is the first depth-0 menuentry of the reordered
+    # file (wrapped or not — the GRUB index-0 semantics), resolved after the
+    # verified install below; a `~`-prefixed title anchor has no menuentry id
+    # and skips the saved_entry reconciliation with the honest note.
+
+    # Round 195 (the pre-apply evidence): published BEFORE the first mutation
+    # so a cancel/failure mid-apply still carries the change evidence.
+    repair_change_status_force grub-reorder changed
+
+    backup="$SESSION_DIR/grub-cfg-before-reorder"
+    cp -a -- "$TARGET_ROOT$config" "$backup" 2>/dev/null \
+        || fail "Unable to back up the GRUB configuration before the reorder."
+    out="$SESSION_DIR/grub-cfg-reordered"
+    grub_reorder_assemble "$TARGET_ROOT$config" "$out" "$requested" \
+        || fail "Unable to assemble the reordered GRUB configuration (the requested order does not resolve against the live menu)."
+    # Byte-exact anchor verification of the candidate before it replaces the
+    # live config (the efi-reorder verified-commit discipline).
+    [[ "$(grub_reorder_depth0_blocks "$out" | cut -f1 | paste -sd, -)" == "$requested" ]] \
+        || { rm -f -- "$out"; fail "The reordered GRUB configuration did not verify; the live configuration was not changed."; }
+    install -m 0644 "$out" "$TARGET_ROOT$config" 2>/dev/null \
+        || { rm -f -- "$out"; fail "Unable to install the reordered GRUB configuration."; }
+    rm -f -- "$out"
+    # Live re-read: the installed config must name the requested order.
+    [[ "$(grub_reorder_depth0_blocks "$TARGET_ROOT$config" | cut -f1 | paste -sd, -)" == "$requested" ]] \
+        || { install -m 0644 "$backup" "$TARGET_ROOT$config" 2>/dev/null || true; fail "$(reason grub-reorder-verify-mismatch)"; }
+
+    first_id="$(grub_reorder_all_depth0_anchors "$TARGET_ROOT$config" | sed -n '1p')"
+    [[ "$first_id" == ~* ]] && first_id=""
+    grub_reorder_write_state "$requested"
+    grub_reorder_reconcile_saved_entry "$first_id"
+    if (( uki_first == 1 )); then
+        msg_log grub-reorder-uki-first-note
+    fi
+    msg_log grub-reorder-applied "$requested"
+    repair_change_status grub-reorder changed
+}
+
+# Round 79: re-apply the saved boot menu order after the tool's own
+# grub-mkconfig regeneration (adaptive_grub_repair).  The saved anchors keep
+# their saved order; anchors the regeneration ADDED (the os-prober/foreign
+# class — e.g. the "41_arch2" vdb entry) are appended AFTER the saved set in
+# their generated order (they never become first); removed anchors are
+# dropped with an honest note.  An ambiguous anchor resolution skips the
+# re-apply and leaves the generated config untouched (never a guessed
+# reorder).  The verified-commit discipline is the same as the verb's.
+grub_reorder_reapply_after_regeneration()
+{
+    local config="$(grub_config_path)" state_anchors_csv="" out="" backup=""
+    local -a _grra_saved=() _grra_current=() _grra_keep=() _grra_new=()
+    local anchor="" token="" found=""
+    state_anchors_csv="$(grub_reorder_read_state | paste -sd, - 2>/dev/null || true)"
+    [[ -n "$state_anchors_csv" ]] || return 0
+    mapfile -t _grra_current < <(grub_reorder_depth0_blocks "$TARGET_ROOT$config" | cut -f1)
+    IFS=',' read -ra _grra_saved <<< "$state_anchors_csv"
+    for token in "${_grra_saved[@]}"; do
+        found=0
+        for anchor in "${_grra_current[@]}"; do
+            [[ "$anchor" == "$token" ]] && { found=1; break; }
+        done
+        if (( found == 1 )); then
+            _grra_keep+=("$token")
+        else
+            msg_log grub-order-anchor-dropped "$token"
+        fi
+    done
+    for anchor in "${_grra_current[@]}"; do
+        found=0
+        for token in "${_grra_keep[@]}"; do
+            [[ "$anchor" == "$token" ]] && { found=1; break; }
+        done
+        (( found == 1 )) || _grra_new+=("$anchor")
+    done
+    ((${#_grra_keep[@]} > 0)) || return 0
+    local reapply_csv=""
+    reapply_csv="$(IFS=','; printf '%s' "${_grra_keep[*]}")"
+    ((${#_grra_new[@]} > 0)) && reapply_csv+=",$(IFS=','; printf '%s' "${_grra_new[*]}")"
+    [[ "$(IFS=','; printf '%s' "${_grra_current[*]}")" == "$reapply_csv" ]] && return 0
+    backup="$SESSION_DIR/grub-cfg-before-reapply"
+    cp -a -- "$TARGET_ROOT$config" "$backup" 2>/dev/null || { msg_log grub-order-reapply-skipped; return 0; }
+    out="$SESSION_DIR/grub-cfg-reapplied"
+    grub_reorder_assemble "$TARGET_ROOT$config" "$out" "$reapply_csv" \
+        || { rm -f -- "$out"; msg_log grub-order-reapply-skipped; return 0; }
+    [[ "$(grub_reorder_depth0_blocks "$out" | cut -f1 | paste -sd, -)" == "$reapply_csv" ]] \
+        || { rm -f -- "$out"; msg_log grub-order-reapply-skipped; return 0; }
+    install -m 0644 "$out" "$TARGET_ROOT$config" 2>/dev/null \
+        || { rm -f -- "$out"; msg_log grub-order-reapply-skipped; return 0; }
+    rm -f -- "$out"
+    [[ "$(grub_reorder_depth0_blocks "$TARGET_ROOT$config" | cut -f1 | paste -sd, -)" == "$reapply_csv" ]] \
+        || { install -m 0644 "$backup" "$TARGET_ROOT$config" 2>/dev/null || true; msg_log grub-order-reapply-skipped; return 0; }
+    msg_log grub-order-reapplied
 }
 
 # ---------------------------------------------------------------------------
@@ -54350,8 +61649,8 @@ session_server()
             continue
         fi
         case "$command" in
-            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair|install-target-package|install-host-package|enable-snapshot-config) ;;
-            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot|enable-host-snapshot-config|efi-list|grub-list|extlinux-list|grub-legacy-list|efi-reorder|efi-delete|efi-rename) ;;
+            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair|install-target-package|install-host-package|enable-snapshot-config|numlock) ;;
+            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot|enable-host-snapshot-config|host-numlock|efi-list|grub-list|extlinux-list|grub-legacy-list|efi-reorder|efi-delete|efi-rename|grub-reorder) ;;
             session-log-delete) ;;   # round 51 (modern GUI): GUI housekeeping delete of session logs in the caller's own log directory
             *)
                 secret=""
@@ -54670,6 +61969,13 @@ main()
         enable-host-snapshot-config)
             enable_host_snapshot_config "$@"
             ;;
+        numlock)
+            run_numlock_repair "$@"
+            ;;
+        host-numlock)
+            RUNNING_HOST_MODE=1
+            run_numlock_repair "$@"
+            ;;
         repair)
             run_repair "$@"
             ;;
@@ -54717,6 +62023,10 @@ main()
         efi-reorder)
             [[ $# -eq 1 ]] || fail "efi-reorder requires exactly one BootOrder CSV."
             run_efi_reorder "$TARGET_DISK" "$ROOT_DEVICE" "$1"
+            ;;
+        grub-reorder)
+            [[ $# -eq 1 ]] || fail "grub-reorder requires exactly one GRUB anchor CSV."
+            run_grub_reorder "$TARGET_DISK" "$ROOT_DEVICE" "$1"
             ;;
         efi-delete)
             [[ $# -eq 1 ]] || fail "efi-delete requires exactly one Boot#### ID."

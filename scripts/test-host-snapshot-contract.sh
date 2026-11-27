@@ -46,7 +46,7 @@ grep -Fq 'Host reboot: available' "$HELPER"
 grep -Fq 'Storage lvm inspection: available' "$HELPER"
 grep -Fq 'Storage software raid: available' "$HELPER"
 grep -Fq 'if (( RUNNING_HOST_MODE == 1 )); then' "$HELPER"
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock)' "$HELPER"
 
 # The host mechanism is the name-preserving transaction, never snapper
 # rollback or a bare set-default.
@@ -1104,7 +1104,7 @@ if grep -E '^Repair tool [a-z]+: unavailable\|' <<<"$zc_out" | grep -Eqi 'ubuntu
     printf '%s\n' "$zc_out" >&2
     exit 1
 fi
-[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 17 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 18 ]] \
     || { echo 'FAIL: the ZFS-on-root capability preamble lost a key line' >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
 
 # 8e. Missing ZFS prerequisites fail closed with the exact prerequisite named.

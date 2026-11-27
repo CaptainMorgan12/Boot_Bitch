@@ -86,6 +86,80 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # round 213: the array-expansion count moved 1039 -> 1040 — the new
 # "${awk_runner[@]}" site (the repair_log_filter stdbuf line-buffering
 # runner, the live-streaming fix); no other audited count changed.
+# round 39: 1040 -> 1054 — the display-manager conflict evidence/resolution
+# array loops (the display_manager_conflict_evidence stray sets + the
+# resolve-conflict walk-through); no other audited count changed.
+# round 42: 1054 -> 1057 (+2 readarray, +2 sed_ext, +6 lc) — the
+# volatile-NVRAM efi_entry_ids_for_partuuid_loader_mbr matcher (the -bios
+# OVMF MBR-style entry matching); no other audited count changed.
+# round 44: +1 sed_ext (154 -> 155), +1 sed -nE (115 -> 116) — the
+# numlock getty-drop-in fallback writer (numlock_propagation_drop_evidenced's
+# state-line parse); no other audited count changed.
+# round 45: 1057 -> 1064 (the +7 array expansions) — the display-manager
+# template-instance conflict evidence (the stray-instances loops); no other
+# audited count changed.
+# round 46: mapfile call sites +95 -> +96, legacy_readarray shim +95 -> +96
+# and array [@] expansions 1064 -> 1066 (the +1 mapfile + its instance-list
+# expansion from the deterministic instance-name sort in the display-manager
+# conflict evidence, plus the +1 candidates-dedupe seeding); no other audited
+# count changed.
+# round 48: mapfile call sites +96 -> +97, legacy_readarray shim +96 -> +97
+# and array [@] expansions 1066 -> 1084 (the +1 mapfile + the +18 instance
+# expansions from the round-48 conflict-side base grouping, the single-primary
+# purge and the purge-set summary); no other audited count changed.
+# round 50: legacy_sed_ext +155 -> +159, sed -i -E +8 -> +10, sed -E
+# +31 -> +33 and array [@] expansions 1084 -> 1089 (the last-successful-login
+# probe's sed sites and the autologin-disable's two guarded writes); no other
+# audited count changed.
+# round 52: array [@] expansions 1089 -> 1096 (the deferred-transition probe's
+# parallel-array sites); no other audited count changed.
+# round 54: array [@] expansions 1096 -> 1100 (the staged-instance record and
+# the abort-drop collectors); no other audited count changed.
+# round 64: legacy_sed_ext +164 -> +166, sed -nE +118 -> +119, sed -E
+# +34 -> +35 and array [@] expansions 1108 -> 1118 (the two
+# dkms-transcript sed parses in the genuine-incompatibility verdict, the
+# module-incompatibility evidence's parallel-array loops and the owning-
+# package derivation); no other audited count changed.
+# round 66: array [@] expansions 1118 -> 1122 (the missing-initramfs flag's
+# inventory loops, the menu-state annotation and the verify's live pairing
+# check); no other audited count changed.
+# round 68: legacy_sort_versions 18 -> 22 and array [@] expansions
+# 1122 -> 1124 (the vendor-candidate scan + the multi-meta evidence set's
+# loops and version picks); no other audited count changed.
+# round 69: mapfile call sites +98 -> +104, legacy_readarray shim +98 -> +104,
+# array [@] expansions 1124 -> 1139, sed -nE +119 -> +123, sed -E +35 -> +39,
+# sort -V +22 -> +23, legacy_sed_ext +166 -> +175 (the blocker reports, the
+# dkms failure resolution + the remedy-set derivations, the prior-kernel
+# candidate scan, the make.log-header kernel fallback, the host-default
+# volatile-NVRAM MBR acceptance), legacy_sort_versions +22 -> +23,
+# legacy_lc +83 -> +86, case conversion ,, +83 -> +86; no other audited count
+# changed.
+# round 72: array [@] expansions 1145 -> 1144 (the round-69 metas loop moved to
+# the direct-stanza scan), sed -nE +127 -> +128 (the boot-default switch's
+# GRUB_DEFAULT reads), legacy_sed_ext +180 -> +181; no other audited count
+# changed.
+# round 74: array [@] expansions 1144 -> 1148 (the residue-class loops — the
+# installed-packages helper, the indexed removable/orphaned classifications,
+# the support-probe index, the newest-pkgs lookup); no other audited count
+# changed.
+# round 76: array [@] expansions 1148 -> 1163 (the prior-kernel installed-version
+# resolver loops, the mount-holder sweep's mount loops, the cascade-removal
+# metapackage loops, the plan-membership removal-target helper and the
+# downgrade-path completion); no other audited count changed.
+# round 79: mapfile call sites +104 -> +109, legacy_readarray shim +104 ->
+# +109, legacy_sed_ext +181 -> +182, sed -nE +128 -> +129 and the array [@]
+# expansions +1163 -> +1204 (the grub-reorder verb + the round-80 kernel-removal
+# completion + the round-81 survivor-safe sweep loops)
+# inventory mapfile sites, the anchor/token loops and the GRUB_DEFAULT
+# saved-entry reconciliation reads); no other audited count changed.
+# round 82: array [@] expansions 1204 -> 1217, mapfile call sites +109 -> +110
+# and legacy_readarray shim +109 -> +110 (the stale-evidence removal-plan fix —
+# the fresh grouped-package re-derivation loops, the removal-lineage predicate
+# and the plan-union mapfile in apt_kernel_cleanup_stage); no other audited
+# count changed.
+# round 83b: array [@] expansions 1217 -> 1219 (the greetd post-login
+# session-shell detection — the session-entry and desktop-fact token loops);
+# no other audited count changed.
 for rule in \
     'assoc declarations \(declare/local -A\) +19' \
     'assoc accesses: bdf_hw +2' \
@@ -103,21 +177,21 @@ for rule in \
     'assoc accesses: removed_seen +4' \
     'assoc accesses: current_by_id +3' \
     'assoc accesses: order_index +5' \
-    'assoc accesses: reasons +49' \
+    'assoc accesses: reasons +51' \
     'assoc accesses: seen +10' \
     'assoc accesses: seen_namespaces +2' \
     'assoc accesses: emitted +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
-    'case conversion ,, +77' \
+    'case conversion ,, +86' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +1040' \
-    'mapfile call sites +93' \
-    'sed -i -E +8' \
-    'sed -nE +110' \
-    'sed -E +29' \
-    'sort -V +18' \
+    'array \[@\] expansions \(all forms\) +1219' \
+    'mapfile call sites +110' \
+    'sed -i -E +12' \
+    'sed -nE +129' \
+    'sed -E +41' \
+    'sort -V +23' \
     'date --iso-8601 +5' \
     '=~ regex literal hoists +15' \
     'os-release gates +1' \
@@ -133,19 +207,19 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +93' \
+    'shim calls: legacy_readarray +110' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +147' \
-    'shim calls: legacy_sort_versions +18' \
+    'shim calls: legacy_sed_ext +182' \
+    'shim calls: legacy_sort_versions +23' \
     'shim calls: legacy_date_iso +5' \
-    'shim calls: legacy_lc +77' \
+    'shim calls: legacy_lc +86' \
     'shim calls: legacy_uc +20' \
     'shim calls: legacy_ucfirst +24' \
     'shim calls: legacy_assoc_get +49' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +4' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +75' \
+    'shim calls: legacy_assoc_set +77' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \

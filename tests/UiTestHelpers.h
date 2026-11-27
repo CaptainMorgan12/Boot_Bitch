@@ -345,6 +345,13 @@ inline QProcess *startFakePrivilegedSession(MainWindow &window, const QString &c
         "printf 'DONE\\t%s\\t1\\n' \"$id\"; exit 1 ;;\n"
         "  aptupgrade) printf 'OUT\\t%s\\t[12:00:00] apt upgrade is disabled by this distribution; running '\\''apt full-upgrade'\\'' instead\\n' \"$id\"; "
         "printf 'OUT\\t%s\\tmock full-upgrade completed\\n' \"$id\"; printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  repairprompt) while IFS= read -r -t 2 line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\" >> \"$capture\"; "
+        "case \"$line\" in END*) break ;; esac; done; "
+        "id=$(head -n 1 \"$capture\" | cut -f2); "
+        "promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "  shellprompt) promptb64=$(printf 'Continue? [Y/n] ' | base64 | tr -d '\\n'); "
         "printf 'OUT\\t%s\\tContinue? [Y/n] \\n' \"$id\"; "
         "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
@@ -391,7 +398,8 @@ inline QProcess *startFakePrivilegedSession(MainWindow &window, const QString &c
         "esac\n"
         "exit 9\n")
         .arg(capturePath, mode);
-    session->start(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), script});
+    session->start(QStringLiteral("/usr/bin/stdbuf"),
+                    {QStringLiteral("-o0"), QStringLiteral("/bin/sh"), QStringLiteral("-c"), script});
     if (!session->waitForStarted(5000)) {
         delete session;
         return nullptr;
@@ -721,6 +729,34 @@ inline void acceptNextMessageBox(QObject *context, QMessageBox::StandardButton b
 // Clicks the custom-named button (matched by text) on the next visible modal
 // message box. Mirrors acceptNextMessageBox() but targets a custom button text
 // (e.g. the confirmation dialog's "Clear" button) rather than a standard one.
+// Round 41: the targeted poll for the runOkDialog family (the
+// uniformOkDialog) — the generic acceptNextMessageBox matches the
+// uniformConfirmDialog FIRST (its Ok maps onto the confirm's action
+// button), which consumes a cancel confirmation instead of the post-run OK
+// dialog.  This poll only ever clicks the uniformOkButton.
+inline void acceptNextUniformOkDialog(QObject *context)
+{
+    QTimer *poll = new QTimer(context);
+    poll->setInterval(5);
+    QObject::connect(poll, &QTimer::timeout, context, [poll] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            if (top->objectName() != QStringLiteral("uniformOkDialog")) {
+                continue;
+            }
+            QPushButton *target = top->findChild<QPushButton *>(
+                QStringLiteral("uniformOkButton"));
+            if (!target) {
+                continue;
+            }
+            poll->stop();
+            target->click();
+            poll->deleteLater();
+            return;
+        }
+    });
+    poll->start();
+}
+
 inline void acceptNextMessageBoxByText(QObject *context, const QString &text)
 {
     QTimer *poll = new QTimer(context);

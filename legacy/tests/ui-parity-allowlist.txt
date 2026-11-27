@@ -417,8 +417,8 @@ The running-host rollback did not complete and automatic recovery could not be p
 The running-host rollback did not complete. The helper reports the preserved @ was restored automatically; do not reboot until you review the Snapshots output and Logs.
 The selected Linux root is not Btrfs, so Btrfs snapshots are not available.
 The selected repair filesystem is promoted read-write only after host/target safety checks. Existing same-name target files may be overwritten.\n\n
-The selected snapshot did not pass the running-host rollback preflight. No rollback was performed.\n\nReview the Snapshots details pane and Logs.
-The selected snapshot did not pass the transactional rollback preflight. No rollback was performed.\n\nReview the Snapshots details pane and Logs.
+The selected snapshot did not pass the running-host rollback preflight. No rollback was performed.\n\nReview the Logs for the outcome.
+The selected snapshot did not pass the transactional rollback preflight. No rollback was performed.\n\nReview the Logs for the outcome.
 This entry is currently active (BootCurrent).
 This entry is the current GRUB default.
 This entry is the current GRUB legacy default.
@@ -1562,6 +1562,13 @@ validation is read-only — no changes
 validation not checked
 
 # --- [status] GUI status/busy/log/reason lines (legacy renders its own) ---
+Authorization attempt: exit %1, class %2, first-popup %3
+In-app authorization agent registered for process %1
+In-app authorization agent registration failed: %1 (external-agent fallback)
+In-app authorization agent: initiateAuthentication for %1 (%2)
+In-app authorization agent: the password dialog was dismissed — quiet outcome.
+In-app authorization agent: the password was not accepted — one popup + one re-open.
+Polkit agent: a foreign action (%1) was refused while the Boot Bitch authorization was pending.
  Please regenerate diagnostics before starting another repair.
  This stage is off by default: select it here to include it in Full Repair.
 %1 diagnostic run: %2
@@ -1588,6 +1595,11 @@ An unlocked Linux filesystem is already visible; Boot Bitch reuses the existing 
 Approximately %1 MB would be restored.
 Authorization request already running.
 Authorization unavailable
+The administrator password was not accepted. Try again — the password prompt will reopen.
+The administrator authorization failed. Try again — press Authorize to reopen the password prompt.
+Running-host identity and boot-mount check
+Repair capability probes
+User: %1
 Automatic diagnostics regeneration did not complete; repair actions remain disabled until diagnostics are regenerated.
 Automatic diagnostics regeneration is disabled in Settings.
 Automatic running-host diagnostics regeneration skipped: Host Maintenance is not active.
@@ -1673,7 +1685,10 @@ No repair target selected
 No repair workflow is registered for the selected tool.
 No repair workflow is registered for this item.
 No repair workflow is registered.
-No scope selected
+# round 10 (0.2.32): "No scope selected" left the modern source (the boot-entries
+# scope label follows the shared per-tab wording now); the legacy GUI keeps its own
+# copy, which the audit reports as a legacy-only keep/remove candidate — no
+# modern-only string exists to allowlist.
 No selectable repair target was detected on this drive.
 No unlock operation recorded for this drive in the current session.
 Not compiled — optional integration unavailable
@@ -1702,8 +1717,10 @@ Regenerating read-only diagnostics…
 Regenerating running-host diagnostics
 Regenerating target diagnostics
 Repair diagnostics required
-Repair target: %1
-Repair target: not ready
+# round 10 (0.2.32): "Repair target: %1" / "Repair target: not ready" left the
+# modern source (the boot-entries scope label follows the shared per-tab wording
+# now); the legacy GUI keeps its own copies — legacy-only keep/remove
+# candidates, no modern-only string to allowlist.
 Repair tool %1 has unknown or unavailable diagnostic evidence.
 Repair tool %1 is available in the selected scope's cached diagnostics.
 Repair tool %1 is unavailable.
@@ -1726,7 +1743,10 @@ Running Host diagnostics require Host Maintenance. Choose Enter Host Maintenance
 Running Host diagnostics require Host Maintenance. Choose Host Maintenance on the protected running-host card in Systems first.
 Running Host diagnostics…
 Running Host repair: %1…
-Running Host: %1
+# round 10 (0.2.32): "Running Host: %1" (the chroot/Host Shell scope-label
+# override) left the modern source — the host-shell label now uses the shared
+# "Host maintenance: %1" wording, so the modern-only [status]-bucket entry is
+# gone.
 Running Target diagnostic
 Running Target diagnostics
 Running Target diagnostics…
@@ -1736,8 +1756,10 @@ Running host is ready for explicit guarded maintenance.
 Running host selected for guarded maintenance: %1 · Root component: %2
 Running host selected for the Host Shell: %1 · Root component: %2
 Running host shell command
-Running host: %1
-Running host: not selected
+# round 10 (0.2.32): "Running host: %1" / "Running host: not selected" left the
+# modern source (the boot-entries scope label follows the shared per-tab wording
+# now); the legacy GUI keeps its own copies — legacy-only keep/remove
+# candidates, no modern-only string to allowlist.
 Running-host diagnostic sections were invalidated by a repair action and await regeneration.
 Running-host reboot scheduled; the host is restarting.
 Running…
@@ -2135,19 +2157,28 @@ Failed: %1
 Rollback undo points are recovery artifacts and cannot be deleted.
 Select one or more snapshots first.
 Select one or more snapshots first; rollback undo points cannot be deleted.
-Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was cancelled before any change; nothing was modified.
-Snapshot deletion cancelled: %1\n\n%2\n\nThe deletion was stopped at your request after the first deletion; the affected cached diagnostics were invalidated and the snapshot inventory is reloaded.
-Snapshot deletion complete: %1\n\n%2\n\n%3
+Snapshot deletion cancelled: %1 — the deletion was cancelled before any change; nothing was modified.
+Snapshot deletion cancelled: %1 — the deletion was stopped at your request after the first deletion; the affected cached diagnostics were invalidated and the snapshot inventory is reloaded.
+Snapshot deletion complete: %1\n\n%2
 Snapshot deletion failed
-Snapshot deletion failed: %1\n\n%2
+Snapshot deletion failed: %1 — the deletion did not complete.
 Snapshot deletion partially completed: %1
-Snapshot deletion partially completed: %1\n\n%2\n\n%3\n\n%4
-Snapshot deletion skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.
+Snapshot deletion partially completed: %1\n\n%2
+Snapshot deletion skipped: %1 — the confirmation was declined or expired; nothing was changed.
 Snapshot deletion unavailable
 The snapshot deletion completed (%1); the snapshot inventory is reloaded in the background.
-The snapshot deletion did not complete. Review the Snapshots details pane and Logs.
+The snapshot deletion did not complete. Review the Logs for the outcome.
 The snapshot deletion failed.
 The snapshot deletion partially completed: %1. Review the per-id outcomes in the Snapshots details pane and Logs.
+# --- Round 13 of 0.2.32 (the delete-completion auto-inspect): the honest
+# fallback notes.  [feature] bucket: the legacy Qt3 GUI has no Snapshots
+# tab (the round-104/134/135/146/147 N-A precedent).
+The remaining snapshot could not be identified in the reloaded inventory; select one in the snapshot list and choose Inspect Selected.
+The automatic inspection of the remaining snapshot did not complete; select one in the snapshot list and choose Inspect Selected.
+No snapshots remain in the store; there is no snapshot to inspect.
+# --- Round 14 of 0.2.32 (the Load-Snapshots default-to-latest): the honest
+# inspect-failure note.  [feature] bucket (the same N-A precedent).
+The automatic inspection of snapshot %1 did not complete; choose Inspect Selected to retry.
 The snapshot deletion was declined at the confirmation prompt; nothing was changed.
 %1 (%2)
 # --- [feature] round-34 pkexec/Polkit lines (Etch elevates via sudo) ---
@@ -2666,8 +2697,8 @@ Creating a manual snapshot on the running host
 Creating one single-type 'Boot Bitch manual snapshot' on the repair target %1 (%2).
 Creating one single-type 'Boot Bitch manual snapshot' on the running host %1 (%2).
 Filter the snapshot list by Snapper type.
-Manual snapshot created: %1\n\n%2
-Manual snapshot creation failed: %1\n\n%2
+Manual snapshot created: %1 — the snapshot inventory is reloaded in the background.
+Manual snapshot creation failed: %1 — the creation did not complete.
 Post snapshots
 Pre snapshots
 Running-host snapshot creation is unavailable.
@@ -2676,13 +2707,23 @@ Single snapshots
 Snapshot created
 Snapshot creation failed
 Snapshot creation is unavailable for the selected target.
-Snapshot creation skipped: %1\n\n%2\n\nThe confirmation was declined or expired; nothing was changed.
+Snapshot creation skipped: %1 — the confirmation was declined or expired; nothing was changed.
 Snapshot creation unavailable
-The manual snapshot creation did not complete. Review the Snapshots details pane and Logs.
+The manual snapshot creation did not complete. Review the Logs for the outcome.
 The manual snapshot creation failed.
 The manual snapshot creation was declined at the confirmation prompt; nothing was changed.
 The manual snapshot was created on %1.\n\nThe snapshot list is refreshed.
 The manual snapshot was created; the snapshot inventory is reloaded.
+# --- Round 8 of 0.2.32 (the round-225 C1 follow-up): the cancelled-create
+# parity branch's pane outcomes.  [feature] bucket: the legacy Qt3 GUI has
+# no Snapshots tab (the round-104/134/135/146/147 N-A precedent).
+Snapshot creation cancelled: %1 — the creation was stopped at your request after the mutation began; the affected cached diagnostics were invalidated and the snapshot inventory is reloaded.
+Snapshot creation cancelled: %1 — the creation was cancelled before any change; nothing was modified.
+# --- Round 12b of 0.2.32 (the create-success auto-inspect): the honest
+# fallback notes.  [feature] bucket: the legacy Qt3 GUI has no Snapshots
+# tab (the round-104/134/135/146/147 N-A precedent).
+The new snapshot could not be identified in the reloaded inventory; select it in the snapshot list and choose Inspect Selected.
+The automatic inspection of the new snapshot did not complete; select it in the snapshot list and choose Inspect Selected.
 MANUAL SNAPSHOT SKIPPED: the confirmation prompt was declined or expired; no changes were made.
 Manual snapshot created on %1: one single-type 'Boot Bitch manual snapshot' was added to the snapshot store.
 # --- Round 220 (the snapshot-deletion batch): the helper msg-key + reason-key
@@ -2923,3 +2964,270 @@ Re-resolved the staged repair-target rollback for %N: snapshot %N is staged as t
 # carries the identical reconcile flow; the round-104 D2 family — no new
 # legacy GUI affordance, the legacy display stage stays automated). ---
 Corrected the stale X11 display-manager registry (it named %2) to the configured %1 binary.
+
+# Round 23 (phase 2): the modern-only per-diagnostic tooltip (the
+# legacy 4-field DiagnosticSpec carries the action string instead — the
+# round-97 input/network pattern).
+Review the per-stage Num Lock state and mechanisms read-only.
+
+# Round 25 (phase 4): the numlock helper msg tokens — the legacy GUI renders
+# the ported helper's tokens verbatim (the round-104 D2 family). Bucket
+# [helper]. ---
+Num Lock early boot declined; nothing was changed.
+Num Lock early boot is already enabled; nothing was changed.
+The Num Lock module was written into the %1 initramfs integration.
+The Alpine mkinitfs initramfs carries no boot-time hook mechanism; the Num Lock payload is included but the initrd-side execution has no supported hook point — the console stage rides the OpenRC fallback instead.
+Num Lock early boot enabled: the module is integrated into the %1 initramfs and the initrd image(s) rebuilt.
+The change takes effect at the next boot — reboot and re-run the diagnostic to confirm.
+# Round 25 (phase 4): the modern run-window title; the legacy carries its own
+# window titles (the round-104 D2 family). Bucket [helper].
+Enable Num Lock early boot
+# Round 32 (phase 6): the numlock helper msg token — the legacy GUI renders
+# the ported helper's tokens verbatim (the round-104 D2 family). Bucket [helper].
+The OpenRC numlock service is enabled and started — the console login shows Num Lock on from the next login.
+# Round 35 (phase 6b): the numlock helper msg token — the legacy GUI renders
+# the ported helper's tokens verbatim (the round-104 D2 family). Bucket [helper].
+The mkinitcpio Num Lock drop-in was written with the derived hook order.
+# Round 38: the numlock helper msg token — the legacy GUI renders the
+# ported helper's tokens verbatim (the round-104 D2 family). Bucket [helper].
+The Num Lock payload was placed by the repair (the installed package predates it).
+
+# Round 39: the DM-conflict helper msg tokens — the legacy GUI renders the
+# ported helper's tokens verbatim (the round-104 D2 family). Bucket [helper].
+Disabling the conflicting display-manager unit: %1.
+The stray %1 display-manager process(es) were stopped.
+The stray %1 display-manager process(es) could not be stopped now; they end at the next graphical restart.
+The display-manager conflict already resolved itself; running the plain restore.
+Display manager conflict resolved: %1 is the configured manager and the conflicting unit/processes were disabled/stopped.
+
+# Round 42: the volatile-NVRAM efi helper msg token — the legacy GUI renders
+# the ported helper's tokens verbatim (the round-104 D2 family). Bucket [helper].
+The firmware store is the volatile-NVRAM class (the -bios OVMF): the created entry Boot%1 is present on %2 with the MBR-style device path and the refreshed fallback loader is what boots this domain; the canonical entry's durability across power cycles cannot be verified on this store.
+
+# Round 44: the getty-fallback numlock helper msg tokens — the legacy GUI
+# renders the ported helper's tokens verbatim (the round-104 D2 family).
+The post-reboot evidence proves the Num Lock initrd set did not survive the boot handoff; the console-stage systemd getty fallback applies.
+The systemd getty Num Lock drop-in was written (the console-stage fallback).
+
+# Round 45: the DM template-instance conflict msg tokens — the legacy GUI
+# renders the ported helper's tokens verbatim (the round-104 D2 family).
+Disabling the conflicting display-manager template instance: %1.
+The conflicting display-manager template instance %1 was stopped.
+# Round 48 (the single-primary purge): the legacy GUI renders the display
+# walk-through's raw helper transcript; the modern per-key phrasing for the
+# purge family is modern-only (the same evaluation as the round-39/45
+# conflict family above).
+Single-primary rule: disabling the other display-manager unit %1 (services only — no packages are removed).
+Single-primary rule: disabling the other display-manager template instance %1.
+Single-primary rule: the other display-manager template instance %1 was stopped.
+Single-primary rule: the other %1 display-manager process(es) were stopped.
+The other %1 display-manager process(es) could not be stopped now; they end at the next graphical restart.
+Single-primary rule: disabling the other display-manager socket %1.
+Single-primary rule applied: %1 is the only primary display manager.
+# Round 50 (the never-kill-your-own-session deferral + the autologin
+# normalization): the legacy GUI renders the ported helper's tokens verbatim
+# (the round-104 D2 family).
+%1 serves this live session — its stop is deferred to the reboot; the session survives the repair.
+%1 serves this live session — it is not stopped here; the stop happens at the next reboot.
+Disabled the %1 automatic login (the stale automatic login breaks the session registration on this machine).
+# Round 52: the staged display-manager completion — the modern GUI's popup
+# strings (the legacy GUI renders the helper transcript and has no staged
+# popup; the round-104 D2 family evaluation).
+Display manager switch staged
+The display manager switch takes effect at the next login.
+The switch to %1 is applied: %2 is disabled and keeps serving the current session until the next login or reboot, and %1 will then be the only primary display manager.
+
+Use Reboot Now to reboot immediately, or Later to keep working and reboot manually.
+The display manager switch to %1 takes effect at the next login/reboot; %2 keeps serving the current session until then.
+%1 (submenu)
+The switch to %1 is applied: %2 is disabled and keeps serving the current session until the next login or reboot, and %1 will then be the only primary display manager.\n\nUse Reboot Now to reboot immediately, or Later to keep working and reboot manually.
+# Round 58 (ITEM 1/4): the greetd-landing + the SDDM no-partial-write keys —
+# the helper-side msg surface the Qt3 frontend renders raw (the round-104 D2
+# family).  The modern GUI localizes them; the legacy GUI passes the raw
+# helper tokens through.
+Added the greeter user %1 to the device-access groups (video, input, render) the graphical greeter requires.
+Install the wlgreet graphical greeter
+Installing the wlgreet graphical greeter (the greetd login screen).
+Removed the incomplete %1 automatic-login entry (the user entry without a session entry); no automatic login was left behind.
+Target capability evidence refreshed from the cached target diagnostics.
+The greetd graphical greeter is already configured (%1); nothing was changed.
+The wlgreet graphical greeter is installed and configured; greetd shows the graphical login screen at the next login/reboot.
+# Round 83b (the Ubuntu black session + the Debian write-verify trap): the
+# greetd post-login session-command keys + the extended landing refusal set —
+# the helper-side msg/reason surface the Qt3 frontend renders raw (the
+# round-104 D2 family).  The modern GUI localizes them; the legacy GUI passes
+# the raw helper tokens through (display-only, never a gate).
+No installed desktop session was found in this scope (no session entries under /usr/share/wayland-sessions or /usr/share/xsessions); refusing the greetd landing (there would be no desktop shell to start after login).
+No installed desktop session was found; the existing wlgreet post-login command (%1) was kept.
+The greetd configuration /etc/greetd/config.toml is missing from the target; refusing the greetd landing.
+The greetd configuration does not carry the expected greeter/session command after the write; refusing the greetd landing.
+The greetd post-login session command already launches the detected desktop session (%1); nothing was changed.
+The greetd post-login session command is now the detected desktop session (%1); the login lands in the desktop shell (applies at the next login).
+The guarded write of the greetd configuration failed (the file was not changed); refusing the greetd landing.
+The wlgreet configuration carries no fixed post-login command; wlgreet shows the installed-session picker at login (no write needed).
+# Round 83c (the DM runtime fix — the GNOME-Wayland refusal + the bare-wlgreet
+# residue heal): the helper-side msg/reason surface the Qt3 frontend renders
+# raw (the round-104 D2 family).  The modern GUI localizes them; the legacy
+# GUI passes the raw helper tokens through (display-only, never a gate).
+The detected desktop session (%1) is the GNOME Wayland session, which cannot run under greetd (greetd's session worker does not provide the logind session registration GNOME's Wayland session requires); refusing the greetd landing (a greetd login would lead to a session that fails to start).
+The configured greeter command was a bare wlgreet client with no compositor (%1) — it cannot show a login screen; the greeter was reconfigured through the guarded write.
+# Round 60 (Finding 1): the broken-dpkg-state keys — the helper-side msg
+# surface the Qt3 frontend renders raw (the round-104 D2 family).
+The %1 removal completed: the packages are provably absent. The target's unrelated half-configured package(s) %2 still need the Fix Broken Packages repair; they did not block the removal.
+The dependency repair cannot proceed: the half-configured package(s) %1 fail their postinst (%2). Install the prior compatible kernel or update the incompatible module's package, then run the Fix Broken Packages repair again.
+The kernel removal completed: the removed kernel(s) are absent (the packages, the boot files and the module trees are gone). The target's unrelated half-configured package(s) %1 still need the Fix Broken Packages repair; they did not block the removal.
+The target carries half-configured package(s) %1 whose postinst failed (%2). The dependency repair cannot fix a module build failure: install the prior compatible kernel or update the incompatible module's package, then run the Fix Broken Packages repair again.
+# Round 60 (Finding 1): the forceful-removal completion notes (the
+# helper-side msg surface the Qt3 frontend renders raw — the round-104 D2
+# family).
+The %1 removal completed; the target's unrelated half-configured package(s) %2 (their postinst failed) still need the Fix Broken Packages repair.
+The kernel removal completed; the target's unrelated half-configured package(s) %1 (their postinst failed) still need the Fix Broken Packages repair.
+# Round 66 (Finding 1+2): the UKI-preflight honest refusal + the
+# no-initramfs incompleteness verdict — the helper-side reason surface the
+# Qt3 frontend renders raw (the round-104 D2 family).
+Kernel %1 is installed but incomplete: the matching initramfs is missing. Run the Initramfs repair to generate it.
+No installed TUXEDO kernel image was found under /boot (expected vmlinuz-<v>-tuxedo-amd64 or vmlinuz-<v>-txos-amd64); the UKI rebuild does not apply to this state.
+# Round 64 (Finding 2): the genuine-incompatibility verdict + the guarded
+# module remedies — the helper-side msg/reason surface the Qt3 frontend
+# renders raw (the round-104 D2 family).
+Re-check the package configuration after the module removal
+Remove the incompatible module %1
+The dependency repair cannot proceed: the DKMS module %2 genuinely fails to build against kernel %3 (the half-configured package(s) %1; the module's own declared highest compatible kernel version is %4). Choose the remedy in the kernel repair (the per-kernel actions for kernel %3), then run the Fix Broken Packages repair again.
+The dependency repair cannot proceed: the DKMS module %2's build was blocked by an inconsistent kernel state for kernel %3 (the half-configured package(s) %1). Remove the offending kernel through the kernel repair, then run the Fix Broken Packages repair again.
+The incompatible module package (%1) was removed.
+The module package (%1) was updated to a repository version.
+The module package for %1 was updated to a repository version.
+The module package removal for %1 was declined; nothing was changed.
+The module package update for %1 is not available (no newer repository version); nothing was changed.
+The module package update for %1 was declined; nothing was changed.
+The module package update is not available: %1.
+The module package(s) for %1 were removed, but the dpkg configuration still fails (%2).
+The module package(s) for %1 were removed; the blocked package configuration now succeeds.
+The target carries half-configured package(s) %1: the DKMS module %2 genuinely fails to build against kernel %3 (the module's own configure/build error — removing other kernels does NOT fix this; its own declared highest compatible kernel version is %4). The kernel repair offers the per-kernel actions for kernel %3: install the prior repository kernel the module still supports (the tool also switches the next-boot default to it), or update the module's package to a version that builds against kernel %3 when the repositories offer one. Run the Fix Broken Packages repair again afterwards.
+The target carries half-configured package(s) %1: the DKMS module %2's build was blocked by an inconsistent kernel state for kernel %3 (the build log references a missing half-configured kernel build tree — a state artifact, not a module failure). Removing the offending kernel through the kernel repair unblocks the build; run the Fix Broken Packages repair again afterwards.
+# round 69: the universal unblocker + the remedy-set extension (the [helper]
+# reason/msg registry prose the legacy GUI shows verbatim).
+Boot the prior kernel now; the module %1 update stays monitored — the tool re-checks the repositories (the module's declared ceiling is kernel %2) on the next diagnostic.
+Install the prior compatible kernel %1 and switch the next-boot default to it
+No prior repository kernel is available that the module %1 still supports (installed kernel %2; the module's declared ceiling is kernel %3); the repositories carry no older compatible candidate.
+No prior repository kernel the module %1 still supports is available (installed kernel %2; the module's declared ceiling is kernel %3); nothing was changed.
+Prior kernel %1 installed: boot it temporarily until the module %2's compatible version lands (the tool re-checks the repositories on the next diagnostic).
+The prior repository kernel %1 (a version the module still supports) was installed and set as the next-boot default — the system boots it on the next reboot until the module's compatible version lands.
+The next-boot default was switched to the prior compatible kernel %1 — the system boots it on the next reboot until the module's compatible version lands.
+The next-boot default could not be switched: %1.
+Prior kernel %1 installed and set as the next-boot default: the system boots it on the next reboot until the module %2's compatible version lands.
+Prior kernel %1 installed; the next-boot default could not be switched automatically (%2) — select the prior kernel from the boot menu on the next reboot.
+Set the target's next-boot default to the prior kernel %1
+The target's next-boot default already names the prior kernel %1 (grubenv saved_entry=%2); nothing was written.
+The target's next-boot default was switched to the prior kernel %1 (grubenv saved_entry=%2).
+Retry DKMS autoinstall after the module remedy
+The module rebuild failed for kernel %1 (module %2); the build log carries no recognizable error class.
+The module rebuild failed: the DKMS module %1 genuinely cannot build against kernel %2 (the module's own declared highest compatible kernel version is %3).
+The module rebuild failed: the DKMS module %1 genuinely cannot build against kernel %2 (the module's own declared highest compatible kernel version is %3). The kernel repair's per-kernel actions offer the programmatic resolutions for kernel %2: install the prior repository kernel the module still supports (the tool also switches the next-boot default to it) or update the module's package.
+The package change is blocked: the DKMS module %2 genuinely fails to build against kernel %3 (the half-configured package(s) %1; the module's own declared highest compatible kernel version is %4). Choose the remedy in the kernel repair (the per-kernel actions for kernel %3), then re-run this repair.
+The package change is blocked: the DKMS module %2's build was blocked by an inconsistent kernel state for kernel %3 (the half-configured package(s) %1); removing the offending kernel through the kernel repair unblocks it.
+The package change is blocked: the half-configured package(s) %1 fail their postinst (%2); install the prior compatible kernel or update the incompatible module's package through the kernel repair, then re-run this repair.
+The prior compatible kernel was installed and the module update is monitored — the tool re-checks the repositories (the module's declared ceiling is kernel %1) on the next diagnostic.
+The prior repository kernel %1 (a version the module still supports) was installed; select it from the boot menu on the next reboot (the automatic next-boot default switch was unavailable: %2).
+The prior-kernel install for module %1 was declined; nothing was changed.
+The rebuild re-run after the remedy still fails.
+Update the incompatible module %1
+Kernel %1 was removed; sweeping its on-disk residue (the module-directory leftovers the package manager left behind).
+# Round 76 (the remove-newest completion + the mount-holder sweep): the two new
+# helper msg keys render verbatim in the legacy GUI (display-only fail-open,
+# the round-60/64 D2 family); no new legacy Install actions.
+Reaped the stray process(es) %1 that a failed stage left using the session mounts; the mounts release cleanly.
+Remove the managed kernel metapackage(s) %1 with the removed kernel (they pin only the removed kernel and have no survivor-pinning version).
+
+# round 79: the Boot menu reorder feature (GRUB-menu-only; N/A on Etch's
+# read-only menu.lst view) + the round-78 greetd refusal key texts
+# ([helper-status] — the Qt3 GUI has no msg/reason key maps).
+# [feature]
+%1 (first)
+# [helper-status]
+%1 disk: %2\nRoot: %3\n\nReorder the boot menu to:\n%4\n\nThe first entry becomes the boot default (on GRUB_DEFAULT=saved systems the saved default is updated to it; where the firmware/UKI boots first, the reorder governs the GRUB menu only). The verified helper re-checks the menu, writes it and restores the previous configuration on any mismatch.
+# [feature]
+Apply the boot menu reorder; the first entry becomes the default.
+# [feature]
+Apply the boot menu reorder?
+# [feature]
+Boot menu order save failed
+# [feature]
+Boot menu order save failed.
+# [feature]
+Boot menu order saved.
+# [feature]
+Boot menu order unchanged: %1.
+# [feature]
+Boot menu reorder failed: %1
+# [feature]
+Boot menu reordered to: %1 (the first entry is the boot default).
+# [feature]
+Generated boot menu in file order; Move Up/Down reorder the top-level entries and Save applies the order.
+# [feature]
+Manage UEFI firmware boot entries. Entries are listed read-only; Move Up/Move Down reorder them in the table only, Delete Selected marks an entry for deletion and double-clicking the Label column stages a rename. Save commits all staged changes (reorder, delete and rename) through the verified helper. The active (BootCurrent) entry can never be deleted or renamed. Changes are verified and rolled back on any mismatch.\n\nFirmware boot entries live in the running host's UEFI NVRAM (there is only one firmware). In Host Maintenance you manage the running host's own entries; with a repair target selected you manage that drive's entries, which are the NVRAM entries whose PARTUUID points to that drive's EFI system partition. A repair target has no firmware of its own.\n\nThese are the UEFI firmware entries; the GRUB boot menu (the list of kernels/OSes inside GRUB) is separate and is regenerated by the GRUB or boot-stack (reconciliation) repair.\n\nClass:\n• host — the entry boots the running host's own EFI system partition.\n• target — the entry boots the selected repair target's EFI system partition (shown in Host Maintenance only when a target is selected).\n• foreign — the entry points to a different drive or EFI partition (another OS, a USB stick, or an old disk).\n• unknown — the entry's device path could not be resolved to a GPT partition (typically firmware built-ins such as the setup menu).\n\nCommon loader names:\n• EFI/BOOT/BOOTX64.EFI — the removable-media fallback; the default path firmware uses to boot a USB drive, not tied to one OS.\n• iPXE.efi — the WebFAI network-recovery loader (TUXEDO OS); booting it starts the network recovery/install environment.\n• oem##.efi — manufacturer/OEM boot applications (recovery or diagnostics); not part of the OS boot chain and left untouched.\n• EFI/BOOT/TUX.EFI — the TUXEDO OS unified kernel image (UKI).\n\nDistribution loaders: Arch EFI/arch/grubx64.efi, Alpine (EFI) EFI/alpine/grubx64.efi, Fedora EFI/fedora/shimx64.efi (then grubx64.efi), Ubuntu/Debian EFI/ubuntu/shimx64.efi; shim*.efi is the Secure-Boot shim. Debian 4.0 "Etch" is BIOS-only and has no .efi boot entries.\n\nBoot menu:\nUse the view selector above to switch between the UEFI/UKI firmware entries and the boot menu. The boot menu lists the kernels/OS entries of the system's bootloader exactly as they appear in its configuration, in file order, with the current default entry marked with ✓. On GRUB systems this is the GRUB menu (grub.cfg); on BIOS/extlinux systems it is the extlinux/syslinux menu (/boot/extlinux.conf or a syslinux.cfg); on Debian Etch (GRUB legacy 0.97) it is the menu.lst menu (/boot/grub/menu.lst). On a GRUB menu, Move Up / Move Down reorder the top-level entries and Save commits the order through the verified helper (the first entry becomes the boot default); extlinux and GRUB legacy menus stay read-only.
+# [feature]
+Move the selected boot menu entry down; not applied until Save.
+# [feature]
+Move the selected boot menu entry up; not applied until Save.
+# [feature]
+Nested entries move with their parent; select a top-level entry to reorder.
+# [feature]
+No pending boot menu reorder to save.
+# [feature]
+No pending boot menu reorder. Move rows first.
+# [feature]
+Note: the actual boot path is not this GRUB menu — the firmware/UKI entry boots first, so this reorder governs the GRUB menu only.
+# [feature]
+Re-applied the saved boot menu order after the GRUB regeneration (newly generated entries stay after the saved ones).
+# [feature]
+Reorder is available for the GRUB boot menu only.
+# [feature]
+Save boot menu order
+# [feature]
+Save boot menu order refused: %1
+# [feature]
+Save boot menu order unavailable
+# [feature]
+Setting the GRUB saved default to the reordered first entry (%1)
+# [feature]
+Starting privileged boot menu reorder on %1 (%2).
+# [helper-status]
+The boot default still follows its own GRUB_DEFAULT rule (%1), not the reordered first entry.
+# [feature]
+The boot menu reorder applies to a conventional GRUB menu only; this scope has %1 (no reorderable GRUB menu).
+# [feature]
+The boot menu reorder failed:\n%1\n\nYour reordered view was kept so you can retry. Full helper output is available in Logs.
+# [feature]
+The first boot menu entry is already at the top.
+# [helper-status]
+The greetd landing was refused: %1 (no display manager change was applied; pick another candidate or abort).
+# [feature]
+The last boot menu entry is already at the bottom.
+# [feature]
+The reordered GRUB configuration did not verify after the write; the previous configuration was restored.
+# [feature]
+The saved boot menu entry %1 no longer exists in the regenerated menu; it was dropped from the saved order.
+# [feature]
+The saved boot menu order could not be re-applied safely; the regenerated menu order was left unchanged.
+# [helper-status]
+The switch to greetd requires the wlgreet graphical greeter, but wlgreet is not installable in this scope (%1); refusing the greetd landing (the bundled agreety is a text login, not a graphical login screen).
+# [feature]
+Updated the GRUB saved default to the reordered first entry (%1).
+# [helper-status]
+wlgreet is not installed after the guarded install; refusing the greetd landing.
+# [helper-status]
+✓ marks the entry GRUB boots: the grubenv saved_entry under GRUB_DEFAULT=saved, the entry GRUB_DEFAULT names, or the first menu entry.
+# round 79b: the wrapped-row tooltip + the reworded default-indicator header tooltip
+# [feature]
+This entry is generated inside a conditional block and cannot be reordered.
+# [feature]
+✓ marks the current GRUB default: the grubenv saved_entry under GRUB_DEFAULT=saved, the entry GRUB_DEFAULT names, or the first menu entry.
+
+# round 80: the whole-lineage dkms sweep key texts
+# [helper-status]
+Removed the DKMS state of kernel %1 for module %2 version %3 (the removed kernel's lineage).
+# [helper-status]
+The DKMS lineage sweep for kernel %1 could not complete; the removal's absence proof will fail closed.
+# [helper-status]
+The DKMS lineage sweep for kernel %1 hit its bound; the remaining DKMS entries were left for review.

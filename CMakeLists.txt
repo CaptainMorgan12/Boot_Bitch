@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootBitch
-    VERSION 0.2.31
+    VERSION 0.2.32
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 include(GNUInstallDirs)
@@ -85,6 +85,39 @@ else()
     message(STATUS "KF6Auth not found: building without KDE privilege integration")
 endif()
 
+# Round 17 (0.2.32 — the in-app PolkitQt1 authentication agent, OPTIONAL):
+# present on Debian-family hosts with libpolkit-qt6-1-dev (the Sparky rig;
+# the Debian 0.200.0 package exports the CMake package "PolkitQt6-1" with
+# the targets PolkitQt6-1::Core/Agent, while upstream 0.201.0 exports
+# "PolkitQt1" with PolkitQt1::Core/Agent — both carry the PolkitQt1 C++
+# namespace and the same polkitqt1-* headers); the build degrades to the
+# external-agent conversation when absent (e.g. Alpine, or a host without
+# the dev package — the feature is runtime-gated by
+# BOOT_BITCH_HAVE_POLKIT_AGENT).
+find_package(PolkitQt1 QUIET)
+if(PolkitQt1_FOUND)
+    set(BOOT_BITCH_POLKIT_CORE_TARGET PolkitQt1::Core)
+    set(BOOT_BITCH_POLKIT_AGENT_TARGET PolkitQt1::Agent)
+else()
+    find_package(PolkitQt6-1 QUIET)
+    if(PolkitQt6-1_FOUND)
+        set(BOOT_BITCH_POLKIT_CORE_TARGET PolkitQt6-1::Core)
+        set(BOOT_BITCH_POLKIT_AGENT_TARGET PolkitQt6-1::Agent)
+    endif()
+endif()
+if(DEFINED BOOT_BITCH_POLKIT_AGENT_TARGET)
+    target_link_libraries(boot-bitch PRIVATE
+        ${BOOT_BITCH_POLKIT_CORE_TARGET}
+        ${BOOT_BITCH_POLKIT_AGENT_TARGET})
+    target_compile_definitions(boot-bitch PRIVATE BOOT_BITCH_HAVE_POLKIT_AGENT=1)
+    target_sources(boot-bitch PRIVATE
+        src/BootBitchPolkitAgent.cpp
+        src/BootBitchPolkitAgent.h
+    )
+else()
+    message(STATUS "PolkitQt1 not found: building with the external polkit-agent conversation")
+endif()
+
 target_compile_definitions(boot-bitch
     PRIVATE
         BOOT_BITCH_VERSION="${PROJECT_VERSION}"
@@ -133,6 +166,23 @@ install(PROGRAMS scripts/boot-bitch-efi-label.py
     RENAME boot-bitch-efi-label.py
 )
 
+# Round 24 (0.2.32, the Num Lock early-boot repair — phase 3): the build-own
+# micro-binary. Built NATIVELY per family from the same source (glibc on the
+# .deb/.rpm/.pkg.tar.zst builds, musl on the Alpine .apk build — the per-family
+# build makes the musl/glibc loader question impossible; no helper-embedded
+# payload). It is the phase-4 initramfs mechanism's payload; the diagnostic
+# section (phase 2) and the packaging guards reference the install path.
+add_executable(boot-bitch-numlock-on src/numlock-on.c)
+target_compile_options(boot-bitch-numlock-on PRIVATE -Os)
+set_target_properties(boot-bitch-numlock-on PROPERTIES
+    AUTOMOC OFF
+    AUTOUIC OFF
+    OUTPUT_NAME numlock-on
+)
+install(TARGETS boot-bitch-numlock-on
+    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-bitch
+)
+
 # Install Debian-compatible package copyright metadata. The full upstream MIT
 # license remains in LICENSE at the source-tree root.
 install(FILES data/copyright
@@ -143,9 +193,9 @@ install(FILES data/copyright
 # committed .ts sources with lrelease and installed so the application can load
 # them at runtime from ${CMAKE_INSTALL_DATADIR}/boot-bitch/translations.  Every
 # .qm under translations/ is installed; the .ts sources are not.  The shipped
-# set is the curated 23-catalog list below (round 112: id/sk/vi dropped —
-# unshipped .ts sources only, no .qm present); the rpm/apk guards assert the
-# exact set.
+# set is exactly the 23 catalogs — the complete set, nothing outside it
+# exists (the 2026-11-14 purge ruling); the rpm/apk guards assert the exact
+# set.
 install(DIRECTORY translations/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/boot-bitch/translations
     FILES_MATCHING PATTERN "*.qm"
@@ -223,6 +273,20 @@ set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-p
 # installable and still forces the plugin on trixie upgrades where the old
 # libqt6svg6 is already present.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, qt6-svg-plugins | libqt6svg6 (<< 6.7.2-5~), hicolor-icon-theme")
+# Round 19 (0.2.32 — the user's packaging question): the in-app PolkitQt1
+# authentication agent is an OPTIONAL feature — the round-17 find_package
+# block above defines BOOT_BITCH_POLKIT_AGENT_TARGET only when the dev
+# package was found at configure time.  The runtime dependency on
+# libpolkit-qt6-1-1 must therefore be declared only in that case: a degraded
+# build's binary does not link the library, and declaring it unconditionally
+# made a degraded .deb demand a package the target's repositories may not
+# carry (e.g. Debian bookworm) — the install then fails with unmet
+# dependencies.  The versioned constraint matches the Debian 0.200.0 API the
+# round-17 find block links against (0.200.0 is the first Debian release to
+# ship the PolkitQt6-1 CMake package the build consumes).
+if(DEFINED BOOT_BITCH_POLKIT_AGENT_TARGET)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libpolkit-qt6-1-1 (>= 0.200.0)")
+endif()
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "exfatprogs, ntfs-3g, f2fs-tools, jfsutils, reiserfsprogs, zfsutils-linux")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
@@ -264,7 +328,16 @@ set(CPACK_RPM_PACKAGE_SUMMARY "${PROJECT_DESCRIPTION}")
 # Same paragraph as the Debian description, without Debian's leading-space
 # continuation markers (RPM keeps the newlines as written).
 set(CPACK_RPM_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot recovery utility.\nIt provides protected discovery and read-only diagnostics for the running\nhost or a selected repair system. The privileged backend supports guarded\nDebian/Ubuntu-family maintenance and repair-system recovery, plus guarded\nArch package, initramfs, GRUB and conventional EFI stages after their\ntransaction-specific preflights. It also provides LUKS unlock and verified\nbidirectional file recovery/copy.")
+# Round 19 (0.2.32): the in-app PolkitQt1 agent's client library
+# (polkit-qt6-1) is declared ONLY when the optional agent feature built —
+# the same condition as the Debian Depends above; a degraded RPM build
+# links no polkit-qt6 libraries, so the auto ELF Requires stay silent and
+# an explicit unconditional entry would demand a package the target may
+# not carry (and the Fedora name does not exist on openSUSE).
 set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, hicolor-icon-theme")
+if(DEFINED BOOT_BITCH_POLKIT_AGENT_TARGET)
+    set(CPACK_RPM_PACKAGE_REQUIRES "${CPACK_RPM_PACKAGE_REQUIRES}, polkit-qt6-1")
+endif()
 # Installed files (privileged helper, desktop entry, AppStream metadata) embed
 # absolute /usr paths, so both package formats stay non-relocatable.
 set(CPACK_PACKAGE_RELOCATABLE FALSE)
@@ -496,17 +569,12 @@ find_program(BOOT_BITCH_LRELEASE_EXECUTABLE lrelease
     HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
 
 if(BOOT_BITCH_LUPDATE_EXECUTABLE AND BOOT_BITCH_LRELEASE_EXECUTABLE)
-    # The full shipped language set (23 catalogs since round 112; bare Qt
-    # locale codes; "no" is Norwegian Bokmål, which Argos packages as "nb").
-    # The id/sk/vi .ts sources stay in translations/ but are UNSHIPPED
-    # (round 112 decision — no Argos model exists; their .qm catalogs are not
-    # built and the install rule below picks up only the shipped .qm set).
-    # Keep this in sync with the packaging guards (scripts/test-rpm.sh /
-    # scripts/test-apk.sh) and the catalog-inventory table in
-    # Development/docs/translation.md. Deliberately NOT identical to
-    # SUPPORTED_TARGETS in tools/translate_ts.py: that tuple additionally
-    # accepts vi (unshipped, no Argos model) and lacks id/sk (frozen
-    # unshipped .ts sources the tool refuses as --target).
+    # The COMPLETE language set — the shipped 23 (the 2026-11-14 purge
+    # ruling: nothing outside this set exists; bare Qt locale codes; "no" is
+    # Norwegian Bokmål, which Argos packages as "nb"). Keep this in sync
+    # with the packaging guards (scripts/test-rpm.sh / scripts/test-apk.sh),
+    # SUPPORTED_TARGETS in tools/translate_ts.py and the catalog-inventory
+    # table in Development/docs/translation.md.
     set(BOOT_BITCH_TRANSLATION_TS)
     foreach(lang IN ITEMS de fr es it pt nl pl ru zh ja ko sv da fi no nb
                           cs hu ro tr el ar uk)

@@ -509,6 +509,7 @@ static QString repairToolFeatureTitle(const QString &key)
     if (key == QStringLiteral("extlinux")) return QCoreApplication::translate("CapabilityChecker", "extlinux configuration");
     if (key == QStringLiteral("bootstack")) return QCoreApplication::translate("CapabilityChecker", "Boot stack reconciliation");
     if (key == QStringLiteral("kernels")) return QCoreApplication::translate("CapabilityChecker", "Kernel repair");
+    if (key == QStringLiteral("numlock")) return QCoreApplication::translate("CapabilityChecker", "Num Lock at early boot stages");
     return key;
 }
 
@@ -556,6 +557,7 @@ static QString capabilityNoteForTool(const QString &key)
     if (key == QStringLiteral("grub")) return QCoreApplication::translate("CapabilityChecker", "Regenerates the GRUB configuration (backed up, all entries kept)");
     if (key == QStringLiteral("extlinux")) return QCoreApplication::translate("CapabilityChecker", "Alternative bootloader; not the standard");
     if (key == QStringLiteral("bootstack")) return QCoreApplication::translate("CapabilityChecker", "One guarded pass: mapper/crypttab, initramfs and bootloader");
+    if (key == QStringLiteral("numlock")) return QCoreApplication::translate("CapabilityChecker", "Enables Num Lock at the earliest boot point (the initramfs) and reports the per-stage state");
     return QString();
 }
 
@@ -655,7 +657,7 @@ static const QStringList &repairToolKeyOrder()
         QStringLiteral("fixbroken"), QStringLiteral("aptupdate"), QStringLiteral("upgrade"),
         QStringLiteral("kernels"), QStringLiteral("dkms"), QStringLiteral("initramfs"),
         QStringLiteral("display"), QStringLiteral("gpu"),
-        QStringLiteral("input-devices"), QStringLiteral("network"),
+        QStringLiteral("input-devices"), QStringLiteral("numlock"), QStringLiteral("network"),
         QStringLiteral("efi"),
         QStringLiteral("grub"), QStringLiteral("extlinux"), QStringLiteral("bootstack")
     };

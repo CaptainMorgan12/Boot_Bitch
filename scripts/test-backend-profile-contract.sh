@@ -76,11 +76,27 @@ grep -q 'Fedora policy: guarded rpm/dnf5 package transactions and dracut initram
 grep -q -- '--no-grubenv-update' "$HELPER"
 grep -q -- '--target=i386-pc --boot-directory=/boot --recheck' "$HELPER"
 grep -q 'dnf5 package-manager log errors' "$HELPER"
-# Debian 13's mawk 1.3.4 mishandles awk interval expressions without an upper
-# bound: it masks short hex runs (`Failed` -> `<hash>iled`) and corrupts real
-# error text.  The helper's log masking must use explicit repetition instead.
-if grep -nE '\{[0-9]+,\}' "$HELPER"; then
+# Interval-expression portability (the round-61/62 class): Debian 13's
+# mawk 1.3.4 mishandles UNBOUNDED awk interval expressions (`{N,}` — it masks
+# short hex runs (`Failed` -> `<hash>iled`) and corrupts real error text), and
+# busybox awk (the Alpine rigs' awk) REJECTS bounded intervals whose bound
+# EXCEEDS 255 (`{0,2048}` -> "awk: bad regex ... Invalid contents of {}"),
+# which made the round-60 shell_stream_filter fail to compile on Alpine (the
+# round-61 sweep caught it in the Alpine check(); bounds <= 255 are accepted
+# — probe-verified on the rig).  The helper's awk programs must use explicit
+# repetition (or the round-62 match loop) instead — no `{N,}` form and no
+# bounded form with a bound above 255 may appear in the helper.
+# (The round-63 widening: the round-61 contract caught only the unbounded
+# form; the bounded >255 form is the second half of the same class.  Comment
+# lines are skipped — the round-62 filter comment names the historical
+# `{0,2048}` form in prose, and a prose mention must not fail the gate.)
+helper_interval_scan="$(grep -vE '^[[:space:]]*#' "$HELPER")"
+if grep -nE '\{[0-9]+,\}' <<<"$helper_interval_scan"; then
     echo 'FAIL: helper uses an unbounded awk interval expression (mawk 1.3.4 corrupts it)' >&2
+    exit 1
+fi
+if grep -nE '\{[0-9]+,(25[6-9]|2[6-9][0-9]|[3-9][0-9]{2}|[0-9]{4,})\}' <<<"$helper_interval_scan"; then
+    echo 'FAIL: helper uses a bounded interval expression with a bound above 255 (busybox awk rejects it)' >&2
     exit 1
 fi
 grep -q '/etc/gdm/custom.conf' "$HELPER"
@@ -513,9 +529,9 @@ individual_report="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE=""
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability preamble' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$individual_report")" -eq 1 ]] \
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability evidence header' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 17 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 18 ]] \
     || { echo 'FAIL: individual diagnostic lost capability key lines' >&2; exit 1; }
-for ind_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
+for ind_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock; do
     [[ "$(grep -c "^Repair capability evidence $ind_ev_key: " <<<"$individual_report")" -eq 1 ]] \
         || { echo "FAIL: individual diagnostic lost the capability evidence line for $ind_ev_key" >&2; exit 1; }
 done
@@ -548,6 +564,7 @@ stub_combined_diagnostic_sections()
     diagnostic_luks() { printf 'SECTION luks\n'; }
     diagnostic_input() { printf 'SECTION input\n'; }
     diagnostic_network() { printf 'SECTION network\n'; }
+    diagnostic_numlock() { printf 'SECTION numlock\n'; }
 }
 
 assert_combined_report()
@@ -564,7 +581,7 @@ assert_combined_report()
         || { echo "FAIL: $label combined report emitted duplicate capability preambles" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
         || { echo "FAIL: $label combined report emitted duplicate capability evidence headers" >&2; exit 1; }
-    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 17 ]] \
+    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 18 ]] \
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
     local ev_key
     for ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
@@ -604,8 +621,8 @@ combined_reports="$(
 )"
 target_combined="${combined_reports%%=====HOST COMBINED REPORT=====*}"
 host_combined="${combined_reports#*=====HOST COMBINED REPORT=====}"
-assert_combined_report target "$target_combined" 19
-assert_combined_report host "$host_combined" 19
+assert_combined_report target "$target_combined" 20
+assert_combined_report host "$host_combined" 20
 
 # The `package` diagnostic is read-only: its body must never run a modifying
 # package command or write into the target.  It emits stable evidence lines and
@@ -757,6 +774,10 @@ grep -Fqx 'Repair capability evidence efi: TUXEDO UKI builder create_boot_uki_ba
 
 # Adding the vendor builder makes EFI repair available and names it in evidence.
 : > "$cap_root/usr/sbin/create_boot_uki_base.sh"; chmod +x "$cap_root/usr/sbin/create_boot_uki_base.sh"
+# Round 66: the capability probe requires a tuxedo-family kernel image under
+# /boot (the current -txos-amd64 naming) — a builder without a kernel reports
+# the honest no-tuxedo-kernel refusal instead of a scheduled preflight death.
+: > "$cap_root/boot/vmlinuz-7.3.4+tux.1.1-txos-amd64"
 cap_tuxedo_uki="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian \
     TARGET_INITRAMFS_BACKEND=initramfs-tools diagnostic_repair_capabilities)"
 cap_expect "$cap_tuxedo_uki" 'efi: available' 'bootstack: available'
@@ -2110,12 +2131,23 @@ awk '
 # pipes the slice through the cancel guard and the boot-relevant filter
 # byte-identically; the definition is asserted above, so a window routed
 # through it is wired by construction.)
+# Round 52 (the display perf redesign): diagnostic_display's boot-evidence
+# and graphics sections moved to the boot-scoped targeted journalctl queries
+# (the -b 0 + the server-side _COMM filters — the bounded/fast pass, the
+# round-52 discipline); the cached-window count for the display target is
+# therefore exempt, but the collapse stages must still be present (the
+# near-identical-line shaping stays).
 awk '
     /^diagnostic_boot_evidence\(\)/ { target = "diagnostic_boot_evidence"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
     /^diagnostic_display\(\)/ { target = "diagnostic_display"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
     target == "" { next }
     /^}/ {
-        if (queries == 0 || filtered != queries || collapsed < queries) {
+        if (target == "diagnostic_display") {
+            if (collapsed < 2) {
+                printf "FAIL: %s has %d collapse stages (the round-52 boot-scoped targeted queries keep the shaping)\n", target, collapsed
+                failed = 1
+            }
+        } else if (queries == 0 || filtered != queries || collapsed < queries) {
             printf "FAIL: %s has %d cached-journal window queries, %d boot-relevant filters, %d collapse stages\n", target, queries, filtered, collapsed
             failed = 1
         }

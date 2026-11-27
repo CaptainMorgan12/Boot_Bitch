@@ -194,6 +194,8 @@ grub	grub	grub
 extlinux	boot-evidence	boot boot-evidence
 bootstack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
 boot-stack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
+numlock	display kernel boot-evidence	numlock display kernel boot boot-evidence
+numlock:install-prerequisite	-	package backend usage capabilities display kernel
 kernels	kernel	kernel usage boot boot-evidence grub uki
 # Every kernel sub-action (remove-oldest, remove-newest, remove-orphaned-*,
 # install-headers, reinstall, install-repo-latest) folds onto 'kernels'.

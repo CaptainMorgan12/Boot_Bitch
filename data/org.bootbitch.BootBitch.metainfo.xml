@@ -320,6 +320,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.32" date="2026-11-14">
+      <description>
+        <p>Planned scope for this development cycle: closing the carried hygiene backlog — the helper shellcheck warning class, the zh translation lag, the display-manager ExecStart edge forms, the drill killer-pattern hygiene and the capture stray-file cleanup — plus the queued documentation updates (the runbook rename literals, the release-notes style pin, the display-switch design doc).</p>
+      </description>
+    </release>
     <release version="0.2.31" date="2026-11-06">
       <description>
         <p>Planned scope for this development cycle: completing the target-side snapshot rollback (the keep-catalogue behavior on the success path, the staged success banner, preserved undo-point names), plus the Alpine mkinitfs network-include evidence fixes, the driver-conflict and PCI evidence corrections, the capture-first zpool pipelines, and the refreshed translation catalogs.</p>

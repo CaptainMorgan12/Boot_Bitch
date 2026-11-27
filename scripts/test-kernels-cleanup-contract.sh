@@ -39,6 +39,7 @@ for fn in apt_installed_kernel_packages apt_installed_kernel_support_packages ap
     diagnostic_kernel_inventory \
     kernels_unavailable_reason apt_kernel_removal_is_safe apt_kernel_protected_set_present \
     apt_kernel_cleanup_stage apt_kernel_zombie_cleanup apt_install_missing_latest_headers \
+    apt_kernel_dkms_lineage_sweep apt_kernel_remove_newest_refusal_reason \
     apt_cleanup_orphaned_headers apt_orphaned_headers_removal_is_safe \
     apt_cleanup_orphaned_build_support \
     rpm_kernel_removal_is_safe rpm_kernel_protected_set_present rpm_kernel_cleanup_stage \
@@ -61,7 +62,7 @@ for fn in apt_installed_kernel_packages apt_installed_kernel_support_packages ap
 done
 
 # The 17 capability keys are registered; kernels gates through the reasons array.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER" \
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock)' "$HELPER" \
     || fail 'the keys array does not carry the kernels capability key'
 grep -q 'reasons\[kernels\]="available"' "$HELPER" \
     || fail 'diagnostic_repair_capabilities does not gate kernels through the reasons array'
@@ -129,7 +130,7 @@ grep -q 'KERNEL_BASELINE_B64=' "$HELPER" \
 # no section-list entry may remain.
 ! grep -q 'boot-space)  diagnostic_boot_space' "$HELPER" || fail 'boot-space diagnostic dispatch still present'
 ! grep -q '^diagnostic_boot_space()' "$HELPER" || fail 'diagnostic_boot_space function still present'
-grep -q 'errors usage fstab btrfs mapper luks input network filesystem' "$HELPER" || fail 'section list must place usage directly before fstab'
+grep -q 'errors usage fstab btrfs mapper luks input numlock network filesystem' "$HELPER" || fail 'section list must place usage directly before fstab'
 # The interactive kernel repair evidence lines are emitted verbatim.
 grep -q 'Kernel orphaned kernel: ' "$HELPER" || fail 'kernel orphaned-kernel evidence line missing'
 grep -q 'Kernel incomplete: ' "$HELPER" || fail 'kernel incomplete evidence line missing'
@@ -351,10 +352,80 @@ STATUS
     write_list "linux-headers-7.1.9.1-common-tuxedo" "/usr/src/linux-headers-7.1.9.1-common-tuxedo" "/usr/src/linux-headers-7.1.9.1-common-tuxedo/include/y.h"
 }
 
+# Round 80 (the mixed-pins-without-repoint shape — the user's host): the
+# managed image metapackage pins BOTH the newest (removed) kernel AND the
+# surviving kernel, and the repository carries no survivor-pinning available
+# version — the removal must fail closed with the honest reason, never a
+# silent half-clean removal.  Reuses the write_tuxedo_fixture layout with a
+# BOTH-pinning meta instead of the newest-only pin.
+write_mixed_pins_fixture() {
+    reset_fixture
+    cat > "$fake_root/var/lib/dpkg/status" <<'STATUS'
+Package: linux-image-7.1.8.2-tuxedo-amd64
+Version: 7.1.8.2
+Status: install ok installed
+
+Package: linux-modules-7.1.8.2-tuxedo-amd64
+Version: 7.1.8.2
+Status: install ok installed
+
+Package: linux-headers-7.1.8.2-tuxedo-amd64
+Version: 7.1.8.2
+Depends: linux-headers-7.1.8.2-common-tuxedo (= 7.1.8.2-1)
+Status: install ok installed
+
+Package: linux-headers-7.1.8.2-common-tuxedo
+Version: 7.1.8.2
+Status: install ok installed
+
+Package: linux-image-7.1.9.1-tuxedo-amd64
+Version: 7.1.9.1
+Status: install ok installed
+
+Package: linux-modules-7.1.9.1-tuxedo-amd64
+Version: 7.1.9.1
+Status: install ok installed
+
+Package: linux-headers-7.1.9.1-tuxedo-amd64
+Version: 7.1.9.1
+Depends: linux-headers-7.1.9.1-common-tuxedo (= 7.1.9.1-1)
+Status: install ok installed
+
+Package: linux-headers-7.1.9.1-common-tuxedo
+Version: 7.1.9.1
+Status: install ok installed
+
+Package: linux-image-tuxedo
+Version: 7.1.9.1.2
+Depends: linux-image-7.1.9.1-tuxedo-amd64 (= 7.1.9.1-1), linux-image-7.1.8.2-tuxedo-amd64 (= 7.1.8.2-1)
+Status: install ok installed
+
+Package: linux-headers-tuxedo-amd64
+Version: 7.1.9.1.2
+Depends: linux-headers-7.1.9.1-tuxedo-amd64 (= 7.1.9.1-1)
+Status: install ok installed
+
+STATUS
+    local old=7.1.8.2-tuxedo-amd64 new=7.1.9.1-tuxedo-amd64
+    mkdir -p "$fake_root/usr/lib/modules/$old" "$fake_root/usr/lib/modules/$new" \
+        "$fake_root/usr/src/linux-headers-$old" "$fake_root/usr/src/linux-headers-$new" \
+        "$fake_root/usr/src/linux-headers-7.1.8.2-common" "$fake_root/usr/src/linux-headers-7.1.9.1-common"
+    touch "$fake_root/boot/vmlinuz-$old" "$fake_root/boot/vmlinuz-$new" \
+        "$fake_root/boot/initrd.img-$old" "$fake_root/boot/initrd.img-$new" \
+        "$fake_root/boot/System.map-$old" "$fake_root/boot/config-$old"
+    write_list "linux-image-$old" "/boot/vmlinuz-$old"
+    write_list "linux-modules-$old" "/usr/lib/modules/$old" "/usr/lib/modules/$old/kernel/drv.ko"
+    write_list "linux-headers-$old" "/usr/src/linux-headers-$old" "/usr/src/linux-headers-$old/include/x.h"
+    write_list "linux-headers-7.1.8.2-common-tuxedo" "/usr/src/linux-headers-7.1.8.2-common" "/usr/src/linux-headers-7.1.8.2-common/include/y.h"
+    write_list "linux-image-$new" "/boot/vmlinuz-$new"
+    write_list "linux-modules-$new" "/usr/lib/modules/$new" "/usr/lib/modules/$new/kernel/drv.ko"
+    write_list "linux-headers-$new" "/usr/src/linux-headers-$new" "/usr/src/linux-headers-$new/include/x.h"
+    write_list "linux-headers-7.1.9.1-common-tuxedo" "/usr/src/linux-headers-7.1.9.1-common" "/usr/src/linux-headers-7.1.9.1-common/include/y.h"
+}
+
 # Default -amd64/generic naming: old 6.2.0-1000-generic + running/latest
 # 6.5.0-10038-generic, with bare linux-headers-<series> common headers.
-write_generic_fixture() {
-    reset_fixture
+write_generic_fixture() {    reset_fixture
     cat > "$fake_root/var/lib/dpkg/status" <<'STATUS'
 Package: linux-image-6.2.0-1000-generic
 Version: 6.2.0-1000
@@ -405,7 +476,8 @@ STATUS
     mkdir -p "$fake_root/usr/lib/modules/$old" "$fake_root/usr/lib/modules/$new" \
         "$fake_root/usr/src/linux-headers-$old" "$fake_root/usr/src/linux-headers-$new" \
         "$fake_root/usr/src/linux-headers-6.2.0-1000" "$fake_root/usr/src/linux-headers-6.5.0-10038"
-    touch "$fake_root/boot/vmlinuz-$old" "$fake_root/boot/vmlinuz-$new"
+    touch "$fake_root/boot/vmlinuz-$old" "$fake_root/boot/vmlinuz-$new" \
+        "$fake_root/boot/initrd.img-$old" "$fake_root/boot/initrd.img-$new"
     write_list "linux-image-$old" "/boot/vmlinuz-$old"
     write_list "linux-modules-$old" "/usr/lib/modules/$old" "/usr/lib/modules/$old/kernel/drv.ko"
     write_list "linux-headers-$old" "/usr/src/linux-headers-$old" "/usr/src/linux-headers-$old/include/x.h"
@@ -470,7 +542,8 @@ STATUS
         "$fake_root/usr/lib/modules/$newest" \
         "$fake_root/usr/src/linux-headers-$oldest" "$fake_root/usr/src/linux-headers-$mid" \
         "$fake_root/usr/src/linux-headers-$newest"
-    touch "$fake_root/boot/vmlinuz-$oldest" "$fake_root/boot/vmlinuz-$mid" "$fake_root/boot/vmlinuz-$newest"
+    touch "$fake_root/boot/vmlinuz-$oldest" "$fake_root/boot/vmlinuz-$mid" "$fake_root/boot/vmlinuz-$newest" \
+        "$fake_root/boot/initrd.img-$oldest" "$fake_root/boot/initrd.img-$mid" "$fake_root/boot/initrd.img-$newest"
     write_list "linux-image-$oldest" "/boot/vmlinuz-$oldest"
     write_list "linux-modules-$oldest" "/usr/lib/modules/$oldest" "/usr/lib/modules/$oldest/kernel/a.ko"
     write_list "linux-headers-$oldest" "/usr/src/linux-headers-$oldest" "/usr/src/linux-headers-$oldest/include/a.h"
@@ -509,7 +582,7 @@ STATUS
     for v in 6.0.0-1 6.1.0-2 6.2.0-3 6.3.0-4 6.4.0-5; do
         mkdir -p "$fake_root/usr/lib/modules/$v-generic" \
             "$fake_root/usr/src/linux-headers-$v-generic"
-        touch "$fake_root/boot/vmlinuz-$v-generic"
+        touch "$fake_root/boot/vmlinuz-$v-generic" "$fake_root/boot/initrd.img-$v-generic"
         write_list "linux-image-$v-generic" "/boot/vmlinuz-$v-generic"
         write_list "linux-modules-$v-generic" "/usr/lib/modules/$v-generic" "/usr/lib/modules/$v-generic/kernel/drv.ko"
         write_list "linux-headers-$v-generic" "/usr/src/linux-headers-$v-generic" "/usr/src/linux-headers-$v-generic/include/x.h"
@@ -545,7 +618,7 @@ STATUS
     mkdir -p "$fake_root/usr/lib/modules/$new" \
         "$fake_root/usr/lib/linux-kbuild-7.1.10.2" \
         "$fake_root/usr/lib/linux-kbuild-7.1.13.1"
-    touch "$fake_root/boot/vmlinuz-$new"
+    touch "$fake_root/boot/vmlinuz-$new" "$fake_root/boot/initrd.img-$new"
     write_list "linux-image-$new" "/boot/vmlinuz-$new"
     write_list "linux-modules-$new" "/usr/lib/modules/$new" "/usr/lib/modules/$new/kernel/drv.ko"
     write_list "linux-kbuild-7.1.10.2" "/usr/lib/linux-kbuild-7.1.10.2/tools/Makefile"
@@ -635,7 +708,125 @@ STATUS
     write_list "linux-headers-7.3.0.1-common-tuxedo" "/usr/src/linux-headers-7.3.0.1-common-tuxedo" "/usr/src/linux-headers-7.3.0.1-common-tuxedo/include/y.h"
 }
 
+# Round 82 (the stale-evidence plan fix — the round-81b user finding): a
+# two-kernel TUXEDO target whose NEWEST kernel (7.3.5+tux.1.2-txos-amd64) was
+# collected WITHOUT its headers (the stale baseline shape) while the survivor
+# (7.2.13+tux.1.1-tuxedo-amd64) is complete.  The managed metas pin the
+# NEWEST (the managed-downgrade shape — the round-81b transcript).  The
+# headers appear MID-SESSION as a half-configured arch headers package (the
+# zfs postinst-failure class) via r82_add_half_configured_headers().
+write_stale_headers_fixture() {
+    reset_fixture
+    cat > "$fake_root/var/lib/dpkg/status" <<'STATUS'
+Package: linux-image-7.2.13+tux.1.1-tuxedo-amd64
+Version: 7.2.13+tux.1.1
+Depends: linux-binary-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1), linux-modules-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1)
+Status: install ok installed
+
+Package: linux-binary-7.2.13+tux.1.1-tuxedo-amd64
+Version: 7.2.13+tux.1.1
+Depends: linux-base-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1)
+Status: install ok installed
+
+Package: linux-modules-7.2.13+tux.1.1-tuxedo-amd64
+Version: 7.2.13+tux.1.1
+Depends: linux-base-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1)
+Status: install ok installed
+
+Package: linux-base-7.2.13+tux.1.1-tuxedo-amd64
+Version: 7.2.13+tux.1.1
+Status: install ok installed
+
+Package: linux-headers-7.2.13+tux.1.1-tuxedo-amd64
+Version: 7.2.13+tux.1.1
+Depends: linux-headers-7.2.13+tux.1.1-common-tuxedo (= 7.2.13+tux.1.1-1)
+Status: install ok installed
+
+Package: linux-headers-7.2.13+tux.1.1-common-tuxedo
+Version: 7.2.13+tux.1.1
+Status: install ok installed
+
+Package: linux-image-7.3.5+tux.1.2-txos-amd64
+Version: 7.3.5+tux.1.2
+Depends: linux-binary-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1), linux-modules-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)
+Status: install ok installed
+
+Package: linux-binary-7.3.5+tux.1.2-txos-amd64
+Version: 7.3.5+tux.1.2
+Depends: linux-base-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)
+Status: install ok installed
+
+Package: linux-modules-7.3.5+tux.1.2-txos-amd64
+Version: 7.3.5+tux.1.2
+Depends: linux-base-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)
+Status: install ok installed
+
+Package: linux-base-7.3.5+tux.1.2-txos-amd64
+Version: 7.3.5+tux.1.2
+Status: install ok installed
+
+Package: linux-image-tuxedo
+Version: 7.3.5+tux.1.2.2
+Depends: linux-image-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)
+Status: install ok installed
+
+Package: linux-headers-tuxedo-amd64
+Version: 7.3.5+tux.1.2.2
+Depends: linux-headers-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)
+Status: install ok installed
+
+STATUS
+    local old=7.2.13+tux.1.1-tuxedo-amd64 new=7.3.5+tux.1.2-txos-amd64
+    mkdir -p "$fake_root/usr/lib/modules/$old" "$fake_root/usr/lib/modules/$new" \
+        "$fake_root/usr/src/linux-headers-$old" \
+        "$fake_root/usr/src/linux-headers-7.2.13+tux.1.1-common-tuxedo"
+    touch "$fake_root/boot/vmlinuz-$old" "$fake_root/boot/vmlinuz-$new" \
+        "$fake_root/boot/initrd.img-$old" "$fake_root/boot/initrd.img-$new"
+    write_list "linux-binary-$old" "/boot/vmlinuz-$old"
+    write_list "linux-modules-$old" "/usr/lib/modules/$old" "/usr/lib/modules/$old/kernel/drv.ko"
+    write_list "linux-base-$old" "/usr/share/doc/linux-base-$old/copyright"
+    write_list "linux-headers-$old" "/usr/src/linux-headers-$old" "/usr/src/linux-headers-$old/include/x.h"
+    write_list "linux-headers-7.2.13+tux.1.1-common-tuxedo" "/usr/src/linux-headers-7.2.13+tux.1.1-common-tuxedo" "/usr/src/linux-headers-7.2.13+tux.1.1-common-tuxedo/include/y.h"
+    write_list "linux-binary-$new" "/boot/vmlinuz-$new"
+    write_list "linux-modules-$new" "/usr/lib/modules/$new" "/usr/lib/modules/$new/kernel/drv.ko"
+    write_list "linux-base-$new" "/usr/share/doc/linux-base-$new/copyright"
+    # The newest kernel's headers are deliberately ABSENT: the stale baseline
+    # is collected from this state, and the headers appear mid-session.
+}
+
+# The mid-session mutation (the round-81b flow): the install-missing-headers
+# apply failed at the header postinst's dkms autoinstall, leaving the arch
+# headers package HALF-CONFIGURED while the common headers installed cleanly.
+r82_add_half_configured_headers() {
+    cat >> "$fake_root/var/lib/dpkg/status" <<'STATUS'
+
+Package: linux-headers-7.3.5+tux.1.2-txos-amd64
+Version: 7.3.5+tux.1.2
+Depends: linux-headers-7.3.5+tux.1.2-common-txos (= 7.3.5+tux.1.2-1)
+Status: install ok half-configured
+
+Package: linux-headers-7.3.5+tux.1.2-common-txos
+Version: 7.3.5+tux.1.2
+Status: install ok installed
+STATUS
+    mkdir -p "$fake_root/usr/src/linux-headers-7.3.5+tux.1.2-txos-amd64" \
+             "$fake_root/usr/src/linux-headers-7.3.5+tux.1.2-common-txos"
+    write_list "linux-headers-7.3.5+tux.1.2-txos-amd64" \
+        "/usr/src/linux-headers-7.3.5+tux.1.2-txos-amd64" \
+        "/usr/src/linux-headers-7.3.5+tux.1.2-txos-amd64/include/x.h"
+    write_list "linux-headers-7.3.5+tux.1.2-common-txos" \
+        "/usr/src/linux-headers-7.3.5+tux.1.2-common-txos" \
+        "/usr/src/linux-headers-7.3.5+tux.1.2-common-txos/include/y.h"
+}
+
 source <(sed '/^main "$@"/d' "$HELPER")
+
+# Round 60 (Finding 1c): the kernel reinstall preflights the broken-dpkg
+# state; the sandbox stubs the preflight (the clean-fixture cases exercise the
+# kernel flows, not the preflight — the preflight itself is the round-196
+# class covered elsewhere).
+preflight_package_manager_not_interrupted() { return 0; }
+rearm_preflight_stub() { preflight_package_manager_not_interrupted() { return 0; }; }
 trap - EXIT INT TERM HUP
 
 # Round 118 (helper performance change): kernel_inventory_collect gained a
@@ -1025,6 +1216,27 @@ apt_kernel_removal_is_safe 'Remv systemd [255]' \
 apt_kernel_removal_is_safe 'Remv unrelated-package [1.0]' \
     && fail 'validator must refuse any package outside the removable set'
 
+# Round 74 (the removal completion): the apply stub emulates the real apt
+# transaction for the named packages — their records leave the fixture dpkg
+# status — so the stage's post-apply absence proof (the residue completion)
+# reads the same live state a real removal leaves behind.
+emulate_apply_removal() {
+    # Round 82: exact-substring stanza matching (index, never a regex) — the
+    # previous `$0 !~ /^Package: <pkg>\n/m` form treated the package name as an
+    # ERE, so a name carrying a `+` (the real TUXEDO 7.3.5+tux.1.2 shape) never
+    # matched and the record survived the emulated removal (and the GNU-awk
+    # `\n`/`m` regex carried the round-76 harness hazard).
+    awk -v names="$*" 'BEGIN { RS = ""; ORS = "\n\n" } {
+        keep = 1
+        n = split(names, want, " ")
+        for (j = 1; j <= n; j++) {
+            if (index($0, "Package: " want[j] "\n")) keep = 0
+        }
+        if (keep) print
+    }' "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
+    mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
+}
+
 # ---- removal backend (apply argv correctness) ------------------------------
 : > "$sandbox/apply.log"
 : > "$sandbox/rollback.log"
@@ -1049,6 +1261,8 @@ run_chroot_try_display() {
     CHROOT_TRY_RC=0
     CHROOT_TRY_OUTPUT=''
     printf '%s\n' "$@" >> "$sandbox/apply.log"
+    emulate_apply_removal linux-image-7.1.8.2-tuxedo-amd64 linux-modules-7.1.8.2-tuxedo-amd64 \
+        linux-headers-7.1.8.2-tuxedo-amd64 linux-headers-7.1.8.2-common-tuxedo
     return 0
 }
 REPAIR_CHANGE_STATUS_COLLECT=0
@@ -1219,6 +1433,9 @@ run_chroot_try_display() {
     CHROOT_TRY_RC=0
     CHROOT_TRY_OUTPUT=''
     printf '%s\n' "$@" >> "$sandbox/apply.log"
+    emulate_apply_removal linux-image-7.1.8.2-tuxedo linux-binary-7.1.8.2-tuxedo \
+        linux-modules-7.1.8.2-tuxedo linux-headers-7.1.8.2-tuxedo \
+        linux-headers-7.1.8.2-common-tuxedo
     return 0
 }
 REPAIR_CHANGE_STATUS_COLLECT=0
@@ -1475,7 +1692,7 @@ rpm_orphaned_dev=6.8.0-100.fc44.x86_64
 mkdir -p "$fake_root/usr/lib/modules/$rpm_intact" \
          "$fake_root/usr/src/kernels/$rpm_intact" \
          "$fake_root/usr/src/kernels/$rpm_orphaned_dev"
-touch "$fake_root/boot/vmlinuz-$rpm_intact"
+touch "$fake_root/boot/vmlinuz-$rpm_intact" "$fake_root/boot/initrd.img-$rpm_intact"
 run_selected_chroot() {
     local arg path ver
     # Emulate the exact `rpm -q kernel-devel` enumeration (the repaired query):
@@ -1842,6 +2059,8 @@ run_chroot_try_display() {
     CHROOT_TRY_RC=0
     CHROOT_TRY_OUTPUT=''
     printf '%s\n' "$@" >> "$sandbox/apply.log"
+    emulate_apply_removal linux-image-7.1.9.1-tuxedo-amd64 linux-modules-7.1.9.1-tuxedo-amd64 \
+        linux-headers-7.1.9.1-tuxedo-amd64 linux-headers-7.1.9.1-common-tuxedo
     return 0
 }
 REPAIR_CHANGE_STATUS_COLLECT=0
@@ -1929,6 +2148,8 @@ repair_kernel_remove_oldest
 # above replaced repair_kernel_remove_oldest with a simulation stub), then
 # re-establish the Debian harness environment.
 source <(sed '/^main "$@"/d' "$HELPER")
+
+rearm_preflight_stub
 TARGET_ROOT="$fake_root"
 RUNNING_HOST_MODE=0
 SESSION_DIR="$sandbox/session"
@@ -2661,7 +2882,7 @@ rm -rf "$fake_root/lib/apk" "$fake_root/etc/apk" "$fake_root/sbin" \
 rm -f "$fake_root/usr/bin/rpm" "$fake_root/usr/bin/dnf5" "$fake_root/usr/bin/pacman"
 mkdir -p "$fake_root/usr/lib/modules/6.1.1-arch1-1" "$fake_root/usr/lib/modules/6.1.2-lts-1" \
          "$fake_root/boot" "$fake_root/var/lib/pacman"
-touch "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/vmlinuz-lts" \
+touch "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/initramfs-linux.img" "$fake_root/boot/vmlinuz-lts" \
       "$fake_root/boot/initramfs-linux.img" "$fake_root/boot/initramfs-lts.img"
 # pacman backend prerequisites (so package_backend_unavailable_reason
 # kernel-cleanup pacman reports runnable for the dispatch test below).
@@ -3144,7 +3365,7 @@ KERNEL_ORPHANED_SUPPORT_VERSIONS=()
 KERNEL_REPO_LATEST=""
 mkdir -p "$fake_root/usr/lib/modules/7.2.8-arch1-2" "$fake_root/boot"
 printf 'linux\n' > "$fake_root/usr/lib/modules/7.2.8-arch1-2/pkgbase"
-touch "$fake_root/boot/vmlinuz-linux"
+touch "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/initramfs-linux.img"
 kernel_inventory_collect() { :; }
 # Emulate the real `pacman -Qo` on the module-tree DIRECTORY (linux AND
 # linux-headers both own it), which the verify must no longer rely on.
@@ -3182,7 +3403,7 @@ KERNEL_ORPHANED_SUPPORT_VERSIONS=()
 KERNEL_REPO_LATEST=""
 mkdir -p "$fake_root/usr/lib/modules/7.2.9-arch1-1" "$fake_root/boot"
 printf 'linux\n' > "$fake_root/usr/lib/modules/7.2.9-arch1-1/pkgbase"
-touch "$fake_root/boot/vmlinuz-linux"
+touch "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/initramfs-linux.img"
 kernel_inventory_collect() { :; }
 rm -f "$PACMAN_REINSTALL_FLAG"
 repair_kernel_reinstall() { : > "$PACMAN_REINSTALL_FLAG"; }
@@ -3216,7 +3437,7 @@ mkdir -p "$fake_root/usr/lib/modules/7.2.8-arch1-2" \
     "$fake_root/usr/lib/modules/7.2.9-arch1-1" "$fake_root/boot"
 printf 'linux\n' > "$fake_root/usr/lib/modules/7.2.8-arch1-2/pkgbase"
 printf 'linux\n' > "$fake_root/usr/lib/modules/7.2.9-arch1-1/pkgbase"
-touch "$fake_root/boot/vmlinuz-linux"
+touch "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/initramfs-linux.img"
 kernel_inventory_collect() { :; }
 rm -f "$PACMAN_REINSTALL_FLAG"
 repair_kernel_reinstall() { : > "$PACMAN_REINSTALL_FLAG"; }
@@ -3906,6 +4127,11 @@ run_chroot_try_display() {
         -e 's/^Depends: linux-image-7\.1\.9\.1-tuxedo-amd64 /Depends: linux-image-7.1.8.2-tuxedo-amd64 /' \
         -e 's/^Depends: linux-headers-7\.1\.9\.1-tuxedo-amd64 /Depends: linux-headers-7.1.8.2-tuxedo-amd64 /' \
         "$fake_root/var/lib/dpkg/status"
+    # Round 76 (the downgrade-path completion): the real apt apply also takes
+    # the removed kernel's grouped packages out of the dpkg status, so the
+    # post-apply absence proof reads the same live state.
+    emulate_apply_removal linux-image-7.1.9.1-tuxedo-amd64 linux-modules-7.1.9.1-tuxedo-amd64 \
+        linux-headers-7.1.9.1-tuxedo-amd64 linux-headers-7.1.9.1-common-tuxedo
     CHROOT_TRY_RC=0
     CHROOT_TRY_OUTPUT=''
     return 0
@@ -3926,11 +4152,124 @@ if grep -q 'linux-image-7.1.8.2-tuxedo-amd64' "$sandbox/apply.log"; then
 fi
 [[ ! -s "$sandbox/rollback.log" ]] || fail 'no rollback must run on a clean metapackage downgrade'
 
-# ---- metapackage-downgrade failure: no older pinning -> fail closed ---------
-# With no older metapackage version available to pin the surviving kernel, the
-# downgrade cannot be resolved; the stage must fail closed with the specific
-# reason naming the cascaded metapackages and the surviving kernel.
+# ---- Round 80 (the no-downgrade cascade — the user's host): the metas -------
+# pin ONLY the removed newest kernel with no survivor-pinning available
+# version.  The pre-round-80 shape refused; the round-80 cascade-class
+# extension APPLIES the removal with the cascade-removal of the metas (they
+# belong to the removed kernel's lineage).  The completion must prove the
+# WHOLE lineage absent — the versioned packages, the module tree, the
+# headers, the metas AND the removed kernel's DKMS trees — while the
+# survivor's packages and its DKMS state survive.
 write_tuxedo_fixture
+FAKE_RUNNING=7.1.9.1-tuxedo-amd64
+recollect_kernel_inventory
+KERNEL_REMOVE_MODE=newest
+KERNEL_STAGE_STATUS_KEY="kernels:remove-newest"
+# The removed kernel's DKMS residue (the dirty "Differences between built and
+# installed modules" class) + the survivor's healthy DKMS state.
+mkdir -p "$fake_root/var/lib/dkms/nvidia-current-open/560.0/7.1.9.1-tuxedo-amd64" \
+         "$fake_root/var/lib/dkms/nvidia-current-open/560.0/source" \
+         "$fake_root/var/lib/dkms/zfs/2.2.6/7.1.8.2-tuxedo-amd64" \
+         "$fake_root/var/lib/dkms/zfs/2.2.6/source"
+touch "$fake_root/var/lib/dkms/nvidia-current-open/560.0/7.1.9.1-tuxedo-amd64/dkms.conf" \
+      "$fake_root/var/lib/dkms/zfs/2.2.6/7.1.8.2-tuxedo-amd64/dkms.conf"
+: > "$sandbox/apply.log"
+: > "$sandbox/rollback.log"
+run_selected_chroot() {
+    local arg joined
+    local -a cmd=()
+    for arg in "$@"; do cmd+=("$arg"); done
+    joined="${cmd[*]}"
+    case "$joined" in
+        *" remove --purge"*"linux-image-tuxedo"*)
+            # The round-80 cascade-only transaction simulation: the removal
+            # candidates + the cascade-removal metapackages.
+            printf 'Remv linux-image-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-modules-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-common-tuxedo [7.1.9.1]\n'
+            printf 'Remv linux-image-tuxedo [7.1.9.1.2]\n'
+            printf 'Remv linux-headers-tuxedo-amd64 [7.1.9.1.2]\n'
+            printf '0 upgraded, 0 newly installed, 6 to remove and 0 not upgraded.\n'
+            ;;
+        *" apt-get -s -o Debug::NoLocking=1 remove --purge"*)
+            # The FIRST simulation: the plain removal proposes the cascade.
+            printf 'Remv linux-image-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-modules-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-common-tuxedo [7.1.9.1]\n'
+            printf 'Remv linux-image-tuxedo [7.1.9.1.2]\n'
+            printf 'Remv linux-headers-tuxedo-amd64 [7.1.9.1.2]\n'
+            printf '0 upgraded, 0 newly installed, 6 to remove and 0 not upgraded.\n'
+            ;;
+        *" apt-cache madison linux-image-tuxedo"*)
+            printf 'linux-image-tuxedo | 7.1.9.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            ;;
+        *" apt-cache madison linux-headers-tuxedo-amd64"*)
+            printf 'linux-headers-tuxedo-amd64 | 7.1.9.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            ;;
+    esac
+    return 0
+}
+run_chroot_try_display() {
+    local label="$1"; shift
+    if [[ "$label" == *reinstall-protected-kernels* ]]; then
+        printf 'reinstall\n' >> "$sandbox/rollback.log"
+        printf '%s\n' "$@" >> "$sandbox/rollback.log"
+        CHROOT_TRY_RC=0
+        return 0
+    fi
+    printf '%s\n' "$@" >> "$sandbox/apply.log"
+    # The real apt apply takes the removed kernel's grouped packages AND the
+    # cascade metapackages out of the dpkg status.
+    emulate_apply_removal linux-image-7.1.9.1-tuxedo-amd64 linux-modules-7.1.9.1-tuxedo-amd64 \
+        linux-headers-7.1.9.1-tuxedo-amd64 linux-headers-7.1.9.1-common-tuxedo \
+        linux-image-tuxedo linux-headers-tuxedo-amd64
+    # The real prerm/dkms hooks also take the removed kernel's DKMS trees —
+    # the fixture's apply mirrors that for the absence proof below.
+    rm -rf "$fake_root/var/lib/dkms/nvidia-current-open/560.0/7.1.9.1-tuxedo-amd64"
+    CHROOT_TRY_RC=0
+    CHROOT_TRY_OUTPUT=''
+    return 0
+}
+REPAIR_CHANGE_STATUS_COLLECT=0
+REPAIR_CHANGE_STATUS_COLLECTED=()
+status_line="$(apt_kernel_cleanup_stage)"
+grep -q '^Repair change status kernels:remove-newest: changed$' <<<"$status_line" \
+    || fail "the no-downgrade cascade must APPLY and report changed (got: $status_line)"
+grep -q 'linux-image-tuxedo' "$sandbox/apply.log" \
+    || fail 'the cascade-removal metapackage must be in the removal list'
+if grep -q '7.1.8.2-tuxedo-amd64' "$sandbox/apply.log"; then
+    fail 'the surviving kernel must never appear in the removal list'
+fi
+# The whole lineage is absent (the completion's proven absence contract).
+target_dpkg_package_installed linux-image-7.1.9.1-tuxedo-amd64 \
+    && fail 'the removed image package must be gone'
+target_dpkg_package_installed linux-image-tuxedo \
+    && fail 'the cascade-removal image metapackage must be gone'
+target_dpkg_package_installed linux-headers-tuxedo-amd64 \
+    && fail 'the cascade-removal headers metapackage must be gone'
+target_dpkg_package_installed linux-image-7.1.8.2-tuxedo-amd64 \
+    || fail 'the surviving image package must remain installed'
+target_dpkg_package_installed linux-headers-7.1.8.2-tuxedo-amd64 \
+    || fail 'the surviving headers package must remain installed'
+# The removed kernel's DKMS lineage is gone; the survivor's DKMS state survives.
+[[ ! -d "$fake_root/var/lib/dkms/nvidia-current-open/560.0/7.1.9.1-tuxedo-amd64" ]] \
+    || fail 'the removed kernel DKMS tree must be swept'
+[[ -d "$fake_root/var/lib/dkms/zfs/2.2.6/7.1.8.2-tuxedo-amd64" ]] \
+    || fail 'the surviving kernel DKMS tree must survive the sweep'
+[[ ! -s "$sandbox/rollback.log" ]] || fail 'no rollback must run on a clean cascade removal'
+# The menu-annotation probe stays silent on this (applyable) shape.
+[[ -z "$(apt_kernel_remove_newest_refusal_reason 7.1.9.1-tuxedo-amd64)" ]] \
+    || fail 'the refusal probe must stay silent when the cascade applies'
+KERNEL_REMOVE_MODE=""
+
+# ---- Round 80 (the genuine mixed-pins refusal + the annotation) --------------
+# A managed metapackage pinning BOTH the removed newest kernel AND a
+# surviving kernel with no re-point available must still refuse — the honest
+# named reason, without the trailing-comma artifact, and the menu probe must
+# predict the refusal so the menu annotates instead of re-offering.
+write_mixed_pins_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
 recollect_kernel_inventory
 KERNEL_REMOVE_MODE=newest
@@ -3943,14 +4282,16 @@ run_selected_chroot() {
     case "$joined" in
         *" apt-get -s -o Debug::NoLocking=1 remove --purge"*)
             printf 'Remv linux-image-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-modules-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-tuxedo-amd64 [7.1.9.1]\n'
+            printf 'Remv linux-headers-7.1.9.1-common-tuxedo [7.1.9.1]\n'
             printf 'Remv linux-image-tuxedo [7.1.9.1.2]\n'
-            printf 'Remv linux-headers-tuxedo-amd64 [7.1.9.1.2]\n'
             ;;
         *" apt-cache madison linux-image-tuxedo"*)
             printf 'linux-image-tuxedo | 7.1.9.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
             ;;
-        *" apt-cache madison linux-headers-tuxedo-amd64"*)
-            printf 'linux-headers-tuxedo-amd64 | 7.1.9.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+        *" apt-cache show linux-image-tuxedo=7.1.9.1.2"*)
+            printf 'Package: linux-image-tuxedo\nVersion: 7.1.9.1.2\nDepends: linux-image-7.1.9.1-tuxedo-amd64 (= 7.1.9.1-1)\n'
             ;;
     esac
     return 0
@@ -3959,14 +4300,342 @@ REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
 status_line="$(apt_kernel_cleanup_stage)"
 grep -q '^Repair change status kernels:remove-newest: unchanged|reason:managed-default-metapackage-cascade' <<<"$status_line" \
-    || fail "unresolvable downgrade must fail closed with reason:managed-default-metapackage-cascade (got: $status_line)"
+    || fail "the mixed-pins shape must fail closed with reason:managed-default-metapackage-cascade (got: $status_line)"
 grep -q 'linux-image-tuxedo' <<<"$status_line" \
-    || fail 'the reason must name the cascaded image metapackage'
-grep -q 'linux-headers-tuxedo-amd64' <<<"$status_line" \
-    || fail 'the reason must name the cascaded headers metapackage'
+    || fail 'the reason must name the mixed-pins metapackage'
 grep -q '7.1.8.2-tuxedo-amd64' <<<"$status_line" \
     || fail 'the reason must name the surviving kernel'
+# Round 80 (the trailing-comma artifact): the single-element meta join must
+# carry NO trailing comma.
+if grep -q 'param:[^|]*,|param:' <<<"$status_line"; then
+    fail "the cascaded-metas join must not carry a trailing comma (got: $status_line)"
+fi
+# The menu probe predicts the refusal (the row is annotated, the
+# remove-newest offer suppressed — never a stuck re-prompt).
+refusal_line="$(apt_kernel_remove_newest_refusal_reason 7.1.9.1-tuxedo-amd64)"
+[[ "$refusal_line" == "refusal|linux-image-tuxedo|7.1.8.2-tuxedo-amd64" ]] \
+    || fail "the refusal probe must name the mixed-pins meta and the survivor (got: ${refusal_line:-<empty>})"
+[[ "$(kernel_remove_newest_refusal_words "$refusal_line")" == *"linux-image-tuxedo"* ]] \
+    || fail 'the refusal annotation must carry the honest reason'
 KERNEL_REMOVE_MODE=""
+
+
+# ---- Round 81 (the survivor-safe sweep — the user's legacy-dir finding) ------
+# A legacy/dirty dkms version dir whose name embeds the SURVIVOR kernel's
+# version string (the `kernel-<survivor>-…` shape) must survive the sweep
+# UNTOUCHED (the round-80 residue-drop clause removed it wholesale); a
+# legacy dir naming the REMOVED kernel is lineage and goes; the mixed case
+# (a survivor-named dir holding the removed kernel's subdir) drops ONLY the
+# removed-kver subdir and keeps the dir.
+write_tuxedo_fixture
+FAKE_RUNNING=7.1.8.2-tuxedo-amd64
+recollect_kernel_inventory
+mkdir -p "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64" \
+         "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.9.1-tuxedo-amd64-x86_64" \
+         "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed" \
+         "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed/7.1.9.1-tuxedo-amd64" \
+         "$fake_root/var/lib/dkms/tuxedo-drivers/620.70.06/source"
+touch "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64/dkms.conf" \
+      "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.9.1-tuxedo-amd64-x86_64/dkms.conf" \
+      "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed/dkms.conf" \
+      "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed/7.1.9.1-tuxedo-amd64/dkms.conf"
+apt_kernel_dkms_lineage_sweep 7.1.9.1-tuxedo-amd64
+# The survivor-named legacy dir survives byte-identically (the round-81
+# invariant — the round-80 clause removed this shape wholesale).
+[[ -f "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64/dkms.conf" ]] \
+    || fail 'the survivor-named legacy dkms dir must survive the sweep untouched'
+# The removed-kernel-named legacy dir is lineage and goes.
+[[ ! -d "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.9.1-tuxedo-amd64-x86_64" ]] \
+    || fail 'the removed-kernel legacy dkms dir must be swept'
+# The mixed case: only the removed-kver subdir goes, the survivor-named dir stays.
+[[ -d "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed" ]] \
+    || fail 'the mixed survivor-named legacy dir must survive'
+[[ ! -d "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed/7.1.9.1-tuxedo-amd64" ]] \
+    || fail 'only the removed-kver subdir inside the survivor-named dir may go'
+[[ -f "$fake_root/var/lib/dkms/nvidia-current-open/kernel-7.1.8.2-tuxedo-amd64-x86_64-mixed/dkms.conf" ]] \
+    || fail 'the mixed survivor-named dir content must survive'
+# A neutral module version dir with only build/source children drops (the
+# round-80 clause, now with the exact kernel-dir predicate — build/source
+# never block it).
+[[ ! -d "$fake_root/var/lib/dkms/tuxedo-drivers/620.70.06" ]] \
+    || fail 'a version dir with only source/build children must drop when no kernel-version child remains'
+
+# ===========================================================================
+# Round 82 (the stale-evidence removal-plan fix — the round-81b user finding):
+# the removal plan + the protected-set validator derive from the THEN-CURRENT
+# package state, never the stale cached baseline.
+# ===========================================================================
+# Re-source the helper to restore the real repair_kernel_remove_newest (the
+# reprompt drill above replaced it with a no-op stub), then re-establish the
+# Debian/APT harness environment.
+source <(sed '/^main "$@"/d' "$HELPER")
+TARGET_ROOT="$fake_root"
+RUNNING_HOST_MODE=0
+SESSION_DIR="$sandbox/session"
+SESSION_LOG="$sandbox/session.log"
+mkdir -p "$SESSION_DIR"
+: > "$SESSION_LOG"
+DPKG_PATH_OWNER_INDEX=""
+rearm_preflight_stub
+profile_target_backends() {
+    TARGET_DISTRO_FAMILY=debian
+    TARGET_PACKAGE_MANAGERS=(apt/dpkg)
+    TARGET_PACKAGE_MANAGER=apt/dpkg
+    TARGET_SERVICE_MANAGERS=(systemd)
+    TARGET_SERVICE_MANAGER=systemd
+    TARGET_DISPLAY_BACKEND=systemd
+    TARGET_INITRAMFS_BACKENDS=(initramfs-tools)
+    TARGET_INITRAMFS_BACKEND=initramfs-tools
+    TARGET_LOGGING_BACKEND=journald
+    TARGET_BOOTLOADER_BACKEND=grub
+    TARGET_ESP_MOUNT=unresolved
+    TARGET_KERNEL_LAYOUT='versioned vmlinuz-* kernels'
+    TARGET_REPAIR_BACKEND='Debian/APT'
+}
+running_kernel_version() { printf '%s\n' "${FAKE_RUNNING-7.2.13+tux.1.1-tuxedo-amd64}"; }
+
+# ---- Round 82 end-to-end: the stale baseline + the mid-session headers ------
+# The cached baseline is collected BEFORE the headers exist (the stale plan:
+# image/binary/modules for the newest), then the half-configured headers
+# appear mid-session (the round-81b flow).  remove-newest must STILL plan and
+# apply the FULL set (the fresh re-derivation + the lineage acceptance) with
+# no protected-refusal, while the survivor's packages stay protected.
+write_stale_headers_fixture
+FAKE_RUNNING=7.2.13+tux.1.1-tuxedo-amd64
+recollect_kernel_inventory
+[[ "$KERNEL_LATEST" == 7.3.5+tux.1.2-txos-amd64 ]] || fail "round-82 latest kernel: $KERNEL_LATEST"
+baseline_text="$(diagnostic_kernel_inventory || true)"
+# The stale baseline's newest-kernel plan carries NO headers.
+grep '^Kernel installed: 7.3.5+tux.1.2-txos-amd64 ' <<<"$baseline_text" \
+    | grep -q 'linux-binary-7.3.5+tux.1.2-txos-amd64' \
+    || fail 'the stale baseline must carry the newest kernel binary package'
+grep '^Kernel installed: 7.3.5+tux.1.2-txos-amd64 ' <<<"$baseline_text" \
+    | grep -q 'linux-headers-7.3.5' \
+    && fail 'the stale baseline must NOT yet carry the newest headers'
+KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
+# The mid-session mutation: the half-configured headers appeared.
+r82_add_half_configured_headers
+: > "$sandbox/apply.log"
+: > "$sandbox/rollback.log"
+run_selected_chroot() {
+    local arg joined
+    local -a cmd=()
+    for arg in "$@"; do cmd+=("$arg"); done
+    joined="${cmd[*]}"
+    case "$joined" in
+        *" apt-get -s -o Debug::NoLocking=1 remove --purge"*)
+            printf 'Reading package lists...\n'
+            printf 'Remv linux-image-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-binary-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-base-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-modules-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-headers-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-headers-7.3.5+tux.1.2-common-txos [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-image-tuxedo [7.3.5+tux.1.2.2]\n'
+            printf 'Remv linux-headers-tuxedo-amd64 [7.3.5+tux.1.2.2]\n'
+            printf '0 upgraded, 0 newly installed, 8 to remove and 0 not upgraded.\n'
+            ;;
+        *" apt-cache madison linux-image-tuxedo"*)
+            printf 'linux-image-tuxedo | 7.3.5+tux.1.2.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            printf 'linux-image-tuxedo | 7.2.13+tux.1.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            ;;
+        *" apt-cache show linux-image-tuxedo=7.3.5+tux.1.2.2"*)
+            printf 'Package: linux-image-tuxedo\nVersion: 7.3.5+tux.1.2.2\nDepends: linux-image-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)\n'
+            ;;
+        *" apt-cache show linux-image-tuxedo=7.2.13+tux.1.1.2"*)
+            printf 'Package: linux-image-tuxedo\nVersion: 7.2.13+tux.1.1.2\nDepends: linux-image-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1)\n'
+            ;;
+        *" apt-cache madison linux-headers-tuxedo-amd64"*)
+            printf 'linux-headers-tuxedo-amd64 | 7.3.5+tux.1.2.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            printf 'linux-headers-tuxedo-amd64 | 7.2.13+tux.1.1.2 | https://deb.tuxedocomputers.com jammy/main amd64 Packages\n'
+            ;;
+        *" apt-cache show linux-headers-tuxedo-amd64=7.3.5+tux.1.2.2"*)
+            printf 'Package: linux-headers-tuxedo-amd64\nVersion: 7.3.5+tux.1.2.2\nDepends: linux-headers-7.3.5+tux.1.2-txos-amd64 (= 7.3.5+tux.1.2-1)\n'
+            ;;
+        *" apt-cache show linux-headers-tuxedo-amd64=7.2.13+tux.1.1.2"*)
+            printf 'Package: linux-headers-tuxedo-amd64\nVersion: 7.2.13+tux.1.1.2\nDepends: linux-headers-7.2.13+tux.1.1-tuxedo-amd64 (= 7.2.13+tux.1.1-1)\n'
+            ;;
+        *" apt-get -s -o Debug::NoLocking=1 --allow-downgrades install"*)
+            printf 'Reading package lists...\n'
+            printf 'Inst linux-image-tuxedo [7.3.5+tux.1.2.2] (7.2.13+tux.1.1.2 jammy [amd64])\n'
+            printf 'Inst linux-headers-tuxedo-amd64 [7.3.5+tux.1.2.2] (7.2.13+tux.1.1.2 jammy [amd64])\n'
+            printf 'Remv linux-image-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-binary-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-base-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-modules-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-headers-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\n'
+            printf 'Remv linux-headers-7.3.5+tux.1.2-common-txos [7.3.5+tux.1.2]\n'
+            printf '2 upgraded, 0 newly installed, 6 to remove and 0 not upgraded.\n'
+            ;;
+    esac
+    return 0
+}
+run_chroot_try_display() {
+    local label="$1"; shift
+    if [[ "$label" == *reinstall-protected-kernels* ]]; then
+        printf 'reinstall\n' >> "$sandbox/rollback.log"
+        printf '%s\n' "$@" >> "$sandbox/rollback.log"
+        CHROOT_TRY_RC=0
+        return 0
+    fi
+    CHROOT_TRY_RC=0
+    CHROOT_TRY_OUTPUT=''
+    printf '%s\n' "$@" >> "$sandbox/apply.log"
+    # Simulate the real apt apply: re-point the metapackages at the survivor
+    # and take the removed kernel's whole grouped package set out of the
+    # dpkg status (the round-76 apply emulation).
+    sed -i \
+        -e 's/^Depends: linux-image-7\.3\.5+tux\.1\.2-txos-amd64 /Depends: linux-image-7.2.13+tux.1.1-tuxedo-amd64 /' \
+        -e 's/^Depends: linux-headers-7\.3\.5+tux\.1\.2-txos-amd64 /Depends: linux-headers-7.2.13+tux.1.1-tuxedo-amd64 /' \
+        "$fake_root/var/lib/dpkg/status"
+    emulate_apply_removal linux-image-7.3.5+tux.1.2-txos-amd64 linux-binary-7.3.5+tux.1.2-txos-amd64 \
+        linux-base-7.3.5+tux.1.2-txos-amd64 linux-modules-7.3.5+tux.1.2-txos-amd64 \
+        linux-headers-7.3.5+tux.1.2-txos-amd64 linux-headers-7.3.5+tux.1.2-common-txos
+    return 0
+}
+INITRAMFS_STUB_RAN=0
+adaptive_initramfs_repair() { INITRAMFS_STUB_RAN=1; }
+adaptive_grub_stage() { :; }
+adaptive_extlinux_repair() { :; }
+REPAIR_CHANGE_STATUS_COLLECT=0
+REPAIR_CHANGE_STATUS_COLLECTED=()
+# Run in the current shell (not a command substitution) so the post-removal
+# baseline drop propagates back for the assertion below.
+repair_kernel_remove_newest > "$sandbox/r82-status.txt" 2>&1
+r82_status="$(cat "$sandbox/r82-status.txt")"
+grep -q '^Repair change status kernels:remove-newest: changed$' <<<"$r82_status" \
+    || fail "the stale-evidence remove-newest must APPLY and report changed (got: $(grep 'Repair change status' <<<"$r82_status" || true))"
+! grep -q 'failed Boot Bitch kernel safety checks' <<<"$r82_status" \
+    || fail 'the stale-evidence removal must not hit the protected-set refusal'
+# The FULL grouped set was planned and applied — the mid-session headers
+# included, the survivor's packages never touched.
+for r82_pkg in linux-image-7.3.5+tux.1.2-txos-amd64 linux-binary-7.3.5+tux.1.2-txos-amd64 \
+    linux-base-7.3.5+tux.1.2-txos-amd64 linux-modules-7.3.5+tux.1.2-txos-amd64 \
+    linux-headers-7.3.5+tux.1.2-txos-amd64 linux-headers-7.3.5+tux.1.2-common-txos; do
+    grep -q "$r82_pkg" "$sandbox/apply.log" \
+        || fail "the fresh removal plan must carry $r82_pkg (got: $(tr '\n' ' ' < "$sandbox/apply.log"))"
+done
+if grep -q '7.2.13+tux.1.1-tuxedo-amd64' "$sandbox/apply.log"; then
+    fail "a surviving kernel package leaked into the removal list: $(tr '\n' ' ' < "$sandbox/apply.log")"
+fi
+[[ ! -s "$sandbox/rollback.log" ]] || fail 'no rollback must run on the clean stale-evidence removal'
+# The whole lineage is absent; the survivor + the downgraded metas survive.
+target_dpkg_package_installed linux-headers-7.3.5+tux.1.2-txos-amd64 \
+    && fail 'the removed half-configured headers package must be gone'
+target_dpkg_package_installed linux-headers-7.3.5+tux.1.2-common-txos \
+    && fail 'the removed common headers package must be gone'
+target_dpkg_package_installed linux-image-7.2.13+tux.1.1-tuxedo-amd64 \
+    || fail 'the surviving image package must remain installed'
+target_dpkg_package_installed linux-headers-7.2.13+tux.1.1-tuxedo-amd64 \
+    || fail 'the surviving headers package must remain installed'
+target_dpkg_package_installed linux-image-tuxedo \
+    || fail 'the downgraded image metapackage must remain installed'
+apt_kernel_metapackage_pins_kernel linux-image-tuxedo 7.2.13+tux.1.1-tuxedo-amd64 \
+    || fail 'the downgraded image metapackage must pin the survivor'
+[[ -z "$KERNEL_BASELINE_B64" ]] || fail 'remove-newest must drop the cached baseline after the removal'
+
+# ---- Round 82 lineage acceptance (the validator fallback) --------------------
+# With NO plan array and only the removal-lineage set, the validators accept a
+# versioned kernel package of the kernel being removed (the half-configured
+# headers class) and refuse the survivor's packages, a managed metapackage and
+# an essential — the genuine protected set keeps its protection.
+KERNEL_REMOVAL_PLAN_PKGS=()
+KERNEL_LATEST_PKGS=()
+KERNEL_REMOVABLE_PKGS=()
+KERNEL_REMOVAL_LINEAGE_VERSIONS=(7.3.5+tux.1.2-txos-amd64)
+KERNEL_INVENTORY_VERSIONS=(7.2.13+tux.1.1-tuxedo-amd64 7.3.5+tux.1.2-txos-amd64)
+KERNEL_INVENTORY_PKGS=()
+KERNEL_LATEST=7.3.5+tux.1.2-txos-amd64
+KERNEL_REMOVE_MODE=newest
+r82_inst=$'Inst linux-image-tuxedo [7.3.5+tux.1.2.2] (7.2.13+tux.1.1.2 jammy [amd64])\nInst linux-headers-tuxedo-amd64 [7.3.5+tux.1.2.2] (7.2.13+tux.1.1.2 jammy [amd64])\n'
+apt_kernel_managed_downgrade_is_safe "$r82_inst"$'Remv linux-image-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\nRemv linux-headers-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\nRemv linux-headers-7.3.5+tux.1.2-common-txos [7.3.5+tux.1.2]\n0 upgraded, 0 newly installed, 3 to remove and 0 not upgraded.' \
+    "7.2.13+tux.1.1-tuxedo-amd64" "" \
+    "linux-image-tuxedo=7.2.13+tux.1.1.2" "linux-headers-tuxedo-amd64=7.2.13+tux.1.1.2" \
+    || fail 'the downgrade validator must accept the removed kernel headers as removal lineage'
+apt_kernel_managed_downgrade_is_safe "$r82_inst"$'Remv linux-headers-7.2.13+tux.1.1-tuxedo-amd64 [7.2.13+tux.1.1]\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.' \
+    "7.2.13+tux.1.1-tuxedo-amd64" "" \
+    "linux-image-tuxedo=7.2.13+tux.1.1.2" "linux-headers-tuxedo-amd64=7.2.13+tux.1.1.2" \
+    && fail 'the downgrade validator must refuse the survivor arch headers'
+apt_kernel_managed_downgrade_is_safe "$r82_inst"$'Remv linux-headers-7.2.13+tux.1.1-common-tuxedo [7.2.13+tux.1.1]\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.' \
+    "7.2.13+tux.1.1-tuxedo-amd64" "" \
+    "linux-image-tuxedo=7.2.13+tux.1.1.2" "linux-headers-tuxedo-amd64=7.2.13+tux.1.1.2" \
+    && fail 'the downgrade validator must refuse the survivor common headers'
+apt_kernel_managed_downgrade_is_safe "$r82_inst"$'Remv linux-image-tuxedo [7.3.5+tux.1.2.2]\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.' \
+    "7.2.13+tux.1.1-tuxedo-amd64" "" \
+    "linux-image-tuxedo=7.2.13+tux.1.1.2" "linux-headers-tuxedo-amd64=7.2.13+tux.1.1.2" \
+    && fail 'the downgrade validator must refuse the managed metapackage'
+# The plain validator mirrors the lineage acceptance + the refusals.
+apt_kernel_removal_is_safe $'Remv linux-headers-7.3.5+tux.1.2-txos-amd64 [7.3.5+tux.1.2]\nRemv linux-headers-7.3.5+tux.1.2-common-txos [7.3.5+tux.1.2]' \
+    || fail 'the plain validator must accept the removed kernel headers as removal lineage'
+apt_kernel_removal_is_safe 'Remv linux-headers-7.2.13+tux.1.1-tuxedo-amd64 [7.2.13+tux.1.1]' \
+    && fail 'the plain validator must refuse the survivor arch headers'
+apt_kernel_removal_is_safe 'Remv linux-headers-7.2.13+tux.1.1-common-tuxedo [7.2.13+tux.1.1]' \
+    && fail 'the plain validator must refuse the survivor common headers'
+apt_kernel_removal_is_safe 'Remv linux-image-tuxedo [7.3.5+tux.1.2.2]' \
+    && fail 'the plain validator must refuse the managed metapackage'
+apt_kernel_removal_is_safe 'Remv systemd [255]' \
+    && fail 'the plain validator must refuse protected essentials'
+# The survivor-prefix guard: a same-series survivor keeps the shared common
+# header protected (it belongs to every flavour of that series).
+KERNEL_INVENTORY_VERSIONS=(7.2.13+tux.1.1-tuxedo-amd64 7.3.5+tux.1.2-tuxedo-amd64 7.3.5+tux.1.2-txos-amd64)
+apt_kernel_removal_is_safe 'Remv linux-headers-7.3.5+tux.1.2-common-txos [7.3.5+tux.1.2]' \
+    && fail 'a shared-series common header must stay protected while a survivor shares the series'
+KERNEL_INVENTORY_VERSIONS=(7.2.13+tux.1.1-tuxedo-amd64 7.3.5+tux.1.2-txos-amd64)
+KERNEL_REMOVAL_LINEAGE_VERSIONS=()
+KERNEL_REMOVE_MODE=""
+KERNEL_LATEST=""
+KERNEL_INVENTORY_PKGS=()
+
+# ---- Round 82 per-attempt re-plan (the after-refusal re-derivation) ---------
+# The same stale baseline plans differently as the LIVE package state changes
+# between attempts: attempt 1 (headers absent) plans the 3 baseline packages;
+# attempt 2 (the headers appeared mid-session) plans all 6 — the plan is
+# re-derived fresh on EVERY attempt, never memoized from the cached baseline.
+write_stale_headers_fixture
+FAKE_RUNNING=7.2.13+tux.1.1-tuxedo-amd64
+recollect_kernel_inventory
+baseline_text="$(diagnostic_kernel_inventory || true)"
+KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
+parse_cached_kernel_inventory
+KERNEL_REMOVE_MODE=newest
+KERNEL_STAGE_STATUS_KEY="kernels:remove-newest"
+: > "$sandbox/r82-sim-args.log"
+run_selected_chroot() {
+    local arg joined
+    local -a cmd=()
+    for arg in "$@"; do cmd+=("$arg"); done
+    joined="${cmd[*]}"
+    case "$joined" in
+        *" apt-get -s -o Debug::NoLocking=1 remove --purge"*)
+            printf '%s\n' "$joined" >> "$sandbox/r82-sim-args.log"
+            printf 'Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'
+            ;;
+    esac
+    return 0
+}
+run_chroot_try_display() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT=''; return 0; }
+REPAIR_CHANGE_STATUS_COLLECT=0
+REPAIR_CHANGE_STATUS_COLLECTED=()
+apt_kernel_cleanup_stage >/dev/null 2>&1 || true
+grep -q 'linux-headers-7.3.5' "$sandbox/r82-sim-args.log" \
+    && fail 'attempt 1 (headers absent) must not plan the headers'
+grep -q 'linux-binary-7.3.5+tux.1.2-txos-amd64' "$sandbox/r82-sim-args.log" \
+    || fail 'attempt 1 must still plan the baseline kernel packages'
+# The mid-session mutation, then the SAME baseline re-plans the full set.
+r82_add_half_configured_headers
+: > "$sandbox/r82-sim-args.log"
+REPAIR_CHANGE_STATUS_COLLECT=0
+REPAIR_CHANGE_STATUS_COLLECTED=()
+apt_kernel_cleanup_stage >/dev/null 2>&1 || true
+grep -q 'linux-headers-7.3.5+tux.1.2-txos-amd64' "$sandbox/r82-sim-args.log" \
+    || fail 'attempt 2 must plan the mid-session arch headers (the plan is re-derived per attempt)'
+grep -q 'linux-headers-7.3.5+tux.1.2-common-txos' "$sandbox/r82-sim-args.log" \
+    || fail 'attempt 2 must plan the mid-session common headers'
+KERNEL_BASELINE_B64=""
+KERNEL_REMOVE_MODE=""
+KERNEL_STAGE_STATUS_KEY="kernels"
+KERNEL_REMOVAL_PLAN_PKGS=()
+KERNEL_REMOVAL_LINEAGE_VERSIONS=()
 
 
 echo 'kernels-cleanup-contract: PASS'

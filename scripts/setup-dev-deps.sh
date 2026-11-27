@@ -105,7 +105,7 @@ debian)
         qt6-base-dev-tools extra-cmake-modules dpkg-dev desktop-file-utils
         lintian appstream pkexec util-linux mount rsync cryptsetup
         e2fsprogs dosfstools btrfs-progs xfsprogs systemd efibootmgr binutils
-        python3 lvm2 mdadm
+        python3 lvm2 mdadm libpolkit-qt6-1-dev
     )
 
     "${SUDO[@]}" apt-get update
@@ -173,6 +173,7 @@ rpm)
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
         rsync cryptsetup e2fsprogs dosfstools btrfs-progs xfsprogs systemd
         efibootmgr binutils python3 hicolor-icon-theme lvm2 mdadm rpm-build
+        polkit-qt6-1-devel
     )
     collect_filesystem_optional_packages
     "${SUDO[@]}" dnf install -y "${base_packages[@]}" "${optional_packages[@]}"

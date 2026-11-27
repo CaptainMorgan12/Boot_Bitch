@@ -83,7 +83,7 @@ void testTranscriptParsing(const std::string &fixture)
     check(!legacy::legacyFeatureIsAvailable("", &reason),
           "missing legacy feature state rejected (fail closed)");
 
-    check(legacy::diagnosticKeys().size() == 20, "20 diagnostic keys");
+    check(legacy::diagnosticKeys().size() == 21, "20 diagnostic keys");
     check(legacy::legacyFeatureKeys().size() == 6, "6 legacy feature keys");
 
     check(legacy::changeStatusIsUnchanged("unchanged"), "unchanged status");
@@ -799,7 +799,7 @@ void testStageMapping()
           "initramfs maps to initramfs");
     check(legacy::repairToolKeyForStage("fs-inspect") == "fs-inspect",
           "unknown stages pass through");
-    check(legacy::capabilityKeys().size() == 17, "17 capability keys");
+    check(legacy::capabilityKeys().size() == 18, "17 capability keys");
 }
 
 // Round 30: the shared repair->diagnostic map loader executed against the REAL
@@ -831,7 +831,7 @@ void testRepairDiagnosticMap(const std::string &mapPath)
         std::printf("  map load error: %s\n", error.c_str());
         return;
     }
-    check(map.rowCount() == 77, "the canonical map carries all 77 rows");
+    check(map.rowCount() == 79, "the canonical map carries all 77 rows");
 
     // The requires column (the repair-run gate).
     {

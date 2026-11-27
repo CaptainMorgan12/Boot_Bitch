@@ -114,6 +114,12 @@ grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootbitch.BootBitch.png
     exit 1
 }
 
+[[ -x "$TMP/root/usr/libexec/boot-bitch/numlock-on" ]] || {
+    echo "FAIL: Num Lock payload missing from extracted package." >&2
+    exit 1
+}
+
+
 grep -q '<id>org.bootbitch.BootBitch</id>' \
     "$TMP/root/usr/share/metainfo/org.bootbitch.BootBitch.metainfo.xml" || {
         echo "FAIL: AppStream metadata has the wrong component ID." >&2

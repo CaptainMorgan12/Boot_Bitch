@@ -40,7 +40,7 @@ for check_tool in e2fsck fsck.fat btrfs xfs_repair fsck.exfat ntfsfix fsck.f2fs 
 done
 
 # The capability key is present and keeps every existing key unchanged.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock)' "$HELPER"
 grep -Fq 'File system check %s: %s uuid=%s mount=%s tool=%s result=%s' "$HELPER"
 grep -Fq 'File system check detail %s: tool=%s output=%s' "$HELPER"
 grep -Fq 'File system check summary: devices=0 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=0' "$HELPER"
@@ -850,7 +850,7 @@ for cap_key in dpkg fixbroken aptupdate upgrade dkms display gpu input-devices n
     grep -Eq "^Repair tool $cap_key: " <<<"$cap_unresolved" \
         || { echo "FAIL: existing capability key missing: $cap_key" >&2; exit 1; }
 done
-[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 17 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 18 ]] \
     || { echo "FAIL: expected 17 capability keys" >&2; exit 1; }
 # The input-device/network capability rows are evidence-driven: the empty
 # fixture reports the fail-closed no-evidence / no-adapter reasons.
@@ -871,7 +871,7 @@ TARGET_INITRAMFS_BACKEND=mkinitcpio
 TARGET_BOOTLOADER_BACKEND=grub
 diagnostic_repair_capabilities
 ')"
-[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 17 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 18 ]] \
     || { echo "FAIL: host scope changed the 17 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
 grep -Eq '^Host snapshot rollback: (available|unavailable\|)' <<<"$host_caps" \
     || { echo "FAIL: host snapshot rollback capability line is missing" >&2; exit 1; }
@@ -1474,13 +1474,13 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report emitted duplicate capability preambles' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
     || { echo 'FAIL: combined report emitted duplicate capability evidence headers' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 17 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 18 ]] \
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
-for comb_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
+for comb_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels numlock; do
     [[ "$(grep -c "^Repair capability evidence $comb_ev_key: " <<<"$combined_report")" -eq 1 ]] \
         || { echo "FAIL: combined report lost the capability evidence line for $comb_ev_key" >&2; exit 1; }
 done
-[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 19 ]] \
+[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 20 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }
