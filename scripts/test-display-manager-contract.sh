@@ -564,6 +564,10 @@ fi
 # alias name).  The CONTROL: a different serving manager leaves the gdm3
 # stray stoppable.
 (
+    if [[ ! -d /run/systemd/system ]]; then
+        echo 'SKIP: non-systemd host (OpenRC/Alpine) — the running-session purge deferral is a systemd-only path.'
+        exit 0
+    fi
     source <(sed '/^main "\$@"/d' "$HELPER")
     trap - EXIT INT TERM HUP
     pr_root="$(mktemp -d)"
